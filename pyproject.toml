@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "setuhaul"
+version = "0.1.0"
+description = "SetuHaul conversational rescheduling service"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "pydantic==2.14.3",
+  "fastapi==0.164.0",
+  "uvicorn==0.54.0",
+  "httpx==0.28.1",
+  "tzdata==2026.6",
+  "redis==8.1.0",
+  "opentelemetry-api==1.45.2",
+  "opentelemetry-sdk==1.45.2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.2.0",
+  "hypothesis==6.170.15",
+  "fakeredis==2.40.0",
+  "ruff==0.17.5",
+  "mypy==2.4.1",
+  "locust==2.47.0",
+  "pre-commit==4.7.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+extend-exclude = ["setuhaul", "SetuHaul_Data_Package", ".venv"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "src"
