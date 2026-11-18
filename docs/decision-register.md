@@ -9,3 +9,6 @@
 | D5 | 2026-11-18 | Local `git init` on branch `main`; Phase 0 commits go there. No remote, no push. | Applied | Directory was not a git repo; plan requires commits. |
 | D6 | 2026-11-18 | ETA baseline rule: "N minutes late" = active shipment's planned ETA + N. "Repair takes N minutes" needs travel info or returns ClarificationNeeded. | Pending Phase 2 | Plan Review Focus. |
 | D7 | 2026-11-18 | Questions Q1-Q16 in `operations-questions.md`; unanswered ones are explicit defaults or blockers. | Pending approval | Phase 0 gate. |
+| D8 | 2026-11-18 | Timestamp contract: ISO-8601 with explicit offset, normalised to aware Asia/Kolkata; naive/malformed values rejected; never string-compared. Snapshot verified uniform (+05:30, 34 columns). | Applied (Phase 1) | `docs/data-audit.md` |
+| D9 | 2026-11-18 | Phase 5 must rebuild `appointments` to add `HELD` (CHECK cannot be altered in SQLite). | Pending Phase 5 | Found in Phase 1 schema audit. |
+| D10 | 2026-11-18 | Missing labour/consignee data returns `INCOMPLETE_FEASIBILITY_DATA` rather than assuming availability. | Pending Phase 4 | No such tables in snapshot. |

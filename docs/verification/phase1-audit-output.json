@@ -1,0 +1,210 @@
+{
+  "row_counts": {
+    "appointment_slots": 106,
+    "appointments": 20,
+    "carriers": 4,
+    "chat_messages": 20,
+    "chat_threads": 12,
+    "dock_status_events": 3,
+    "docks": 9,
+    "driver_exceptions": 10,
+    "drivers": 15,
+    "eta_updates": 12,
+    "facilities": 2,
+    "facility_checkins": 5,
+    "facility_contacts": 5,
+    "facility_rules": 6,
+    "operational_messages": 5,
+    "shipments": 21,
+    "vehicle_types": 5,
+    "vehicles": 15
+  },
+  "duplicate_active_slot": [],
+  "duplicate_active_appointment_per_shipment": [],
+  "orphan_appointments": [],
+  "shipments_missing_feasibility_inputs": [],
+  "active_appointments_for_inactive_shipments": [],
+  "gate_in_without_arrival_state": [],
+  "slots_overlapping_dock": [],
+  "foreign_key_violations": [],
+  "integrity_check": [
+    "ok"
+  ],
+  "timestamp_audit": {
+    "columns_checked": 34,
+    "mixed": {},
+    "naive": {},
+    "invalid": {}
+  },
+  "sample_trace": {
+    "shipment": {
+      "shipment_id": "SHP1006",
+      "order_reference": "ORD-260804-006",
+      "carrier_id": "CAR003",
+      "driver_id": "DRV006",
+      "vehicle_id": "VEH015",
+      "origin_name": "Ghaziabad Medical Devices",
+      "origin_city": "Ghaziabad",
+      "destination_facility_id": "FAC-JAI-01",
+      "customer_name": "CareSupply Rajasthan",
+      "product_category": "Medical devices",
+      "load_weight_kg": 7800,
+      "pallet_count": 12,
+      "required_dock_type": "STANDARD",
+      "temperature_control_required": 0,
+      "priority_code": "HIGH",
+      "planned_departure_ts": "2026-08-04T04:00:00+05:30",
+      "actual_departure_ts": "2026-08-04T04:20:00+05:30",
+      "original_eta_ts": "2026-08-04T10:20:00+05:30",
+      "latest_eta_ts": "2026-08-04T11:20:00+05:30",
+      "expected_unload_min": 45,
+      "current_status": "IN_TRANSIT",
+      "created_at": "2026-08-01T12:00:00+05:30",
+      "updated_at": "2026-08-04T09:40:00+05:30"
+    },
+    "driver": {
+      "driver_id": "DRV006",
+      "carrier_id": "CAR003",
+      "driver_name": "Manoj Sharma",
+      "phone": "+91-9000010006",
+      "licence_number": "UP14DL1006",
+      "home_base_city": "Ghaziabad",
+      "driver_status": "ACTIVE"
+    },
+    "vehicle": {
+      "vehicle_id": "VEH015",
+      "carrier_id": "CAR003",
+      "vehicle_type_code": "20FT",
+      "registration_number": "DL01GT4115",
+      "capacity_kg": 8800,
+      "refrigeration_capable": 0,
+      "active_flag": 1
+    },
+    "eta": {
+      "shipment_id": "SHP1006",
+      "original_eta_ts": "2026-08-04T10:20:00+05:30",
+      "effective_eta_ts": "2026-08-04T11:20:00+05:30",
+      "eta_source": "DRIVER_DECLARED",
+      "eta_confidence": "HIGH",
+      "delay_reason_code": "TRAFFIC",
+      "eta_note": "Traffic worsened; latest estimate.",
+      "eta_updated_at": "2026-08-04T09:35:00+05:30"
+    },
+    "facility": {
+      "facility_id": "FAC-JAI-01",
+      "facility_name": "SetuHaul Jaipur Distribution Centre",
+      "city": "Jaipur",
+      "state": "Rajasthan",
+      "timezone": "Asia/Kolkata",
+      "open_time": "06:00",
+      "close_time": "22:00",
+      "checkin_grace_min": 30,
+      "default_unload_min": 60,
+      "active_flag": 1
+    },
+    "appointment": {
+      "appointment_id": "APT1006",
+      "shipment_id": "SHP1006",
+      "slot_id": "SLOT-JAI-045",
+      "appointment_status": "CONFIRMED",
+      "booking_source": "PLANNER",
+      "is_current": 1,
+      "booked_at": "2026-08-01T10:50:00+05:30",
+      "confirmed_at": "2026-08-01T10:55:00+05:30",
+      "cancelled_at": null,
+      "cancellation_reason": null,
+      "replaced_appointment_id": null,
+      "warehouse_confirmation_ref": "WH-JAI-9006",
+      "updated_at": "2026-08-04T09:40:00+05:30"
+    },
+    "appointment_history": [
+      {
+        "appointment_id": "APT1006",
+        "shipment_id": "SHP1006",
+        "slot_id": "SLOT-JAI-045",
+        "appointment_status": "CONFIRMED",
+        "booking_source": "PLANNER",
+        "is_current": 1,
+        "booked_at": "2026-08-01T10:50:00+05:30",
+        "confirmed_at": "2026-08-01T10:55:00+05:30",
+        "cancelled_at": null,
+        "cancellation_reason": null,
+        "replaced_appointment_id": null,
+        "warehouse_confirmation_ref": "WH-JAI-9006",
+        "updated_at": "2026-08-04T09:40:00+05:30"
+      }
+    ],
+    "slot": {
+      "slot_id": "SLOT-JAI-045",
+      "facility_id": "FAC-JAI-01",
+      "dock_id": "DOCK-JAI-D4",
+      "slot_start_ts": "2026-08-04T10:00:00+05:30",
+      "slot_end_ts": "2026-08-04T11:00:00+05:30",
+      "slot_status": "OPEN",
+      "block_reason": null,
+      "created_at": "2026-08-01T12:00:00+05:30"
+    },
+    "dock": {
+      "dock_id": "DOCK-JAI-D4",
+      "facility_id": "FAC-JAI-01",
+      "dock_code": "D4",
+      "dock_type": "STANDARD",
+      "supports_refrigerated": 0,
+      "max_vehicle_weight_kg": 25000,
+      "dock_status": "ACTIVE"
+    },
+    "checkin": null,
+    "exceptions": [
+      {
+        "exception_id": "EXC001",
+        "shipment_id": "SHP1006",
+        "driver_id": "DRV006",
+        "thread_id": "THR001",
+        "exception_type": "TRAFFIC",
+        "reported_at": "2026-08-04T09:34:00+05:30",
+        "reported_delay_min": 60,
+        "declared_eta_ts": "2026-08-04T11:20:00+05:30",
+        "earliest_acceptable_ts": "2026-08-04T12:00:00+05:30",
+        "latest_acceptable_ts": null,
+        "severity_code": "HIGH",
+        "exception_status": "NEEDS_INFORMATION",
+        "description": "Traffic delay will cause the original 10:00 slot to be missed.",
+        "dedupe_key": "DRV006-SHP1006-20260804-0934"
+      },
+      {
+        "exception_id": "EXC009",
+        "shipment_id": "SHP1006",
+        "driver_id": "DRV006",
+        "thread_id": "THR009",
+        "exception_type": "TRAFFIC",
+        "reported_at": "2026-08-04T09:35:02+05:30",
+        "reported_delay_min": 60,
+        "declared_eta_ts": "2026-08-04T11:20:00+05:30",
+        "earliest_acceptable_ts": null,
+        "latest_acceptable_ts": null,
+        "severity_code": "LOW",
+        "exception_status": "DUPLICATE",
+        "description": "Duplicate message received through messaging retry.",
+        "dedupe_key": "DRV006-SHP1006-20260804-0934"
+      }
+    ]
+  },
+  "spans": [
+    {
+      "name": "repository.shipment_trace",
+      "request_id": "afde5915c6ae4a3a87b179c4fd8518f4",
+      "span_id": "2424da375d794cd5",
+      "parent_id": null,
+      "status": "OK",
+      "duration_ms": 0.95
+    },
+    {
+      "name": "audit",
+      "request_id": "afde5915c6ae4a3a87b179c4fd8518f4",
+      "span_id": "1d90fb062625447f",
+      "parent_id": null,
+      "status": "OK",
+      "duration_ms": 10.96
+    }
+  ]
+}
