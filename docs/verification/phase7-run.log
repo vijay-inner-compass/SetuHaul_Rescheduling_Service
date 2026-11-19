@@ -1,0 +1,41 @@
+iteration 1/20 done, violations so far: 0
+iteration 2/20 done, violations so far: 0
+iteration 3/20 done, violations so far: 0
+iteration 4/20 done, violations so far: 0
+iteration 5/20 done, violations so far: 0
+iteration 6/20 done, violations so far: 0
+iteration 7/20 done, violations so far: 0
+iteration 8/20 done, violations so far: 0
+iteration 9/20 done, violations so far: 0
+iteration 10/20 done, violations so far: 0
+iteration 11/20 done, violations so far: 0
+iteration 12/20 done, violations so far: 0
+iteration 13/20 done, violations so far: 0
+iteration 14/20 done, violations so far: 0
+iteration 15/20 done, violations so far: 0
+iteration 16/20 done, violations so far: 0
+iteration 17/20 done, violations so far: 0
+iteration 18/20 done, violations so far: 0
+iteration 19/20 done, violations so far: 0
+iteration 20/20 done, violations so far: 0
+pytest loop 1/20: rc=0 21 passed in 11.72s
+pytest loop 2/20: rc=0 21 passed in 11.03s
+pytest loop 3/20: rc=0 21 passed in 11.38s
+pytest loop 4/20: rc=0 21 passed in 11.68s
+pytest loop 5/20: rc=0 21 passed in 11.30s
+pytest loop 6/20: rc=0 21 passed in 12.06s
+pytest loop 7/20: rc=0 21 passed in 10.88s
+pytest loop 8/20: rc=0 21 passed in 10.90s
+pytest loop 9/20: rc=0 21 passed in 10.75s
+pytest loop 10/20: rc=0 21 passed in 10.38s
+pytest loop 11/20: rc=0 21 passed in 10.35s
+pytest loop 12/20: rc=0 21 passed in 10.33s
+pytest loop 13/20: rc=0 21 passed in 10.43s
+pytest loop 14/20: rc=0 21 passed in 10.43s
+pytest loop 15/20: rc=0 21 passed in 10.33s
+pytest loop 16/20: rc=0 21 passed in 10.60s
+pytest loop 17/20: rc=0 21 passed in 10.62s
+pytest loop 18/20: rc=0 21 passed in 10.55s
+pytest loop 19/20: rc=0 21 passed in 10.28s
+pytest loop 20/20: rc=0 21 passed in 10.52s
+wrote C:\GitHub\SetuHaul_Rescheduling_Service\docs\verification\concurrency-proof.md; violations=0; pytest loop failures=0
