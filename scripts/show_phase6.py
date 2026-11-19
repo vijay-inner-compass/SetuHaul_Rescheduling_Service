@@ -34,8 +34,8 @@ clock = FakeClock(at("09:35"))
 
 
 def cmd(held, mid="MSG-1", **kw):  # type: ignore[no-untyped-def]
-    base = dict(driver_id="DRV006", thread_id="THR001", message_id=mid, shipment_id="SHP1006",
-                hold_appointment_id=held.appointment_id)
+    base = {"driver_id": "DRV006", "thread_id": "THR001", "message_id": mid, "shipment_id": "SHP1006",
+                "hold_appointment_id": held.appointment_id}
     return ConfirmCommand(**{**base, **kw})
 
 
