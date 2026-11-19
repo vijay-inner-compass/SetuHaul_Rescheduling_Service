@@ -1,0 +1,22 @@
+SHP1006 planned=2026-08-04T10:20:00+05:30 current=2026-08-04T11:20:00+05:30 now=2026-08-04T09:35:00+05:30
+
+[explicit ETA 12:15]
+  EtaEvidence: {"eta":"2026-08-04T12:15:00+05:30","source":"DRIVER_DECLARED","confidence":"MEDIUM","baseline_type":"DRIVER_DECLARED","baseline_record_id":null}
+
+[90 min late (planned baseline)]
+  EtaEvidence: {"eta":"2026-08-04T11:50:00+05:30","source":"DRIVER_DECLARED","confidence":"MEDIUM","baseline_type":"PLANNED_ETA","baseline_record_id":"SHP1006"}
+
+[90 min late (named current-ETA baseline)]
+  EtaEvidence: {"eta":"2026-08-04T12:50:00+05:30","source":"DRIVER_DECLARED","confidence":"MEDIUM","baseline_type":"CURRENT_ETA","baseline_record_id":"ETA006"}
+
+[repair 90 min, no travel]
+  ClarificationNeeded: {"code":"MISSING_TRAVEL_TIME","missing":["travel_minutes"],"question":"After the repair, how long will the drive to the facility take?"}
+
+[repair 90 min + 45 min travel]
+  EtaEvidence: {"eta":"2026-08-04T11:50:00+05:30","source":"DRIVER_DECLARED","confidence":"MEDIUM","baseline_type":"REPAIR_COMPLETION","baseline_record_id":null}
+
+[gate-in 09:20, no report]
+  EtaEvidence: {"eta":"2026-08-04T09:20:00+05:30","source":"GATE_CHECKIN","confidence":"HIGH","baseline_type":"GATE_IN","baseline_record_id":null}
+
+[gate-in 09:20, driver says 60 min late]
+  EtaConflict: {"code":"CONTRADICTORY_ARRIVAL_STATE","detail":"driver reports not yet arrived but gate-in recorded at 2026-08-04T09:20:00+05:30"}
