@@ -177,13 +177,16 @@ def build_facility_state(conn: sqlite3.Connection, facility_id: str, as_of: date
         )
     ]
     marks = ",".join("?" for _ in ACTIVE_STATUSES)
+    # A hold past its expiry no longer consumes capacity, whether or not the sweep has run yet.
     occupancy = {
         r["slot_id"]: Occupant(r["appointment_id"], r["shipment_id"], r["appointment_status"])
         for r in conn.execute(
             f"select a.appointment_id, a.shipment_id, a.slot_id, a.appointment_status from appointments a "
-            f"join appointment_slots s using(slot_id) where s.facility_id=? "
-            f"and a.appointment_status in ({marks})",
-            (facility_id, *ACTIVE_STATUSES),
+            f"join appointment_slots s using(slot_id) "
+            f"left join appointment_hold_meta m on m.appointment_id = a.appointment_id "
+            f"where s.facility_id=? and a.appointment_status in ({marks}) "
+            f"and not (a.appointment_status='HELD' and m.expires_epoch is not null and m.expires_epoch <= ?)",
+            (facility_id, *ACTIVE_STATUSES, int(as_of.timestamp())),
         )
     }
     labour = [

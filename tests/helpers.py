@@ -69,3 +69,16 @@ def find_slot(state: FacilityState, dock_id: str, hhmm: str) -> SlotRow:
 
 def with_state(state: FacilityState, **changes: object) -> FacilityState:
     return replace(state, **changes)  # type: ignore[arg-type]
+
+
+def show_options(db, clock, thread: str = "THR001", shipment: str = "SHP1006", eta: str = "11:20", limit: int = 3):  # type: ignore[no-untyped-def]
+    """Search, rank and persist an option set exactly as the conversation layer will."""
+    from setuhaul.allocation import rank_options
+    from setuhaul.capacity import build_facility_state
+    from setuhaul.feasibility import build_context, search_feasible_slots
+    from setuhaul.option_history import record_option_set
+
+    ctx = build_context(db, shipment, eta_at(eta), clock.now())
+    state = build_facility_state(db, ctx.facility_id, clock.now())
+    options = rank_options(search_feasible_slots(ctx, state).feasible, limit=limit)
+    return record_option_set(db, ctx, thread, options, state, clock)

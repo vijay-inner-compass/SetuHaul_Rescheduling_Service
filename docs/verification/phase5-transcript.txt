@@ -1,0 +1,25 @@
+== 1. Capacity boundary: index definitions after migration 002 ==
+  CREATE UNIQUE INDEX ux_active_appointment_per_slot ON appointments(slot_id) WHERE appointment_status IN ('PENDING_CONFIRMATION','CONFIRMED','IN_PROGRESS','HELD')
+  CREATE UNIQUE INDEX ux_current_active_appointment_per_shipment ON appointments(shipment_id) WHERE is_current = 1 AND appointment_status IN ('PENDING_CONFIRMATION','CONFIRMED','IN_PROGRESS')
+  CREATE UNIQUE INDEX ux_one_hold_per_shipment ON appointments(shipment_id) WHERE appointment_status = 'HELD'
+
+== 2. Two valid requests for SLOT-JAI-019 (both were shown it as option 1) ==
+  DRV006 SHP1006 -> HELD (SUCCESS) appt=APT-H-9E27DD24A5 expires=09:38:00
+  DRV012 SHP1012 -> SLOT_CONFLICT (BUSINESS_CONFLICT) diff=NEWLY_HELD
+  original appointment APT1006: ('CONFIRMED', 1, 'SLOT-JAI-045')
+
+== 3. External scheduler inserts straight into the held slot ==
+  rejected by the database: UNIQUE constraint failed: appointments.slot_id
+
+== 4. One shipment, second slot ==
+  SHIPMENT_ALREADY_HELD (existing hold APT-H-9E27DD24A5)
+
+== 5. Fake-clock expiry replay (TTL 180 s, no sleeping) ==
+  t+179s: swept=0 hold_state=LIVE
+  t+180s (exactly at expiry): swept=1 hold_state=EXPIRED
+  t+400s: swept=0 hold_state=EXPIRED
+  repeat sweep: 0 (idempotent)
+  history: [('HOLD_ACQUIRED', None, 'HELD', 'DRIVER'), ('HOLD_EXPIRED', 'HELD', 'CANCELLED', 'SYSTEM')]
+  outbox: DRIVER DRV006 PENDING -> Your hold on that slot has lapsed. No booking has changed, and your original appointment still stands. I can search for fresh options if you would like.
+  original appointment APT1006: ('CONFIRMED', 1, 'SLOT-JAI-045')
+  slot SLOT-JAI-019 offered again to SHP1012: True

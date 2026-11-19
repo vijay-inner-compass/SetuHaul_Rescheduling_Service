@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import shutil
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -76,7 +78,15 @@ def apply_migrations(conn: sqlite3.Connection, directory: Path = MIGRATIONS_DIR)
             continue
         script = path.read_text(encoding="utf-8")
         stamp = f"insert into schema_migrations values ('{path.name}', datetime('now'));"
-        conn.executescript(f"begin;\n{script}\n{stamp}\ncommit;")
+        # PRAGMA foreign_keys is a no-op inside a transaction, so toggle it around the script.
+        conn.execute("pragma foreign_keys=off")
+        try:
+            conn.executescript(f"begin;\n{script}\n{stamp}\ncommit;")
+            violations = conn.execute("pragma foreign_key_check").fetchall()
+            if violations:
+                raise sqlite3.IntegrityError(f"{path.name} left foreign key violations: {violations}")
+        finally:
+            conn.execute("pragma foreign_keys=on")
         applied.append(path.name)
     return applied
 
@@ -91,3 +101,21 @@ def make_working_db(dest: Path, source: Path | None = None) -> Path:
     finally:
         conn.close()
     return dest
+
+
+@contextmanager
+def immediate(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
+    """``BEGIN IMMEDIATE`` ... commit, rolling back on any exception.
+
+    The write lock is taken up front, so a busy database fails here (``database is locked``)
+    rather than part-way through. Callers classify that separately from business conflicts.
+    """
+    conn.commit()  # never nest inside an implicit transaction
+    conn.execute("begin immediate")
+    try:
+        yield conn
+    except BaseException:
+        conn.rollback()
+        raise
+    else:
+        conn.commit()
