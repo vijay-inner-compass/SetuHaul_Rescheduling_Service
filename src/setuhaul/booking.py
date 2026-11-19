@@ -27,8 +27,8 @@ from setuhaul.config import load_settings
 from setuhaul.db import immediate, parse_operational_timestamp
 from setuhaul.events import append_appointment_event, enqueue_notification
 from setuhaul.feasibility import evaluate_slot
-from setuhaul.notifications import enqueue_downstream
 from setuhaul.identity import AuthError
+from setuhaul.notifications import enqueue_downstream
 from setuhaul.option_history import OptionDiffItem, diff_option_set, get_option_set
 
 HOLD_EXPIRED_MESSAGE = (
@@ -486,12 +486,12 @@ def confirm_reschedule(conn: sqlite3.Connection, cmd: ConfirmCommand, clock: Clo
         if _is_lock_error(exc):
             return ConfirmationResult(status="LOCK_TIMEOUT", outcome=OutcomeClass.LOCK_TIMEOUT)
         return ConfirmationResult(status="SYSTEM_ERROR", outcome=OutcomeClass.SYSTEM_ERROR)
-    except Exception:
+    except Exception:  # noqa: BLE001 - any failure must roll back and be reported as SYSTEM_ERROR, never raised to the driver turn
         return ConfirmationResult(status="SYSTEM_ERROR", outcome=OutcomeClass.SYSTEM_ERROR)
 
 
-def render_confirmation_text(conn: sqlite3.Connection, appointment_id: str) -> str:
-    """Wording for a confirmed booking, built only from the committed row."""
+def confirmed_appointment_facts(conn: sqlite3.Connection, appointment_id: str) -> dict[str, str]:
+    """Facts of a committed CONFIRMED appointment. Raises ValueError for anything else."""
     r = conn.execute(
         "select a.appointment_id, a.appointment_status, s.slot_start_ts, s.slot_end_ts, d.dock_code "
         "from appointments a join appointment_slots s using(slot_id) join docks d on d.dock_id = s.dock_id "
@@ -503,5 +503,12 @@ def render_confirmation_text(conn: sqlite3.Connection, appointment_id: str) -> s
         raise ValueError(f"appointment {appointment_id} is not confirmed ({r['appointment_status']})")
     start = parse_operational_timestamp(r["slot_start_ts"])
     end = parse_operational_timestamp(r["slot_end_ts"])
-    return (f"Your appointment is confirmed: dock {r['dock_code']}, {start:%H:%M}-{end:%H:%M} on "
-            f"{start:%d %b %Y}. Reference {r['appointment_id']}.")
+    return {"dock": r["dock_code"], "start": f"{start:%H:%M}", "end": f"{end:%H:%M}",
+            "date": f"{start:%d %b %Y}", "ref": r["appointment_id"]}
+
+
+def render_confirmation_text(conn: sqlite3.Connection, appointment_id: str) -> str:
+    """English wording for a confirmed booking, built only from the committed row."""
+    f = confirmed_appointment_facts(conn, appointment_id)
+    return (f"Your appointment is confirmed: dock {f['dock']}, {f['start']}-{f['end']} on "
+            f"{f['date']}. Reference {f['ref']}.")

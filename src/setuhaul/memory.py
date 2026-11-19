@@ -46,6 +46,7 @@ class HoldRef(BaseModel):
 
     appointment_id: str
     expires_at: datetime
+    created_message_id: str | None = None  # a hold may not be confirmed in the message that created it
 
 
 class ConversationEvent(BaseModel):
@@ -64,6 +65,8 @@ class ConversationState(BaseModel):
     latest_option_set_id: str | None = None
     hold: HoldRef | None = None
     pending_events: list[ConversationEvent] = Field(default_factory=list)
+    language: str | None = None  # en | hi | hinglish, once established
+    language_prompts: int = 0  # how many times the driver has been asked to choose a language
 
 
 class ConversationContext(BaseModel):

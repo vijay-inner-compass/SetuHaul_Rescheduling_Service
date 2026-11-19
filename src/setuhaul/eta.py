@@ -10,6 +10,7 @@ import sqlite3
 from datetime import timedelta
 
 from setuhaul.clock import Clock
+from setuhaul.db import parse_operational_timestamp
 from setuhaul.schemas import (
     BaselineType,
     ClarificationNeeded,
@@ -20,7 +21,6 @@ from setuhaul.schemas import (
     EtaRecord,
     GateEvidence,
 )
-from setuhaul.db import parse_operational_timestamp
 
 EtaResult = EtaEvidence | ClarificationNeeded | EtaConflict
 

@@ -14,6 +14,7 @@ dependencies = [
   "httpx==0.28.1",
   "tzdata==2026.6",
   "redis==8.1.0",
+  "langgraph==1.2.23",
   "opentelemetry-api==1.45.2",
   "opentelemetry-sdk==1.45.2",
 ]
@@ -40,7 +41,7 @@ testpaths = ["tests"]
 line-length = 100
 target-version = "py312"
 src = ["src", "tests"]
-extend-exclude = ["setuhaul", "SetuHaul_Data_Package", ".venv"]
+extend-exclude = ["./setuhaul", "./SetuHaul_Data_Package", "./.venv"]
 
 [tool.mypy]
 python_version = "3.12"

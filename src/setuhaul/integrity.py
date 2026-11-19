@@ -24,26 +24,26 @@ _CHECKS: tuple[tuple[str, str], ...] = (
     ("DUPLICATE_ACTIVE_SLOT",
      f"select slot_id from appointments where appointment_status in {_ACTIVE} group by slot_id having count(*) > 1"),
     ("DUPLICATE_CURRENT_APPOINTMENT",
-     f"select shipment_id from appointments where is_current=1 and appointment_status in {_CURRENT_ACTIVE} "
-     f"group by shipment_id having count(*) > 1"),
+     (f"select shipment_id from appointments where is_current=1 and appointment_status in {_CURRENT_ACTIVE} "
+     f"group by shipment_id having count(*) > 1")),
     ("MULTIPLE_HOLDS_PER_SHIPMENT",
      "select shipment_id from appointments where appointment_status='HELD' group by shipment_id having count(*) > 1"),
     ("ORPHAN_HOLD_METADATA",
-     "select m.appointment_id from appointment_hold_meta m left join appointments a using(appointment_id) "
-     "where a.appointment_id is null"),
+     ("select m.appointment_id from appointment_hold_meta m left join appointments a using(appointment_id) "
+     "where a.appointment_id is null")),
     ("HELD_WITHOUT_METADATA",
-     "select a.appointment_id from appointments a left join appointment_hold_meta m using(appointment_id) "
-     "where a.appointment_status='HELD' and m.appointment_id is null"),
+     ("select a.appointment_id from appointments a left join appointment_hold_meta m using(appointment_id) "
+     "where a.appointment_status='HELD' and m.appointment_id is null")),
     ("HOLD_METADATA_STATE_MISMATCH",
-     "select a.appointment_id from appointments a join appointment_hold_meta m using(appointment_id) "
+     ("select a.appointment_id from appointments a join appointment_hold_meta m using(appointment_id) "
      "where (a.appointment_status='HELD' and m.released_at is not null) "
-     "or (a.appointment_status<>'HELD' and m.released_at is null)"),
+     "or (a.appointment_status<>'HELD' and m.released_at is null)")),
     ("HISTORY_WITHOUT_PARENT",
-     "select e.event_id from appointment_events e left join appointments a using(appointment_id) "
-     "where a.appointment_id is null"),
+     ("select e.event_id from appointment_events e left join appointments a using(appointment_id) "
+     "where a.appointment_id is null")),
     ("REPLACED_APPOINTMENT_STILL_ACTIVE",
-     f"select n.appointment_id from appointments n join appointments o on o.appointment_id = n.replaced_appointment_id "
-     f"where n.is_current=1 and n.appointment_status in {_CURRENT_ACTIVE} and o.appointment_status not in {_ENDED}"),
+     (f"select n.appointment_id from appointments n join appointments o on o.appointment_id = n.replaced_appointment_id "
+     f"where n.is_current=1 and n.appointment_status in {_CURRENT_ACTIVE} and o.appointment_status not in {_ENDED}")),
 )
 
 

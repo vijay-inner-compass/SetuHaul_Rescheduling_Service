@@ -102,7 +102,7 @@ def deliver_pending_notifications(
             _mark(conn, r["outbox_id"], "PERMANENT_FAILURE", attempts, str(exc), clock.now())
             permanent += 1
             continue
-        except Exception as exc:  # transient: keep for retry until attempts run out
+        except Exception as exc:  # transient: keep for retry until attempts run out  # noqa: BLE001 - unknown sender failures are transient by definition; retried then marked permanent
             status = "PERMANENT_FAILURE" if attempts >= max_attempts else "FAILED"
             _mark(conn, r["outbox_id"], status, attempts, str(exc), clock.now())
             permanent += status == "PERMANENT_FAILURE"

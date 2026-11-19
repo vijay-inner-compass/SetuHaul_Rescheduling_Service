@@ -215,7 +215,7 @@ def search_feasible_slots(ctx: FeasibilityContext, state: FacilityState) -> Sear
             incomplete.append(d)
         else:
             rejected.update(d.reasons)
-    key = lambda d: (d.slot_start, d.dock_code)  # noqa: E731
+    key = lambda d: (d.slot_start, d.dock_code)
     feasible.sort(key=key)
     approval.sort(key=key)
     incomplete.sort(key=key)

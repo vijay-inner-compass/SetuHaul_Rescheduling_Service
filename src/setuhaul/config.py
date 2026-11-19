@@ -33,6 +33,7 @@ class Settings:
     sqlite_busy_timeout_ms: int = 5000
     cancel_cutoff_minutes: int = 120  # provisional (Q6): no automatic cancel closer than this to slot start
     notification_max_attempts: int = 3
+    model_cost_budget_usd: float = 0.05  # hard stop per handled message (alert level in the plan)
 
 
 def load_settings() -> Settings:

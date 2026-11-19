@@ -158,7 +158,7 @@ def cancel_confirmed_appointment(
         if _is_lock_error(exc):
             return CancellationResult(status="LOCK_TIMEOUT", outcome=OutcomeClass.LOCK_TIMEOUT)
         return CancellationResult(status="SYSTEM_ERROR", outcome=OutcomeClass.SYSTEM_ERROR)
-    except Exception:
+    except Exception:  # noqa: BLE001 - any failure must roll back and be reported as SYSTEM_ERROR
         return CancellationResult(status="SYSTEM_ERROR", outcome=OutcomeClass.SYSTEM_ERROR)
 
 

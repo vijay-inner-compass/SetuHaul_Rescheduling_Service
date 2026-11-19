@@ -88,7 +88,7 @@ def execute_op(conn: sqlite3.Connection, op: Op) -> tuple[str, OutcomeClass]:
         if "locked" in msg or "busy" in msg:
             return "LOCK_TIMEOUT", OutcomeClass.LOCK_TIMEOUT
         return f"ERROR:{exc}", OutcomeClass.SYSTEM_ERROR
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - the harness classifies every failure instead of crashing the run
         return f"ERROR:{type(exc).__name__}", OutcomeClass.SYSTEM_ERROR
 
 

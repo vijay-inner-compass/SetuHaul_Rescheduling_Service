@@ -12,7 +12,7 @@ from typing import Any
 
 logger = logging.getLogger("setuhaul")
 
-_SECRET_KEY = re.compile(r"(key|token|secret|password|authorization|signature)", re.I)
+_SECRET_KEY = re.compile(r"(key|token|secret|password|authorization|signature)", re.IGNORECASE)
 _PHONE = re.compile(r"\+?\d[\d\s-]{8,}\d")
 REDACTED = "[REDACTED]"
 
