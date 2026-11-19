@@ -7,11 +7,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from setuhaul.clock import FakeClock  # noqa: E402
-from setuhaul.db import open_connection  # noqa: E402
-from setuhaul.db import parse_operational_timestamp as ts  # noqa: E402
-from setuhaul.eta import derive_eta, load_eta_records  # noqa: E402
-from setuhaul.schemas import BaselineType, DelayReport, GateEvidence  # noqa: E402
+from setuhaul.clock import FakeClock
+from setuhaul.db import open_connection
+from setuhaul.db import parse_operational_timestamp as ts
+from setuhaul.eta import derive_eta, load_eta_records
+from setuhaul.schemas import BaselineType, DelayReport, GateEvidence
 
 clock = FakeClock(ts("2026-08-04T09:35:00+05:30"))
 with open_connection(readonly=True) as conn:
