@@ -15,7 +15,7 @@ The audit and all Phase 1 code are read-only. The table below names what the pro
 `shipments`, `drivers`, `vehicles`, `vehicle_types`, `carriers`, `facilities`, `docks`, `dock_status_events`, `appointment_slots`, `facility_rules`, `facility_contacts`, `facility_checkins`. Slot blocking stays an operations action.
 
 ## New extension tables (named separately)
-`option_sets`, `option_set_items` (Phase 4); `appointment_hold_meta` (Phase 5); `idempotency_keys`, `appointment_events`, `notification_outbox` (Phase 6); `escalation_cases`, `escalation_events` (Phase 9); `driver_sessions`, `channel_identities` (Phase 3).
+`option_sets`, `option_set_items` (Phase 4); `appointment_hold_meta` (Phase 5); `idempotency_keys`, `appointment_events`, `notification_outbox` (Phase 6); `escalation_cases`, `escalation_events` (Phase 9); `driver_sessions`, `channel_identities`, `conversation_state` (Phase 3, migration 005).
 
 ## Rules
 Writable connections use WAL, `foreign_keys=on` and a 5000 ms busy timeout (`setuhaul.db.open_connection`). Writes happen in `BEGIN IMMEDIATE` transactions. The seed file in `data/` is migrated in place only through numbered files in `migrations/`; the original in `SetuHaul_Data_Package/` is never touched.

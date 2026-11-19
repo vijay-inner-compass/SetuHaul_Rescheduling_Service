@@ -1,0 +1,31 @@
+== authentication trace ==
+  bad signature: REJECTED code=INVALID_SIGNATURE
+  good signature: OK -> True
+  provisioned identities: 15
+  unknown phone: REJECTED code=UNKNOWN_PHONE
+  resolved: {'driver_id': 'DRV006', 'carrier_id': 'CAR003', 'phone_e164': '+919000010006'}
+  session token len=43; stored id is sha256: a7ed6c05e078...
+  client-supplied driver id as session: REJECTED code=SESSION_INVALID
+  session auth: OK -> DRV006
+  foreign shipment SHP1012: REJECTED code=FOREIGN_SHIPMENT
+  session after 31 min: REJECTED code=SESSION_EXPIRED
+
+== rate limit (20/min, 100/h) ==
+  message 1: allowed=True reason=None retry_after=0s
+  message 20: allowed=True reason=None retry_after=0s
+  message 21: allowed=False reason=RATE_LIMIT_MINUTE retry_after=60s
+
+== two shipments in one thread (DRV006: SHP1006 and SHP1021) ==
+  active=('SHP1006', 'SHP1021') selected=SHP1006
+  after explicit switch selected=SHP1021
+  select SHP1012: REJECTED code=FOREIGN_SHIPMENT
+  still selected=SHP1021
+  ownership unchanged: [('SHP1006', 'DRV006'), ('SHP1021', 'DRV006')]
+
+== restart / Redis loss reconstruction ==
+  new worker + empty cache: from_cache=False turns=20 (cap 20) selected=SHP1021
+  durable messages in SQL: 32
+
+== return after hold expiry ==
+  events=['HOLD_EXPIRED'] hold_in_state=None
+  last stored agent promise still in history (not replayed as live): 'I am holding the 11:00 slot for you.'

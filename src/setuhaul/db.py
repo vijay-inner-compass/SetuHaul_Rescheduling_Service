@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -57,3 +58,36 @@ def open_connection(path: Path | None = None, readonly: bool = False) -> sqlite3
     conn.execute(f"pragma busy_timeout={settings.sqlite_busy_timeout_ms}")
     conn.execute("pragma foreign_keys=on")
     return conn
+
+
+MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "migrations"
+
+
+def apply_migrations(conn: sqlite3.Connection, directory: Path = MIGRATIONS_DIR) -> list[str]:
+    """Apply unapplied ``NNN_*.sql`` files in filename order; record each in schema_migrations."""
+    conn.execute(
+        "create table if not exists schema_migrations "
+        "(filename text primary key, applied_at text not null)"
+    )
+    done = {r[0] for r in conn.execute("select filename from schema_migrations")}
+    applied: list[str] = []
+    for path in sorted(directory.glob("*.sql")):
+        if path.name in done:
+            continue
+        script = path.read_text(encoding="utf-8")
+        stamp = f"insert into schema_migrations values ('{path.name}', datetime('now'));"
+        conn.executescript(f"begin;\n{script}\n{stamp}\ncommit;")
+        applied.append(path.name)
+    return applied
+
+
+def make_working_db(dest: Path, source: Path | None = None) -> Path:
+    """Copy the pristine seed to ``dest`` and migrate the copy. The seed itself is never written."""
+    src = Path(source) if source is not None else load_settings().db_path
+    shutil.copyfile(src, dest)
+    conn = open_connection(path=dest)
+    try:
+        apply_migrations(conn)
+    finally:
+        conn.close()
+    return dest
