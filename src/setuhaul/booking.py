@@ -14,6 +14,7 @@ import hashlib
 import json
 import sqlite3
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Literal
@@ -25,6 +26,8 @@ from setuhaul.clock import Clock
 from setuhaul.config import load_settings
 from setuhaul.db import immediate, parse_operational_timestamp
 from setuhaul.events import append_appointment_event, enqueue_notification
+from setuhaul.feasibility import evaluate_slot
+from setuhaul.notifications import enqueue_downstream
 from setuhaul.identity import AuthError
 from setuhaul.option_history import OptionDiffItem, diff_option_set, get_option_set
 
@@ -291,3 +294,214 @@ def make_hold_checker(conn: sqlite3.Connection, clock: Clock):  # type: ignore[n
         return "EXPIRED" if view.state == "EXPIRED" else "GONE"
 
     return check
+
+
+# ---- shared in-transaction release ----------------------------------------------------------------
+def release_hold_in_txn(
+    conn: sqlite3.Connection, appointment_id: str, shipment_id: str, reason: str, now: datetime,
+    actor_type: str, actor_id: str | None, event_reason: str,
+) -> None:
+    """HELD -> CANCELLED. Caller owns the transaction and has already checked ownership."""
+    stamp = now.isoformat()
+    conn.execute(
+        "update appointments set appointment_status='CANCELLED', cancelled_at=?, "
+        "cancellation_reason='HOLD_RELEASED', updated_at=? where appointment_id=? and appointment_status='HELD'",
+        (stamp, stamp, appointment_id),
+    )
+    conn.execute("update appointment_hold_meta set released_at=?, release_reason=? where appointment_id=?",
+                 (stamp, reason, appointment_id))
+    append_appointment_event(
+        conn, appointment_id, shipment_id, "HOLD_RELEASED", from_status="HELD", to_status="CANCELLED",
+        actor_type=actor_type, actor_id=actor_id, reason=event_reason, occurred_at=now,
+    )
+
+
+# ---- atomic confirmation ---------------------------------------------------------------------------
+ACTION_CONFIRM = "CONFIRM_RESCHEDULE"
+fault_hook: Callable[[str], None] | None = None  # tests inject failures at named write points
+
+
+def _fault(point: str) -> None:
+    if fault_hook is not None:
+        fault_hook(point)
+
+
+class ConfirmCommand(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    driver_id: str
+    thread_id: str
+    message_id: str
+    shipment_id: str
+    hold_appointment_id: str
+
+    def fingerprint(self) -> str:
+        return _fingerprint(shipment=self.shipment_id, hold=self.hold_appointment_id, action=ACTION_CONFIRM)
+
+
+ConfirmStatus = Literal[
+    "CONFIRMED", "ALREADY_CONFIRMED", "IDEMPOTENCY_MISMATCH", "HOLD_EXPIRED", "HOLD_NOT_ACTIVE",
+    "FEASIBILITY_CHANGED", "APPROVAL_REQUIRED", "ORIGINAL_NOT_RESCHEDULABLE", "LOCK_TIMEOUT", "SYSTEM_ERROR",
+]
+
+
+class ConfirmationResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    status: ConfirmStatus
+    outcome: OutcomeClass
+    appointment_id: str | None = None
+    slot_id: str | None = None
+    original_appointment_id: str | None = None
+    reason_codes: tuple[str, ...] = ()
+    replayed: bool = False
+
+
+def _result(status: ConfirmStatus, **kw: object) -> ConfirmationResult:
+    outcome = OutcomeClass.SUCCESS if status in ("CONFIRMED", "ALREADY_CONFIRMED") else OutcomeClass.BUSINESS_CONFLICT
+    return ConfirmationResult(status=status, outcome=outcome, **kw)  # type: ignore[arg-type]
+
+
+def get_idempotent_result(
+    conn: sqlite3.Connection, driver_id: str, thread_id: str, message_id: str, action: str, fingerprint: str
+) -> tuple[Literal["MISSING", "REPLAY", "MISMATCH"], ConfirmationResult | None]:
+    row = conn.execute(
+        "select fingerprint, result_json from idempotency_keys where driver_id=? and thread_id=? "
+        "and message_id=? and action=?", (driver_id, thread_id, message_id, action),
+    ).fetchone()
+    if row is None:
+        return "MISSING", None
+    if row["fingerprint"] != fingerprint:
+        return "MISMATCH", None
+    return "REPLAY", ConfirmationResult.model_validate_json(row["result_json"])
+
+
+def _store_result(conn: sqlite3.Connection, cmd: ConfirmCommand, result: ConfirmationResult, now: datetime) -> ConfirmationResult:
+    conn.execute(
+        "insert into idempotency_keys (driver_id, thread_id, message_id, action, fingerprint, result_json, "
+        "created_at) values (?,?,?,?,?,?,?)",
+        (cmd.driver_id, cmd.thread_id, cmd.message_id, ACTION_CONFIRM, cmd.fingerprint(),
+         result.model_dump_json(), now.isoformat()),
+    )
+    return result
+
+
+def confirm_reschedule(conn: sqlite3.Connection, cmd: ConfirmCommand, clock: Clock) -> ConfirmationResult:
+    """Promote a live hold to CONFIRMED and end the original appointment in one transaction.
+
+    The original stays active until this transaction commits. Any failure rolls everything back and
+    is reported as SYSTEM_ERROR / LOCK_TIMEOUT; nothing is promised to the driver in that case.
+    """
+    try:
+        with immediate(conn):
+            now = clock.now()
+            state_, stored = get_idempotent_result(
+                conn, cmd.driver_id, cmd.thread_id, cmd.message_id, ACTION_CONFIRM, cmd.fingerprint())
+            if state_ == "MISMATCH":
+                return _result("IDEMPOTENCY_MISMATCH")
+            if state_ == "REPLAY" and stored is not None:
+                return stored.model_copy(update={"replayed": True})
+
+            row = conn.execute(
+                "select a.appointment_id, a.shipment_id, a.slot_id, a.appointment_status, m.driver_id, m.thread_id, "
+                "m.option_set_id, m.expires_epoch, m.release_reason from appointments a "
+                "join appointment_hold_meta m using(appointment_id) where a.appointment_id=?",
+                (cmd.hold_appointment_id,),
+            ).fetchone()
+            if (row is None or row["driver_id"] != cmd.driver_id or row["thread_id"] != cmd.thread_id
+                    or row["shipment_id"] != cmd.shipment_id):
+                raise AuthError("FOREIGN_HOLD")
+            if row["appointment_status"] == "CONFIRMED":
+                return _store_result(conn, cmd, _result(
+                    "ALREADY_CONFIRMED", appointment_id=row["appointment_id"], slot_id=row["slot_id"]), now)
+            if row["appointment_status"] != "HELD":
+                status: ConfirmStatus = "HOLD_EXPIRED" if row["release_reason"] == "EXPIRED" else "HOLD_NOT_ACTIVE"
+                return _store_result(conn, cmd, _result(status), now)
+            if row["expires_epoch"] <= int(now.timestamp()):
+                expire_hold_in_txn(conn, cmd.hold_appointment_id, now)
+                return _store_result(conn, cmd, _result("HOLD_EXPIRED"), now)
+
+            opt = get_option_set(conn, cmd.driver_id, cmd.thread_id, cmd.shipment_id, row["option_set_id"])
+            state = build_facility_state(conn, opt.facility_id, now)
+            decision = evaluate_slot(opt.context.with_now(now), state.slots[row["slot_id"]], state)
+            if decision.status != "FEASIBLE":
+                release_hold_in_txn(conn, cmd.hold_appointment_id, cmd.shipment_id, "SYSTEM", now,
+                                    "SYSTEM", None, "FEASIBILITY_LOST")
+                kind: ConfirmStatus = "APPROVAL_REQUIRED" if decision.status == "REQUIRES_APPROVAL" else "FEASIBILITY_CHANGED"
+                return _store_result(conn, cmd, _result(kind, reason_codes=decision.reasons or decision.missing), now)
+
+            orig = conn.execute(
+                "select appointment_id, appointment_status, slot_id from appointments where shipment_id=? "
+                "and is_current=1 and appointment_status in ('PENDING_CONFIRMATION','CONFIRMED','IN_PROGRESS')",
+                (cmd.shipment_id,),
+            ).fetchone()
+            if orig is not None and orig["appointment_status"] == "IN_PROGRESS":
+                release_hold_in_txn(conn, cmd.hold_appointment_id, cmd.shipment_id, "SYSTEM", now,
+                                    "SYSTEM", None, "ORIGINAL_IN_PROGRESS")
+                return _store_result(conn, cmd, _result("ORIGINAL_NOT_RESCHEDULABLE"), now)
+
+            stamp = now.isoformat()
+            _fault("BEFORE_END_ORIGINAL")
+            if orig is not None:
+                conn.execute(
+                    "update appointments set appointment_status='CANCELLED', is_current=0, cancelled_at=?, "
+                    "cancellation_reason='RESCHEDULED', updated_at=? where appointment_id=?",
+                    (stamp, stamp, orig["appointment_id"]),
+                )
+                append_appointment_event(
+                    conn, orig["appointment_id"], cmd.shipment_id, "ORIGINAL_ENDED",
+                    from_status=orig["appointment_status"], to_status="CANCELLED", actor_type="DRIVER",
+                    actor_id=cmd.driver_id, reason="RESCHEDULED", occurred_at=now,
+                    details={"replaced_by": cmd.hold_appointment_id},
+                )
+            _fault("AFTER_END_ORIGINAL")
+            conn.execute(
+                "update appointments set appointment_status='CONFIRMED', is_current=1, confirmed_at=?, "
+                "replaced_appointment_id=?, updated_at=? where appointment_id=? and appointment_status='HELD'",
+                (stamp, orig["appointment_id"] if orig else None, stamp, cmd.hold_appointment_id),
+            )
+            _fault("AFTER_PROMOTE")
+            conn.execute("update appointment_hold_meta set released_at=?, release_reason='CONFIRMED' where appointment_id=?",
+                         (stamp, cmd.hold_appointment_id))
+            _fault("AFTER_META")
+            details = {"from_slot_id": orig["slot_id"] if orig else None, "to_slot_id": row["slot_id"],
+                       "driver_id": cmd.driver_id}
+            event_id = append_appointment_event(
+                conn, cmd.hold_appointment_id, cmd.shipment_id, "RESCHEDULE_CONFIRMED", from_status="HELD",
+                to_status="CONFIRMED", actor_type="DRIVER", actor_id=cmd.driver_id,
+                reason="DRIVER_CONFIRMED_OPTION", occurred_at=now, details=details,
+            )
+            _fault("AFTER_EVENTS")
+            enqueue_downstream(conn, event_id, "RESCHEDULE_CONFIRMED", cmd.shipment_id, cmd.hold_appointment_id,
+                               {**details, "from_time": None, "to_time": decision.slot_start.isoformat()}, now)
+            _fault("AFTER_OUTBOX")
+            result = _result("CONFIRMED", appointment_id=cmd.hold_appointment_id, slot_id=row["slot_id"],
+                             original_appointment_id=orig["appointment_id"] if orig else None)
+            _store_result(conn, cmd, result, now)
+            _fault("AFTER_IDEMPOTENCY")
+            return result
+    except AuthError:
+        raise
+    except sqlite3.OperationalError as exc:
+        if _is_lock_error(exc):
+            return ConfirmationResult(status="LOCK_TIMEOUT", outcome=OutcomeClass.LOCK_TIMEOUT)
+        return ConfirmationResult(status="SYSTEM_ERROR", outcome=OutcomeClass.SYSTEM_ERROR)
+    except Exception:
+        return ConfirmationResult(status="SYSTEM_ERROR", outcome=OutcomeClass.SYSTEM_ERROR)
+
+
+def render_confirmation_text(conn: sqlite3.Connection, appointment_id: str) -> str:
+    """Wording for a confirmed booking, built only from the committed row."""
+    r = conn.execute(
+        "select a.appointment_id, a.appointment_status, s.slot_start_ts, s.slot_end_ts, d.dock_code "
+        "from appointments a join appointment_slots s using(slot_id) join docks d on d.dock_id = s.dock_id "
+        "where a.appointment_id=?", (appointment_id,),
+    ).fetchone()
+    if r is None:
+        raise ValueError(f"no such appointment {appointment_id}")
+    if r["appointment_status"] != "CONFIRMED":
+        raise ValueError(f"appointment {appointment_id} is not confirmed ({r['appointment_status']})")
+    start = parse_operational_timestamp(r["slot_start_ts"])
+    end = parse_operational_timestamp(r["slot_end_ts"])
+    return (f"Your appointment is confirmed: dock {r['dock_code']}, {start:%H:%M}-{end:%H:%M} on "
+            f"{start:%d %b %Y}. Reference {r['appointment_id']}.")

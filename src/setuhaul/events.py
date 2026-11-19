@@ -52,3 +52,14 @@ def enqueue_notification(
         (dedupe_key, recipient_type, recipient_ref, event_id, json.dumps(payload, sort_keys=True), now.isoformat()),
     )
     return cur.rowcount == 1
+
+
+def get_appointment_history(conn: sqlite3.Connection, shipment_id: str) -> list[dict[str, Any]]:
+    """Who changed what, when and why, oldest first, for one shipment."""
+    rows = conn.execute(
+        "select e.event_id, e.occurred_at, e.appointment_id, e.event_type, e.from_status, e.to_status, "
+        "e.actor_type, e.actor_id, e.reason, e.details_json, a.slot_id from appointment_events e "
+        "join appointments a using(appointment_id) where e.shipment_id=? order by e.event_id",
+        (shipment_id,),
+    )
+    return [{**dict(r), "details": json.loads(r["details_json"])} for r in rows]

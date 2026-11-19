@@ -29,3 +29,14 @@ Writable connections use WAL, `foreign_keys=on` and a 5000 ms busy timeout (`set
 | `MaintenanceRunner.run_once` | the above, plus `option_sets`/`option_set_items` (delete, once per 24 h) and `maintenance_runs` | separate transactions |
 
 The original appointment row is never modified by any Phase 5 operation.
+
+## Phase 6 writes (exact)
+| Operation | Tables written | Notes |
+|---|---|---|
+| `confirm_reschedule` | `appointments` (original: CANCELLED, `is_current=0`, reason RESCHEDULED; hold row: CONFIRMED, `is_current=1`, `confirmed_at`, `replaced_appointment_id`), `appointment_hold_meta` (released, reason CONFIRMED), `appointment_events` (ORIGINAL_ENDED, RESCHEDULE_CONFIRMED), `notification_outbox` (3 rows), `idempotency_keys` | single `BEGIN IMMEDIATE`; refusal paths also write `idempotency_keys` and may release the hold |
+| `cancel_pending_change` | `appointments` (hold CANCELLED), `appointment_hold_meta`, `appointment_events` (HOLD_RELEASED) | original untouched |
+| `cancel_confirmed_appointment` | `appointments` (CANCELLED, `is_current=0`, reason DRIVER_CANCELLED; any hold released), `appointment_events` (APPOINTMENT_CANCELLED), `notification_outbox` (3 rows), `idempotency_keys` | escalation paths write only `idempotency_keys` |
+| `request_original_slot_again` | `option_sets`, `option_set_items` | no appointment row changes |
+| `deliver_pending_notifications` | `notification_outbox` (status, attempts, last_error, delivered_at) | outside any booking transaction |
+
+`appointment_events` is append-only: triggers abort any UPDATE or DELETE.

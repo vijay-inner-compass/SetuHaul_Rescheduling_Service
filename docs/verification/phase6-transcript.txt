@@ -1,0 +1,42 @@
+== 1. 'Never mind, keep my original slot' before confirming ==
+  hold APT-H-D947BDF3D3 on SLOT-JAI-019; APT1006 = CONFIRMED
+  cancel_pending_change -> {'status': 'RELEASED', 'appointment_id': 'APT-H-D947BDF3D3'}
+  APT1006 afterwards = ('CONFIRMED', 1)
+
+== 2. Confirmation and idempotency ==
+  first : CONFIRMED replayed=False appt=APT-H-B337E38C60
+  retry : CONFIRMED replayed=True (reply lost, same message id and parameters)
+  same message id, different hold -> IDEMPOTENCY_MISMATCH (BUSINESS_CONFLICT)
+  new message id, same hold       -> ALREADY_CONFIRMED
+  text from committed row: Your appointment is confirmed: dock D2, 12:00-13:00 on 04 Aug 2026. Reference APT-H-B337E38C60.
+  original APT1006 = ('CANCELLED', 0, 'RESCHEDULED')
+
+== 3. Injected failure at AFTER_OUTBOX (new shipment SHP1021) ==
+  SYSTEM_ERROR (SYSTEM_ERROR); hold still HELD ; outbox rows: 3
+  hold on SHP1021 released; held rows now: 0
+
+== 4. Reverting to the original slot after confirmation = a new request ==
+  OPTION_AVAILABLE; offered ['SLOT-JAI-045']
+  appointment rows unchanged, nothing held: True
+
+== 5. Cancelling a confirmed appointment ==
+  SHP1006, slot 12:00, now 09:35 (145 min away): {'status': 'CANCELLED', 'appointment_id': 'APT-H-B337E38C60', 'escalation_code': None, 'released_hold_id': None}
+  SHP1017, slot 12:00, now 11:30 (30 min away): ESCALATE CANCELLATION_CUTOFF | APT1017 = CONFIRMED
+
+== 6. Appointment history (SHP1006) ==
+  # 1 HOLD_ACQUIRED          APT-H-D947BDF3D3         - -> HELD      by DRIVER/DRV006 reason=DRIVER_SELECTED_OPTION
+  # 2 HOLD_RELEASED          APT-H-D947BDF3D3      HELD -> CANCELLED by DRIVER/DRV006 reason=DRIVER_CANCELLED
+  # 3 HOLD_ACQUIRED          APT-H-B337E38C60         - -> HELD      by DRIVER/DRV006 reason=DRIVER_SELECTED_OPTION
+  # 4 ORIGINAL_ENDED         APT1006          CONFIRMED -> CANCELLED by DRIVER/DRV006 reason=RESCHEDULED
+  # 5 RESCHEDULE_CONFIRMED   APT-H-B337E38C60      HELD -> CONFIRMED by DRIVER/DRV006 reason=DRIVER_CONFIRMED_OPTION
+  # 8 APPOINTMENT_CANCELLED  APT-H-B337E38C60 CONFIRMED -> CANCELLED by DRIVER/DRV006 reason=DRIVER_CANCELLED
+
+== 7. Notification outbox states ==
+  delivery run 1: sent=4 failed=1 permanent=1
+  delivery run 2: sent=1 failed=0 permanent=0
+  WAREHOUSE_PLANNER  RESCHEDULE_CONFIRMED:APT-H-B   SENT               attempts=1
+  CONSIGNEE          RESCHEDULE_CONFIRMED:APT-H-B   SENT               attempts=2
+  OPERATIONS         RESCHEDULE_CONFIRMED:APT-H-B   SENT               attempts=1
+  WAREHOUSE_PLANNER  APPOINTMENT_CANCELLED:APT-H-   SENT               attempts=1
+  CONSIGNEE          APPOINTMENT_CANCELLED:APT-H-   SENT               attempts=1
+  OPERATIONS         APPOINTMENT_CANCELLED:APT-H-   PERMANENT_FAILURE  attempts=1

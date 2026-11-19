@@ -31,6 +31,8 @@ class Settings:
     rate_limit_per_minute: int = 20
     rate_limit_per_hour: int = 100
     sqlite_busy_timeout_ms: int = 5000
+    cancel_cutoff_minutes: int = 120  # provisional (Q6): no automatic cancel closer than this to slot start
+    notification_max_attempts: int = 3
 
 
 def load_settings() -> Settings:
