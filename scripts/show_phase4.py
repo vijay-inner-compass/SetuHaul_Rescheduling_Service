@@ -10,13 +10,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from setuhaul.allocation import allocate_fcfs, rank_options  # noqa: E402
-from setuhaul.capacity import build_facility_state  # noqa: E402
-from setuhaul.clock import FakeClock  # noqa: E402
-from setuhaul.db import make_working_db, open_connection  # noqa: E402
-from setuhaul.feasibility import build_context, search_feasible_slots  # noqa: E402
-from setuhaul.option_history import get_latest_option_set, reconcile_option_set, record_option_set  # noqa: E402
-from tests.helpers import at, eta_at, seed_everything_known  # noqa: E402
+from tests.helpers import at, eta_at, seed_everything_known
+
+from setuhaul.allocation import allocate_fcfs, rank_options
+from setuhaul.capacity import build_facility_state
+from setuhaul.clock import FakeClock
+from setuhaul.db import make_working_db, open_connection
+from setuhaul.feasibility import build_context, search_feasible_slots
+from setuhaul.option_history import get_latest_option_set, reconcile_option_set, record_option_set
 
 db = open_connection(path=make_working_db(Path(tempfile.mkdtemp()) / "demo.sqlite3"))
 clock = FakeClock(at("09:35"))
