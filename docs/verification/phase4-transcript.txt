@@ -1,0 +1,29 @@
+== 1. Snapshot as supplied: no labour or consignee evidence ==
+  SHP1006 status=INCOMPLETE_FEASIBILITY_DATA feasible=0 incomplete=37
+  missing=('labour_availability', 'consignee_commitment')
+
+== 2. With labelled fixture evidence: the five contested shipments ==
+  SHP1006 (7800 kg, 45 min): OK       top=['12:00 D2', '12:00 D4', '13:00 D1'] rejected={'RELEASE_AFTER_SLOT_START': 23, 'DOCK_TYPE_MISMATCH': 23, 'SLOT_OCCUPIED': 13}
+  SHP1012 (8000 kg, 45 min): OK       top=['12:00 D2', '12:00 D4', '13:00 D1'] rejected={'RELEASE_AFTER_SLOT_START': 23, 'DOCK_TYPE_MISMATCH': 23, 'SLOT_OCCUPIED': 14}
+  SHP1013 (14000 kg, 60 min): OK       top=['12:00 D2', '12:00 D4', '13:00 D1'] rejected={'DOCK_TYPE_MISMATCH': 23, 'RELEASE_AFTER_SLOT_START': 17, 'SLOT_OCCUPIED': 13}
+  SHP1014 (21000 kg, 75 min): NO_SLOT  top=[] rejected={'UNLOAD_EXCEEDS_SLOT': 70, 'WEIGHT_EXCEEDS_DOCK_LIMIT': 28, 'RELEASE_AFTER_SLOT_START': 23}
+  SHP1009 (20000 kg, 75 min): NO_SLOT  top=[] rejected={'UNLOAD_EXCEEDS_SLOT': 70, 'DOCK_TYPE_MISMATCH': 23, 'RELEASE_AFTER_SLOT_START': 17}
+
+  FCFS in commit order ['SHP1006', 'SHP1012', 'SHP1013', 'SHP1014', 'SHP1009'] ->
+    SHP1006: SLOT-JAI-019
+    SHP1012: SLOT-JAI-047
+    SHP1013: SLOT-JAI-006
+    SHP1014: NO SLOT -> hand-off
+    SHP1009: NO SLOT -> hand-off
+
+== 3. Stored option set for SHP1006 ==
+  OPT-CB93E2CF7F79 shown_at=09:35:00 expires_at=09:50:00 rules=R1-ada7873702
+   rank 1: SLOT-JAI-019 12:00 D2 version=2b64e0345e765c9d hash=5908aac210118db0
+   rank 2: SLOT-JAI-047 12:00 D4 version=2b64e0345e765c9d hash=bb8e82b5563df8a0
+   rank 3: SLOT-JAI-006 13:00 D1 version=ff484899e4d5a9bf hash=a6cef09cd664c65a
+
+== 4. Driver returns 4 minutes later; planner books option 1 for another truck ==
+  expired=False rules_changed=False still_offerable_ranks=(2, 3)
+   rank 1 SLOT-JAI-019: NEWLY_OCCUPIED ('SLOT_OCCUPIED',) -> Option 1 was booked by someone else.
+   rank 2 SLOT-JAI-047: UNCHANGED () -> Option 2 still available.
+   rank 3 SLOT-JAI-006: UNCHANGED () -> Option 3 still available.

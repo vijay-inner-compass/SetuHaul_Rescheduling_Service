@@ -142,5 +142,8 @@ class UnloadRequirement(_Model):
 
 
 class ConsigneeCommitment(_Model):
-    latest_arrival: Aware
+    """A known commitment. ``latest_arrival=None`` means known, with no deadline."""
+
+    latest_arrival: Aware | None = None
     penalty_applies: bool = False
+    exceptional: bool = False
