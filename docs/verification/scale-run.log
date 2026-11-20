@@ -1,0 +1,145 @@
+fixture: {'loads': 360, 'docks_added': 50, 'slots_added': 720, 'shipments': 360, 'appointments': 240, 'slots_total': 826, 'appointments_active': 254}
+D: in-process timings ...
+E: write saturation ...
+A: spike ...
+B: burst ...
+C: locust ...
+{
+  "fixture": {
+    "loads": 360,
+    "docks_added": 50,
+    "slots_added": 720,
+    "shipments": 360,
+    "appointments": 240,
+    "slots_total": 826,
+    "appointments_active": 254
+  },
+  "in_process": {
+    "capacity_search": {
+      "n": 200,
+      "p50_ms": 10.7,
+      "p95_ms": 13.1,
+      "p99_ms": 14.2,
+      "max_ms": 18.3
+    },
+    "hold_txn": {
+      "n": 60,
+      "p50_ms": 3.8,
+      "p95_ms": 5.9,
+      "p99_ms": 6.3,
+      "max_ms": 11.4
+    },
+    "confirm_txn": {
+      "n": 60,
+      "p50_ms": 3.8,
+      "p95_ms": 5.2,
+      "p99_ms": 5.7,
+      "max_ms": 7.1
+    },
+    "invariant_violations": 0
+  },
+  "saturation": [
+    {
+      "writers": 1,
+      "hold_attempts": 945,
+      "attempts_per_s": 236.2,
+      "p50_ms": 3.6,
+      "p95_ms": 5.0,
+      "p99_ms": 6.8,
+      "max_ms": 14.0,
+      "outcomes": {
+        "SUCCESS": 945
+      },
+      "lock_timeout_rate_pct": 0.0,
+      "invariant_violations": 0
+    },
+    {
+      "writers": 4,
+      "hold_attempts": 977,
+      "attempts_per_s": 244.2,
+      "p50_ms": 3.6,
+      "p95_ms": 4.9,
+      "p99_ms": 9.4,
+      "max_ms": 4037.0,
+      "outcomes": {
+        "SUCCESS": 977
+      },
+      "lock_timeout_rate_pct": 0.0,
+      "invariant_violations": 0
+    },
+    {
+      "writers": 8,
+      "hold_attempts": 981,
+      "attempts_per_s": 245.2,
+      "p50_ms": 3.6,
+      "p95_ms": 4.6,
+      "p99_ms": 9.2,
+      "max_ms": 4696.8,
+      "outcomes": {
+        "SUCCESS": 981
+      },
+      "lock_timeout_rate_pct": 0.0,
+      "invariant_violations": 0
+    },
+    {
+      "writers": 16,
+      "hold_attempts": 975,
+      "attempts_per_s": 243.8,
+      "p50_ms": 3.6,
+      "p95_ms": 4.6,
+      "p99_ms": 4171.7,
+      "max_ms": 4715.4,
+      "outcomes": {
+        "SUCCESS": 975
+      },
+      "lock_timeout_rate_pct": 0.0,
+      "invariant_violations": 0
+    }
+  ],
+  "workers": 1,
+  "redis": "in-process fakeredis",
+  "compression": 51.4,
+  "spike": {
+    "n": 35,
+    "p50_ms": 45.7,
+    "p95_ms": 59.8,
+    "p99_ms": 90.6,
+    "max_ms": 90.6,
+    "http_codes": {
+      "200": 35
+    },
+    "reply_status": {
+      "REPLIED": 35
+    }
+  },
+  "burst": {
+    "n": 10,
+    "p50_ms": 109.6,
+    "p95_ms": 286.3,
+    "p99_ms": 286.3,
+    "max_ms": 286.3,
+    "drivers": 10,
+    "winners": 1,
+    "http_codes": {
+      "200": 10
+    },
+    "reply_status": {
+      "REPLIED": 10
+    }
+  },
+  "locust": {
+    "requests": 34,
+    "failures": 0,
+    "p50_ms": 28.0,
+    "p95_ms": 45.0,
+    "p99_ms": 46.0
+  },
+  "after": {
+    "invariant_violations": 0,
+    "slots_with_more_than_one_hold": 0,
+    "messages_handled": 89,
+    "temporarily_unavailable": 0,
+    "lock_or_system_error_rate_pct": 0.0,
+    "conflicting_allocations": 0
+  }
+}

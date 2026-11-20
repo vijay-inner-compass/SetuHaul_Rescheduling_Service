@@ -387,11 +387,22 @@ def create_app_from_env() -> FastAPI:
         factory = lambda: gw
     else:
         factory = UnconfiguredGateway
+    if s.redis_url.startswith("fakeredis"):  # load tests only: in-process, so run a single worker
+        import fakeredis
+
+        redis: Redis = fakeredis.FakeRedis(decode_responses=True)
+    else:
+        redis = Redis.from_url(s.redis_url, decode_responses=True)
+    clock: Clock = SystemClock()
+    if os.environ.get("SETUHAUL_FAKE_NOW"):  # load tests against the dated snapshot only
+        from setuhaul.clock import FakeClock
+
+        clock = FakeClock(parse_operational_timestamp(os.environ["SETUHAUL_FAKE_NOW"]))
     return create_app(AppDeps(
-        db_path=s.db_path, redis=Redis.from_url(s.redis_url, decode_responses=True),
+        db_path=s.db_path, redis=redis,
         webhook_secret=os.environ.get("SETUHAUL_WEBHOOK_SECRET", "").encode(), coordinator_tokens=tokens,
         fallback_path=Path(os.environ.get("SETUHAUL_FALLBACK_ESCALATIONS", "escalations-fallback.jsonl")), policy=policy,
-        gateway_factory=factory, run_maintenance=os.environ.get("SETUHAUL_RUN_MAINTENANCE") == "1"))
+        gateway_factory=factory, run_maintenance=os.environ.get("SETUHAUL_RUN_MAINTENANCE") == "1", clock=clock))
 
 
 __all__ = ["IST", "AppDeps", "create_app", "create_app_from_env", "parse_operational_timestamp", "timedelta"]
