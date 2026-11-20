@@ -33,10 +33,11 @@ def main(base: str = "HEAD") -> int:
                              capture_output=True, text=True, check=True).stdout.split()
     bad = 0
     for rel in (c for c in changed if c.endswith(".py")):
-        old = subprocess.run(["git", "show", f"{base}:{rel}"], cwd=ROOT, capture_output=True, text=True)
+        # Read the committed bytes and decode them as UTF-8 ourselves: the Windows default code page cannot read Devanagari text.
+        old = subprocess.run(["git", "show", f"{base}:{rel}"], cwd=ROOT, capture_output=True)
         if old.returncode != 0:  # a new file has nothing to compare with
             continue
-        if _dump(old.stdout) != _dump((ROOT / rel).read_text(encoding="utf-8")):
+        if _dump(old.stdout.decode("utf-8")) != _dump((ROOT / rel).read_text(encoding="utf-8")):
             print("CODE CHANGED (not comment-only):", rel)
             bad += 1
     print(f"{len(changed)} changed file(s) checked, {bad} with code changes")
