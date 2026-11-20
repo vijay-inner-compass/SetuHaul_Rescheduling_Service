@@ -4,11 +4,19 @@ Both writers take the caller's connection and never commit: they run inside the 
 as the state change they describe, so history and outbox can never disagree with the data.
 """
 
+# Lazy annotations.
 from __future__ import annotations
 
+# json stores the free-form details and payload as text columns.
 import json
+
+# sqlite3 provides the Connection type the writers use.
 import sqlite3
+
+# datetime is the timestamp type of every event.
 from datetime import datetime
+
+# Any: details and payloads are free-form dictionaries.
 from typing import Any
 
 
@@ -26,13 +34,18 @@ def append_appointment_event(
     occurred_at: datetime,
     details: dict[str, Any] | None = None,
 ) -> int:
+    # One INSERT into the append-only history table. There is deliberately no update or delete function:
+    # history is a log, so who did what and when can always be reconstructed.
     cur = conn.execute(
         "insert into appointment_events (appointment_id, shipment_id, event_type, from_status, to_status, "
         "actor_type, actor_id, reason, details_json, occurred_at) values (?,?,?,?,?,?,?,?,?,?)",
+        # sort_keys makes the stored JSON identical for identical content, which keeps comparisons and replays stable.
         (appointment_id, shipment_id, event_type, from_status, to_status, actor_type, actor_id, reason,
          json.dumps(details or {}, sort_keys=True), occurred_at.isoformat()),
     )
+    # After a successful insert SQLite always reports the new row id; the assert tells the type checker so.
     assert cur.lastrowid is not None
+    # The id lets the caller link a notification to exactly this event.
     return cur.lastrowid
 
 
@@ -46,20 +59,24 @@ def enqueue_notification(
     now: datetime,
 ) -> bool:
     """Queue a notice once per ``dedupe_key``. Returns False if it was already queued."""
+    # "insert or ignore" plus a unique index on dedupe_key means a retried request cannot queue the same notice twice.
     cur = conn.execute(
         "insert or ignore into notification_outbox (dedupe_key, recipient_type, recipient_ref, event_id, "
         "payload_json, created_at) values (?,?,?,?,?,?)",
         (dedupe_key, recipient_type, recipient_ref, event_id, json.dumps(payload, sort_keys=True), now.isoformat()),
     )
+    # rowcount is 1 when a row was inserted and 0 when the key already existed (the "ignore" case).
     return cur.rowcount == 1
 
 
 def get_appointment_history(conn: sqlite3.Connection, shipment_id: str) -> list[dict[str, Any]]:
     """Who changed what, when and why, oldest first, for one shipment."""
+    # Join to appointments to include the slot each event concerned; order by event_id for oldest-first.
     rows = conn.execute(
         "select e.event_id, e.occurred_at, e.appointment_id, e.event_type, e.from_status, e.to_status, "
         "e.actor_type, e.actor_id, e.reason, e.details_json, a.slot_id from appointment_events e "
         "join appointments a using(appointment_id) where e.shipment_id=? order by e.event_id",
         (shipment_id,),
     )
+    # Turn each row into a dict and decode the stored JSON text back into a real "details" object.
     return [{**dict(r), "details": json.loads(r["details_json"])} for r in rows]

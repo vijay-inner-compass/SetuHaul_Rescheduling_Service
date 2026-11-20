@@ -5,30 +5,53 @@ scheduler; the single-process prototype wires ``MaintenanceRunner.start`` into t
 in Phase 11. Every operation is idempotent, so several runners are safe.
 """
 
+# Lazy annotations.
 from __future__ import annotations
 
+# sqlite3 for the Connection type.
 import sqlite3
+
+# threading runs the background loop.
 import threading
+
+# Callable types the connection factory.
 from collections.abc import Callable
+
+# dataclass for result values.
 from dataclasses import dataclass
+
+# timedelta for the purge interval.
 from datetime import timedelta
 
+# The transactional expiry of one hold (releases the slot, writes history, queues the notice).
 from setuhaul.booking import expire_hold_in_txn
+
+# The injectable clock.
 from setuhaul.clock import Clock
+
+# Settings give the sweep interval.
 from setuhaul.config import load_settings
+
+# immediate(): a BEGIN IMMEDIATE transaction.
 from setuhaul.db import immediate
+
+# Old option sets are purged after their retention period.
 from setuhaul.option_history import RETENTION, purge_option_sets
 
+# The name under which the purge's last run time is stored in maintenance_runs.
 PURGE_JOB = "purge_option_sets"
+# The purge runs at most once a day.
 PURGE_EVERY = timedelta(hours=24)
 
 
+# What one expiry pass did.
 @dataclass(frozen=True)
 class ExpiryBatchResult:
     expired: int
     appointment_ids: tuple[str, ...]
 
 
+# What one full maintenance pass did.
 @dataclass(frozen=True)
 class MaintenanceResult:
     expired: int
@@ -37,7 +60,10 @@ class MaintenanceResult:
 
 def expire_due_holds(conn: sqlite3.Connection, clock: Clock, limit: int = 100) -> ExpiryBatchResult:
     """Expire up to ``limit`` holds whose TTL has elapsed (``expires_at <= now``, inclusive)."""
+    # One reading of "now" for the whole pass, so every hold is judged against the same moment.
     now = clock.now()
+    # Find overdue holds, oldest expiry first, capped at `limit` so a backlog cannot make one pass run forever.
+    # expires_epoch is a plain integer, which makes the comparison exact and index-friendly.
     due = [
         r["appointment_id"]
         for r in conn.execute(
@@ -46,9 +72,11 @@ def expire_due_holds(conn: sqlite3.Connection, clock: Clock, limit: int = 100) -
             (int(now.timestamp()), limit),
         )
     ]
+    # Ids actually expired by this pass.
     done: list[str] = []
     for appointment_id in due:
         with immediate(conn):  # one transaction per hold; re-checks status, so duplicates are no-ops
+            # Returns False if another runner (or the driver confirming) got there first; then nothing is counted.
             if expire_hold_in_txn(conn, appointment_id, now):
                 done.append(appointment_id)
     return ExpiryBatchResult(expired=len(done), appointment_ids=tuple(done))
@@ -62,31 +90,44 @@ class MaintenanceRunner:
         interval_seconds: float | None = None,
         conn_factory: Callable[[], sqlite3.Connection] | None = None,
     ) -> None:
+        # A connection for run_once() (None when the runner is only used to start a background thread).
         self._conn = conn
+        # A function that opens a fresh connection; needed because SQLite connections cannot be shared across threads.
         self._factory = conn_factory
         self._clock = clock
+        # Seconds between sweeps: the argument, or the configured default (30 s).
         self._interval = interval_seconds or load_settings().expiry_sweep_seconds
+        # Set to ask the background loop to stop.
         self._stop = threading.Event()
+        # The background thread, once started.
         self._thread: threading.Thread | None = None
 
     def close(self) -> None:
+        # Close the connection if this runner owns one.
         if self._conn is not None:
             self._conn.close()
 
     def _db(self) -> sqlite3.Connection:
+        # A clear failure if run_once() is used on a runner built without a connection.
         assert self._conn is not None, "this runner was built without a connection; use start() with a conn_factory"
         return self._conn
 
     def _purge_due(self) -> bool:
+        # When did the purge last run?
         row = self._db().execute("select last_run_epoch from maintenance_runs where job_name=?", (PURGE_JOB,)).fetchone()
+        # Due if it has never run, or at least 24 hours have passed.
         return row is None or int(self._clock.now().timestamp()) - row["last_run_epoch"] >= PURGE_EVERY.total_seconds()
 
     def run_once(self) -> MaintenanceResult:
+        # Always expire overdue holds first: that is time-critical.
         expired = expire_due_holds(self._db(), self._clock).expired
         purged = 0
+        # The housekeeping purge only runs once a day.
         if self._purge_due():
             now = self._clock.now()
+            # Delete option sets older than the retention period (30 days).
             purged = purge_option_sets(self._db(), now - RETENTION)
+            # Record when the purge ran; "on conflict ... do update" is an upsert keyed by job name.
             with immediate(self._db()):
                 self._db().execute(
                     "insert into maintenance_runs (job_name, last_run_at, last_run_epoch) values (?,?,?) "
@@ -101,8 +142,10 @@ class MaintenanceRunner:
 
         SQLite connections cannot cross threads, so the loop opens its own through ``conn_factory``.
         """
+        # Without a factory the background thread would have to share this thread's connection, which SQLite forbids.
         if self._factory is None:
             raise RuntimeError("start() needs conn_factory so the background thread owns its connection")
+        # A throwaway runner for the first sweep, which happens immediately at startup.
         boot = MaintenanceRunner(self._factory(), self._clock, self._interval)  # opened and closed on this thread
         try:
             boot.run_once()  # sweep at startup, as the plan requires
@@ -111,17 +154,21 @@ class MaintenanceRunner:
         factory = self._factory
 
         def loop() -> None:
+            # The loop opens its own connection inside its own thread.
             worker = MaintenanceRunner(factory(), self._clock, self._interval)
             try:
+                # Event.wait(timeout) sleeps for the interval but wakes at once if stop() is called; it returns True then.
                 while not self._stop.wait(self._interval):
                     worker.run_once()
             finally:
                 worker.close()
 
+        # daemon=True: the thread never keeps the process alive after the main program exits.
         self._thread = threading.Thread(target=loop, name="setuhaul-maintenance", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
+        # Ask the loop to finish, then wait up to 5 seconds for the thread to exit.
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=5)
