@@ -1,0 +1,322 @@
+{
+  "schema_version": 1,
+  "trace_id": "scripted-clarify-options-hold-confirm",
+  "source": "scripted",
+  "model": null,
+  "scenario": "clarify-options-hold-confirm",
+  "world": "snapshot + TEST_FIXTURE labour/consignee evidence",
+  "driver_id": "DRV006",
+  "thread_id": "THR001",
+  "clock_start": "2026-08-04T09:35:00+05:30",
+  "turns": [
+    {
+      "turn": 1,
+      "message_id": "MSG-DRV006-1",
+      "advance_s": 0,
+      "driver_text": "SHP1006 broke down, the repair will take 90 minutes",
+      "rounds": [
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "offer_original_slot",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "",
+          "model_error": null,
+          "tool_events": [
+            {
+              "call_id": "t1",
+              "name": "compute_eta",
+              "arguments": {
+                "shipment_id": "SHP1006",
+                "report": {
+                  "kind": "repair",
+                  "minutes": 90
+                }
+              },
+              "result": {
+                "status": "NEEDS_INPUT",
+                "code": "MISSING_TRAVEL_TIME",
+                "missing": [
+                  "travel_minutes"
+                ],
+                "ask_the_driver": "After the repair, how long will the drive to the facility take?"
+              },
+              "executed": true,
+              "error": null
+            }
+          ]
+        },
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "offer_original_slot",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "After the repair, how long will the drive to the facility take?",
+          "model_error": null,
+          "tool_events": []
+        }
+      ],
+      "reply_text": "After the repair, how long will the drive to the facility take?",
+      "reply_status": "REPLIED",
+      "escalation_reason": null,
+      "handoff_context_keys": [],
+      "facts": {
+        "live_hold": false,
+        "has_option_set": false
+      },
+      "verified_hold": false,
+      "verified_confirmed": false,
+      "loop_status": "DONE"
+    },
+    {
+      "turn": 2,
+      "message_id": "MSG-DRV006-2",
+      "advance_s": 0,
+      "driver_text": "the drive after that is 45 minutes",
+      "rounds": [
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "offer_original_slot",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "",
+          "model_error": null,
+          "tool_events": [
+            {
+              "call_id": "t1",
+              "name": "search_slot_options",
+              "arguments": {
+                "shipment_id": "SHP1006",
+                "report": {
+                  "kind": "repair",
+                  "minutes": 90,
+                  "travel_minutes": 45
+                }
+              },
+              "result": {
+                "status": "OK",
+                "option_set_id": "$OPT1",
+                "held": false,
+                "options": [
+                  {
+                    "rank": 1,
+                    "start": "12:00",
+                    "end": "13:00",
+                    "dock": "D2",
+                    "date": "04 Aug 2026",
+                    "wait_minutes": 10,
+                    "warnings": []
+                  },
+                  {
+                    "rank": 2,
+                    "start": "12:00",
+                    "end": "13:00",
+                    "dock": "D4",
+                    "date": "04 Aug 2026",
+                    "wait_minutes": 10,
+                    "warnings": []
+                  },
+                  {
+                    "rank": 3,
+                    "start": "13:00",
+                    "end": "14:00",
+                    "dock": "D1",
+                    "date": "04 Aug 2026",
+                    "wait_minutes": 70,
+                    "warnings": []
+                  }
+                ],
+                "valid_until": "09:50"
+              },
+              "executed": true,
+              "error": null
+            }
+          ]
+        },
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "offer_original_slot",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "Here are your options, none is held yet: 1) 12:00 dock D2; 2) 12:00 dock D4; 3) 13:00 dock D1",
+          "model_error": null,
+          "tool_events": []
+        }
+      ],
+      "reply_text": "Here are your options, none is held yet: 1) 12:00 dock D2; 2) 12:00 dock D4; 3) 13:00 dock D1",
+      "reply_status": "REPLIED",
+      "escalation_reason": null,
+      "handoff_context_keys": [],
+      "facts": {
+        "live_hold": false,
+        "has_option_set": false
+      },
+      "verified_hold": false,
+      "verified_confirmed": false,
+      "loop_status": "DONE"
+    },
+    {
+      "turn": 3,
+      "message_id": "MSG-DRV006-3",
+      "advance_s": 0,
+      "driver_text": "I'll take the first option",
+      "rounds": [
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "compare_option_set",
+            "offer_original_slot",
+            "request_hold",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "",
+          "model_error": null,
+          "tool_events": [
+            {
+              "call_id": "t1",
+              "name": "request_hold",
+              "arguments": {
+                "option_set_id": "$OPT1",
+                "rank": 1,
+                "driver_quote": "the first option"
+              },
+              "result": {
+                "status": "HELD",
+                "appointment_id": "$HOLD1",
+                "start": "12:00",
+                "end": "13:00",
+                "dock": "D2",
+                "date": "04 Aug 2026",
+                "until": "09:38",
+                "note": "Tell the driver it is held until that time and ask them to confirm."
+              },
+              "executed": true,
+              "error": null
+            }
+          ]
+        },
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "compare_option_set",
+            "offer_original_slot",
+            "request_hold",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "ok",
+          "model_error": null,
+          "tool_events": []
+        }
+      ],
+      "reply_text": "I am holding 12:00-13:00 at dock D2 on 04 Aug 2026 for you until 09:38. Reply to confirm this slot, or tell me if you would like another option.",
+      "reply_status": "REPLIED",
+      "escalation_reason": null,
+      "handoff_context_keys": [],
+      "facts": {
+        "live_hold": false,
+        "has_option_set": true
+      },
+      "verified_hold": true,
+      "verified_confirmed": false,
+      "loop_status": "DONE"
+    },
+    {
+      "turn": 4,
+      "message_id": "MSG-DRV006-4",
+      "advance_s": 0,
+      "driver_text": "yes, confirm it",
+      "rounds": [
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "compare_option_set",
+            "offer_original_slot",
+            "request_hold",
+            "confirm_reschedule",
+            "release_pending_change",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "",
+          "model_error": null,
+          "tool_events": [
+            {
+              "call_id": "t1",
+              "name": "confirm_reschedule",
+              "arguments": {
+                "hold_appointment_id": "$HOLD1",
+                "driver_quote": "confirm it"
+              },
+              "result": {
+                "status": "CONFIRMED",
+                "note": "The system will word the confirmation itself."
+              },
+              "executed": true,
+              "error": null
+            }
+          ]
+        },
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "compare_option_set",
+            "offer_original_slot",
+            "request_hold",
+            "confirm_reschedule",
+            "release_pending_change",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "ok",
+          "model_error": null,
+          "tool_events": []
+        }
+      ],
+      "reply_text": "Your appointment is confirmed: dock D2, 12:00-13:00 on 04 Aug 2026. Reference $HOLD1.",
+      "reply_status": "REPLIED",
+      "escalation_reason": null,
+      "handoff_context_keys": [],
+      "facts": {
+        "live_hold": true,
+        "has_option_set": true
+      },
+      "verified_hold": false,
+      "verified_confirmed": true,
+      "loop_status": "DONE"
+    }
+  ]
+}

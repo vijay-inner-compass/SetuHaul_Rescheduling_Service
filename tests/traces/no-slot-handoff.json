@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "trace_id": "scripted-no-slot-handoff",
+  "source": "scripted",
+  "model": null,
+  "scenario": "no-slot-handoff",
+  "world": "snapshot + TEST_FIXTURE labour/consignee evidence",
+  "driver_id": "DRV014",
+  "thread_id": "THR004",
+  "clock_start": "2026-08-04T09:35:00+05:30",
+  "turns": [
+    {
+      "turn": 1,
+      "message_id": "MSG-DRV014-1",
+      "advance_s": 0,
+      "driver_text": "SHP1014 is 70 minutes late",
+      "rounds": [
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "offer_original_slot",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "",
+          "model_error": null,
+          "tool_events": [
+            {
+              "call_id": "t1",
+              "name": "search_slot_options",
+              "arguments": {
+                "shipment_id": "SHP1014",
+                "report": {
+                  "kind": "late_by",
+                  "minutes": 70
+                }
+              },
+              "result": {
+                "status": "NO_SLOT",
+                "options": [],
+                "note": "Do not promise any slot; operations will take over."
+              },
+              "executed": true,
+              "error": null
+            }
+          ]
+        },
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "offer_original_slot",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "x",
+          "model_error": null,
+          "tool_events": []
+        }
+      ],
+      "reply_text": "I cannot sort this out automatically, so I have passed it to the operations team with the details. Your case reference is ESC-0001. Nothing on your booking has been changed by this. You will get updates here in this chat.",
+      "reply_status": "HANDOFF",
+      "escalation_reason": "NO_SLOT",
+      "handoff_context_keys": [
+        "eta",
+        "rejections",
+        "missing",
+        "language",
+        "tools_executed",
+        "recent_turns",
+        "selected_shipment_id",
+        "latest_option_set_id"
+      ],
+      "facts": {
+        "live_hold": false,
+        "has_option_set": false
+      },
+      "verified_hold": false,
+      "verified_confirmed": false,
+      "loop_status": "DONE"
+    }
+  ]
+}

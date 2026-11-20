@@ -1,0 +1,217 @@
+{
+  "schema_version": 1,
+  "trace_id": "scripted-hinglish-hold-expiry",
+  "source": "scripted",
+  "model": null,
+  "scenario": "hinglish-hold-expiry",
+  "world": "snapshot + TEST_FIXTURE labour/consignee evidence",
+  "driver_id": "DRV006",
+  "thread_id": "THR001",
+  "clock_start": "2026-08-04T09:35:00+05:30",
+  "turns": [
+    {
+      "turn": 1,
+      "message_id": "MSG-DRV006-1",
+      "advance_s": 0,
+      "driver_text": "SHP1006 60 minute late hai",
+      "rounds": [
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "offer_original_slot",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "",
+          "model_error": null,
+          "tool_events": [
+            {
+              "call_id": "t1",
+              "name": "search_slot_options",
+              "arguments": {
+                "shipment_id": "SHP1006",
+                "report": {
+                  "kind": "late_by",
+                  "minutes": 60
+                }
+              },
+              "result": {
+                "status": "OK",
+                "option_set_id": "$OPT1",
+                "held": false,
+                "options": [
+                  {
+                    "rank": 1,
+                    "start": "12:00",
+                    "end": "13:00",
+                    "dock": "D2",
+                    "date": "04 Aug 2026",
+                    "wait_minutes": 40,
+                    "warnings": []
+                  },
+                  {
+                    "rank": 2,
+                    "start": "12:00",
+                    "end": "13:00",
+                    "dock": "D4",
+                    "date": "04 Aug 2026",
+                    "wait_minutes": 40,
+                    "warnings": []
+                  },
+                  {
+                    "rank": 3,
+                    "start": "13:00",
+                    "end": "14:00",
+                    "dock": "D1",
+                    "date": "04 Aug 2026",
+                    "wait_minutes": 100,
+                    "warnings": []
+                  }
+                ],
+                "valid_until": "09:50"
+              },
+              "executed": true,
+              "error": null
+            }
+          ]
+        },
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "offer_original_slot",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "Ye options hain (abhi koi hold nahi): 1) 12:00 dock D2; 2) 12:00 dock D4; 3) 13:00 dock D1",
+          "model_error": null,
+          "tool_events": []
+        }
+      ],
+      "reply_text": "Ye options hain (abhi koi hold nahi): 1) 12:00 dock D2; 2) 12:00 dock D4; 3) 13:00 dock D1",
+      "reply_status": "REPLIED",
+      "escalation_reason": null,
+      "handoff_context_keys": [],
+      "facts": {
+        "live_hold": false,
+        "has_option_set": false
+      },
+      "verified_hold": false,
+      "verified_confirmed": false,
+      "loop_status": "DONE"
+    },
+    {
+      "turn": 2,
+      "message_id": "MSG-DRV006-2",
+      "advance_s": 0,
+      "driver_text": "pehla option theek hai",
+      "rounds": [
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "compare_option_set",
+            "offer_original_slot",
+            "request_hold",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "",
+          "model_error": null,
+          "tool_events": [
+            {
+              "call_id": "t1",
+              "name": "request_hold",
+              "arguments": {
+                "option_set_id": "$OPT1",
+                "rank": 1,
+                "driver_quote": "pehla option"
+              },
+              "result": {
+                "status": "HELD",
+                "appointment_id": "$HOLD1",
+                "start": "12:00",
+                "end": "13:00",
+                "dock": "D2",
+                "date": "04 Aug 2026",
+                "until": "09:38",
+                "note": "Tell the driver it is held until that time and ask them to confirm."
+              },
+              "executed": true,
+              "error": null
+            }
+          ]
+        },
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "compare_option_set",
+            "offer_original_slot",
+            "request_hold",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "ok",
+          "model_error": null,
+          "tool_events": []
+        }
+      ],
+      "reply_text": "Maine aapke liye 04 Aug 2026 ko dock D2 par 12:00-13:00 ka slot 09:38 tak hold kiya hai. Confirm karne ke liye reply karein, ya koi aur option bataiye.",
+      "reply_status": "REPLIED",
+      "escalation_reason": null,
+      "handoff_context_keys": [],
+      "facts": {
+        "live_hold": false,
+        "has_option_set": true
+      },
+      "verified_hold": true,
+      "verified_confirmed": false,
+      "loop_status": "DONE"
+    },
+    {
+      "turn": 3,
+      "message_id": "MSG-DRV006-3",
+      "advance_s": 181,
+      "driver_text": "haan confirm kar do",
+      "rounds": [
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "compare_option_set",
+            "offer_original_slot",
+            "request_hold",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "Naye options dekhte hain.",
+          "model_error": null,
+          "tool_events": []
+        }
+      ],
+      "reply_text": "Us slot par aapka hold khatam ho gaya hai. Aapki koi booking nahi badli hai aur original appointment waisi hi hai. Chahein toh main naye options dhoondh sakta hoon.\nNaye options dekhte hain.",
+      "reply_status": "REPLIED",
+      "escalation_reason": null,
+      "handoff_context_keys": [],
+      "facts": {
+        "live_hold": false,
+        "has_option_set": true
+      },
+      "verified_hold": false,
+      "verified_confirmed": false,
+      "loop_status": "DONE"
+    }
+  ]
+}

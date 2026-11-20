@@ -1,0 +1,7 @@
+clarify-options-hold-confirm.json          source=scripted turns=4 checks=17/17 mismatches=0 violations=0 taxonomy=-
+hinglish-hold-expiry.json                  source=scripted turns=3 checks=12/12 mismatches=0 violations=0 taxonomy=-
+injection-attempt.json                     source=scripted turns=1 checks=7/7 mismatches=0 violations=0 taxonomy={'TRAJECTORY': 1, 'DECISION': 1, 'TECHNICAL_OUTCOME': 1}
+never-mind-release.json                    source=scripted turns=3 checks=13/13 mismatches=0 violations=0 taxonomy=-
+no-slot-handoff.json                       source=scripted turns=1 checks=7/7 mismatches=0 violations=0 taxonomy=-
+
+5/5 traces replayed clean; 56/56 evaluator checks passed
