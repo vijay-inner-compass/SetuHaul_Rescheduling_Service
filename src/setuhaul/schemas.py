@@ -129,12 +129,24 @@ class DelayReport(_Model):
 # A usable ETA, with where it came from and how much to trust it.
 class EtaEvidence(_Model):
     eta: Aware
-    # Where the ETA came from: the driver's word or a gate check-in record.
-    source: Literal["DRIVER_DECLARED", "GATE_CHECKIN"]
+    # Where the ETA came from: the driver's word, a gate check-in record, or a GPS ping.
+    source: Literal["DRIVER_DECLARED", "GATE_CHECKIN", "GPS_ASSISTED"]
     confidence: Confidence
     baseline_type: BaselineType
     # The id of the planned/updated ETA row used as the baseline, for traceability.
     baseline_record_id: str | None = None
+    # Minutes between the driver's ETA and the GPS ETA when they disagree; None when there is no GPS comparison.
+    gps_discrepancy_minutes: int | None = None
+
+
+# One driver location fix. Coordinates are range-checked; the time must carry a timezone.
+class GpsPing(_Model):
+    # Latitude in degrees, -90 (south pole) to 90 (north pole).
+    lat: float = Field(ge=-90, le=90)
+    # Longitude in degrees, -180 to 180.
+    lon: float = Field(ge=-180, le=180)
+    # When the device recorded the fix (naive times are rejected).
+    recorded_at: Aware
 
 
 # "I need one more fact before I can work out the ETA", with the question to ask.
