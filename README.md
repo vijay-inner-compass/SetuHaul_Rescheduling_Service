@@ -8,6 +8,12 @@ SQLite is the system of record for the prototype.
 > **Status:** all twelve phases are built and verified on Windows. The prototype has **not** been run against a real model,
 > and its Hindi/Hinglish wording has not been reviewed by a native speaker. Start with `docs/client-readout.md`.
 
+## Documentation
+
+* [Code walkthrough](docs/code-walkthrough/README.md): the story behind each layer. Every source file also has line-by-line comments.
+* [Demonstration guide](docs/demonstration-guide.md): what to run, what to type and what you should see.
+* [Scenario catalogue](docs/scenario-catalogue.md): edge cases and failure scenarios, each with the test that proves it.
+
 ## Quick start (Windows PowerShell; Python 3.12)
 ```powershell
 py -3.12 -m venv .venv
