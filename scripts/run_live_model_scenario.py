@@ -1,7 +1,7 @@
 """Run ONE controlled scenario against a real model and capture its trace.
 
 Needs an approved provider and key supplied through the environment (never the repository):
-    SETUHAUL_MODEL_PROVIDER=anthropic  SETUHAUL_MODEL_ID=<approved model id>  SETUHAUL_MODEL_API_KEY=<key>
+    SETUHAUL_MODEL_PROVIDER=openai|anthropic  SETUHAUL_MODEL_ID=<approved model id>  SETUHAUL_MODEL_API_KEY=<key>
 Optional, so the cost stop is meaningful:  SETUHAUL_MODEL_PRICE_IN_PER_MTOK / SETUHAUL_MODEL_PRICE_OUT_PER_MTOK.
 
 Without them this exits with code 3 and does nothing. The raw trace goes to live_traces/ (git-ignored);

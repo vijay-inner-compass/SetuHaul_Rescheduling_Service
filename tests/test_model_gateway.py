@@ -213,3 +213,84 @@ def test_policy_comes_from_the_environment_and_holds_no_secret(monkeypatch: pyte
     assert (p.provider, p.model_id, p.max_rounds, p.max_tool_executions) == ("anthropic", "some-model", 6, 4)
     assert (p.call_timeout_s, p.request_deadline_s, p.max_output_tokens, p.temperature) == (8.0, 30.0, 800, 0.0)
     assert "secret-key" not in p.model_dump_json()
+
+
+# --- the OpenAI adapter (mock transport only) ---------------------------------------------------------------
+def openai(handler, **kw):  # type: ignore[no-untyped-def]
+    from setuhaul.model_gateway import OpenAIAdapter
+
+    return OpenAIAdapter(api_key="k-test", transport=httpx.MockTransport(handler), **kw)
+
+
+def test_openai_adapter_builds_the_request_and_parses_tool_calls() -> None:
+    seen: dict = {}  # type: ignore[type-arg]
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["url"], seen["body"], seen["headers"] = str(req.url), json.loads(req.content), dict(req.headers)
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": "checking", "tool_calls": [
+                {"id": "call_1", "type": "function", "function": {"name": "ping", "arguments": '{"a": 1}'}}]}}],
+            "usage": {"prompt_tokens": 120, "completion_tokens": 30}})
+
+    msgs = [*USER, ModelMessage(role="assistant", content="", tool_calls=(call(1),)),
+            ModelMessage(role="tool", content="{}", tool_call_id="c1", name="ping")]
+    resp = openai(handler).complete(msgs, TOOLS, POLICY)
+    assert resp.text == "checking" and resp.tool_calls[0].arguments == {"a": 1} and (resp.input_tokens, resp.output_tokens) == (120, 30)
+    body = seen["body"]
+    assert seen["url"] == "https://api.openai.com/v1/chat/completions" and body["model"] == "test-model"
+    assert body["max_completion_tokens"] == 800 and "temperature" not in body  # omitted by default: some models reject it
+    assert body["tools"][0] == {"type": "function", "function": {"name": "ping", "description": "d", "parameters": TOOLS[0]["input_schema"]}}
+    assert body["messages"][0]["role"] == "system" and body["messages"][2]["tool_calls"][0]["function"]["arguments"] == "{}"
+    assert body["messages"][3] == {"role": "tool", "tool_call_id": "c1", "content": "{}"}
+    assert "k-test" not in json.dumps(body) and seen["headers"]["authorization"] == "Bearer k-test"
+
+
+def test_openai_temperature_is_sent_only_when_asked_and_base_url_can_be_overridden(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict = {}  # type: ignore[type-arg]
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["body"], seen["url"] = json.loads(req.content), str(req.url)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    monkeypatch.setenv("SETUHAUL_OPENAI_SEND_TEMPERATURE", "1")
+    openai(handler, base_url="https://example.test/v1/").complete(USER, [], POLICY)
+    assert seen["body"]["temperature"] == 0.0 and "tools" not in seen["body"] and seen["url"] == "https://example.test/v1/chat/completions"
+
+
+def test_openai_unparseable_tool_arguments_become_an_invalid_call_not_a_crash() -> None:
+    resp = openai(lambda r: httpx.Response(200, json={"choices": [{"message": {"content": None, "tool_calls": [
+        {"id": "x", "type": "function", "function": {"name": "ping", "arguments": "{not json"}}]}}]})).complete(USER, TOOLS, POLICY)
+    assert "__unparseable_arguments__" in resp.tool_calls[0].arguments and resp.text == ""
+
+
+@pytest.mark.parametrize(("status", "exc"), [(429, TransientModelError), (500, TransientModelError), (400, PermanentModelError), (401, PermanentModelError)])
+def test_openai_classifies_http_errors(status: int, exc: type[Exception]) -> None:
+    with pytest.raises(exc):
+        openai(lambda r: httpx.Response(status)).complete(USER, TOOLS, POLICY)
+
+
+def test_openai_timeout_connection_and_missing_configuration() -> None:
+    from setuhaul.model_gateway import OpenAIAdapter
+
+    def slow(req: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow", request=req)
+
+    def refused(req: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=req)
+
+    with pytest.raises(ModelTimeout):
+        openai(slow).complete(USER, TOOLS, POLICY)
+    with pytest.raises(TransientModelError):
+        openai(refused).complete(USER, TOOLS, POLICY)
+    with pytest.raises(ModelUnavailable) as err:
+        OpenAIAdapter(api_key="").complete(USER, TOOLS, POLICY)
+    assert err.value.code == "MODEL_NOT_CONFIGURED"
+
+
+def test_build_gateway_selects_the_provider_from_policy() -> None:
+    from setuhaul.model_gateway import OpenAIAdapter, build_gateway
+
+    assert isinstance(build_gateway(POLICY.model_copy(update={"provider": "openai"})), OpenAIAdapter)
+    assert isinstance(build_gateway(POLICY.model_copy(update={"provider": "anthropic"})), AnthropicAdapter)
+    with pytest.raises(ModelUnavailable):
+        build_gateway(POLICY.model_copy(update={"provider": "other"}))

@@ -2,7 +2,7 @@
 
 The model **interprets and drafts**. Code **decides and states facts**. Provider, model id and key come from
 the environment (`SETUHAUL_MODEL_PROVIDER`, `SETUHAUL_MODEL_ID`, `SETUHAUL_MODEL_API_KEY`); none is in the repo.
-Provider approval is still open (Q9), so nothing here has called a live model.
+Two provider adapters exist, `anthropic` and `openai`, chosen by `SETUHAUL_MODEL_PROVIDER`; both are tested only against mock transports. Provider approval is still open (Q9), so nothing here has called a live model.
 
 ## Limits (`ModelPolicy`, provisional until approved)
 | Limit | Value | Enforced by |

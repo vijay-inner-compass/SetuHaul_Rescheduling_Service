@@ -222,9 +222,79 @@ class AnthropicAdapter:
                              output_tokens=usage.get("output_tokens", 0))
 
 
+class OpenAIAdapter:
+    """Chat Completions with function tools over httpx. ``transport`` lets tests inject a mock.
+
+    Temperature is omitted unless SETUHAUL_OPENAI_SEND_TEMPERATURE=1, because several current OpenAI models reject any value
+    other than their default. ``SETUHAUL_OPENAI_BASE_URL`` points it at a compatible endpoint (for example Azure OpenAI).
+    """
+
+    def __init__(self, api_key: str | None = None, transport: httpx.BaseTransport | None = None, base_url: str | None = None) -> None:
+        self._key = api_key if api_key is not None else os.environ.get("SETUHAUL_MODEL_API_KEY", "")
+        self._transport = transport
+        self._url = (base_url or os.environ.get("SETUHAUL_OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/") + "/chat/completions"
+
+    @staticmethod
+    def _convert(messages: Sequence[ModelMessage]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for m in messages:
+            if m.role in ("system", "user"):
+                out.append({"role": m.role, "content": m.content})
+            elif m.role == "assistant":
+                msg: dict[str, Any] = {"role": "assistant", "content": m.content or None}
+                if m.tool_calls:
+                    msg["tool_calls"] = [{"id": c.id, "type": "function",
+                                          "function": {"name": c.name, "arguments": json.dumps(c.arguments)}} for c in m.tool_calls]
+                out.append(msg)
+            else:
+                out.append({"role": "tool", "tool_call_id": m.tool_call_id, "content": m.content})
+        return out
+
+    def complete(self, messages: Sequence[ModelMessage], tools: Sequence[dict[str, Any]], policy: ModelPolicy) -> ModelResponse:
+        if not self._key or not policy.model_id:
+            raise ModelUnavailable("MODEL_NOT_CONFIGURED", "provider key and model id come from the environment")
+        body: dict[str, Any] = {
+            "model": policy.model_id, "max_completion_tokens": policy.max_output_tokens, "messages": self._convert(messages),
+            "tools": [{"type": "function", "function": {"name": t["name"], "description": t["description"], "parameters": t["input_schema"]}}
+                      for t in tools],
+        }
+        if not tools:
+            body.pop("tools")
+        if os.environ.get("SETUHAUL_OPENAI_SEND_TEMPERATURE") == "1":
+            body["temperature"] = policy.temperature
+        try:
+            with httpx.Client(timeout=policy.call_timeout_s, transport=self._transport) as client:
+                resp = client.post(self._url, json=body, headers={"authorization": f"Bearer {self._key}", "content-type": "application/json"})
+        except httpx.TimeoutException as exc:
+            raise ModelTimeout(str(exc)) from exc
+        except httpx.TransportError as exc:
+            raise TransientModelError(str(exc)) from exc
+        if resp.status_code == 429 or resp.status_code >= 500:
+            raise TransientModelError(f"HTTP {resp.status_code}")
+        if resp.status_code >= 400:
+            raise PermanentModelError(f"HTTP {resp.status_code}")
+        data = resp.json()
+        choice = (data.get("choices") or [{}])[0].get("message", {})
+        calls = []
+        for c in choice.get("tool_calls") or []:
+            raw = c.get("function", {}).get("arguments", "") or "{}"
+            try:
+                args = json.loads(raw)
+                if not isinstance(args, dict):
+                    raise TypeError("tool arguments must be a JSON object")
+            except (ValueError, TypeError):
+                args = {"__unparseable_arguments__": raw[:200]}  # the tool layer rejects this as INVALID_ARGUMENTS
+            calls.append(ToolCall(id=c.get("id", ""), name=c.get("function", {}).get("name", ""), arguments=args))
+        usage = data.get("usage", {})
+        return ModelResponse(text=choice.get("content") or "", tool_calls=tuple(calls),
+                             input_tokens=usage.get("prompt_tokens", 0), output_tokens=usage.get("completion_tokens", 0))
+
+
 def build_gateway(policy: ModelPolicy) -> ModelGateway:
     if policy.provider == "anthropic":
         return AnthropicAdapter()
+    if policy.provider == "openai":
+        return OpenAIAdapter()
     raise ModelUnavailable("MODEL_NOT_CONFIGURED", f"unsupported or unset provider {policy.provider!r}")
 
 
@@ -357,8 +427,26 @@ def tool_schema(name: str, description: str, args_model: type[BaseModel]) -> dic
 
 
 __all__ = [
-    "AnthropicAdapter", "LoopOutcome", "ModelGateway", "ModelMessage", "ModelPolicy", "ModelResponse",
-    "ModelTimeout", "ModelUnavailable", "PermanentModelError", "ScriptedGateway", "ToolCall", "ToolExecutor",
-    "ToolResult", "TransientModelError", "build_gateway", "complete_with_retry", "disable_external_tracing",
-    "json", "load_model_policy", "run_bounded_loop", "tool_schema",
+    "AnthropicAdapter",
+    "LoopOutcome",
+    "ModelGateway",
+    "ModelMessage",
+    "ModelPolicy",
+    "ModelResponse",
+    "ModelTimeout",
+    "ModelUnavailable",
+    "OpenAIAdapter",
+    "PermanentModelError",
+    "ScriptedGateway",
+    "ToolCall",
+    "ToolExecutor",
+    "ToolResult",
+    "TransientModelError",
+    "build_gateway",
+    "complete_with_retry",
+    "disable_external_tracing",
+    "json",
+    "load_model_policy",
+    "run_bounded_loop",
+    "tool_schema",
 ]
