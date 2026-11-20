@@ -53,6 +53,39 @@ def test_two_active_shipments_the_driver_is_asked_which(chat: Chat) -> None:
 
 
 # --- options ---------------------------------------------------------------------------------------
+def test_the_numbered_menu_is_rendered_from_the_stored_option_set_not_the_models_wording(chat: Chat) -> None:
+    r = chat.say("SHP1006 is running 60 minutes late", [
+        tc("search_slot_options", shipment_id="SHP1006", report=LATE_60),
+        say_text("Pehla 99:00 ya doosra 98:00 dock Z9 available hai, jo marzi lo.")])  # wrong, run-on wording
+    stored = chat.rows("select s.slot_start_ts, d.dock_code from option_set_items i join appointment_slots s using(slot_id) "
+                       "join docks d using(dock_id) order by i.displayed_rank")
+    lines = r.text.split("\n")
+    assert lines[0] == "These slots are available. Nothing is held yet:"
+    assert len(lines) == len(stored) + 2 == 5
+    for n, (row, line) in enumerate(zip(stored, lines[1:-1], strict=True), 1):
+        assert line.startswith(f"{n}. Dock {row[1]}, {row[0][11:16]}-")
+    assert lines[-1] == "Reply with the number (1, 2, 3) to hold one. These options are valid until 09:50."
+    assert "99:00" not in r.text and "Z9" not in r.text
+    assert chat.held() == 0
+
+
+def test_the_numbered_menu_follows_the_drivers_language(chat: Chat) -> None:
+    r = chat.say("bhai meri gaadi 60 minute late hai, SHP1006", [
+        tc("search_slot_options", shipment_id="SHP1006", report=LATE_60), say_text("Options ye hain pehla ya doosra")])
+    assert r.language == "hinglish"
+    assert r.text.startswith("Ye slots available hain. Abhi kuch bhi hold nahi hai:\n1. Dock D2, 04 Aug 2026 ko 12:00-13:00\n2. Dock ")
+    assert "Hold karne ke liye number (1, 2, 3) bataiye." in r.text
+
+
+def test_a_number_in_the_drivers_reply_holds_the_line_they_saw(chat: Chat) -> None:
+    search_and_list(chat)
+    r = chat.say("option 2 theek hai", [tc_dyn("request_hold", lambda m: {"option_set_id": facts_from(m)["latest_option_set_id"], "rank": 2,
+                                                          "driver_quote": "option 2"}), say_text("ok")])
+    shown = chat.rows("select d.dock_code from option_set_items i join appointment_slots s using(slot_id) "
+                      "join docks d using(dock_id) where i.displayed_rank=2")[0][0]
+    assert f"dock {shown} " in r.text and r.verified_hold
+
+
 def test_options_are_recorded_and_nothing_is_held(chat: Chat) -> None:
     search_and_list(chat)
     out = tool_json(chat.last_messages(), "search_slot_options")

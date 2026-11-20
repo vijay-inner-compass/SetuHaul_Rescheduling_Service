@@ -244,7 +244,7 @@
           "tool_events": []
         }
       ],
-      "reply_text": "Your estimated arrival is 11:50. These slots are available as options, not held:\n\n1. 12:00–13:00, dock D2  \n2. 12:00–13:00, dock D4  \n3. 13:00–14:00, dock D1\n\nWhich one would you like?",
+      "reply_text": "These slots are available. Nothing is held yet:\n1. Dock D2, 12:00-13:00 on 04 Aug 2026\n2. Dock D4, 12:00-13:00 on 04 Aug 2026\n3. Dock D1, 13:00-14:00 on 04 Aug 2026\nReply with the number (1, 2, 3) to hold one. These options are valid until 09:50.",
       "reply_status": "REPLIED",
       "escalation_reason": null,
       "handoff_context_keys": [],

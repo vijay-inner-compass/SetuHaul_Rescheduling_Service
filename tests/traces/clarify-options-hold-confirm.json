@@ -163,7 +163,7 @@
           "tool_events": []
         }
       ],
-      "reply_text": "Here are your options, none is held yet: 1) 12:00 dock D2; 2) 12:00 dock D4; 3) 13:00 dock D1",
+      "reply_text": "These slots are available. Nothing is held yet:\n1. Dock D2, 12:00-13:00 on 04 Aug 2026\n2. Dock D4, 12:00-13:00 on 04 Aug 2026\n3. Dock D1, 13:00-14:00 on 04 Aug 2026\nReply with the number (1, 2, 3) to hold one. These options are valid until 09:50.",
       "reply_status": "REPLIED",
       "escalation_reason": null,
       "handoff_context_keys": [],

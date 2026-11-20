@@ -115,6 +115,21 @@ T: dict[str, dict[str, str]] = {
         "hinglish": "Maine aapke liye {date} ko dock {dock} par {start}-{end} ka slot {until} tak hold kiya hai. "
                     "Confirm karne ke liye reply karein, ya koi aur option bataiye.",
     },
+    "options_intro": {
+        "en": "These slots are available. Nothing is held yet:",
+        "hi": "ये स्लॉट उपलब्ध हैं। अभी कुछ भी होल्ड नहीं है:",
+        "hinglish": "Ye slots available hain. Abhi kuch bhi hold nahi hai:",
+    },
+    "options_line": {
+        "en": "{n}. Dock {dock}, {start}-{end} on {date}",
+        "hi": "{n}. डॉक {dock}, {date} को {start}-{end}",
+        "hinglish": "{n}. Dock {dock}, {date} ko {start}-{end}",
+    },
+    "options_outro": {
+        "en": "Reply with the number ({choices}) to hold one. These options are valid until {until}.",
+        "hi": "होल्ड करने के लिए नंबर ({choices}) बताइए। ये विकल्प {until} तक मान्य हैं।",
+        "hinglish": "Hold karne ke liye number ({choices}) bataiye. Ye options {until} tak valid hain.",
+    },
     "confirmed": {
         "en": "Your appointment is confirmed: dock {dock}, {start}-{end} on {date}. Reference {ref}.",
         "hi": "आपकी अपॉइंटमेंट कन्फर्म हो गई है: डॉक {dock}, {date} को {start}-{end}। रेफरेंस {ref}।",

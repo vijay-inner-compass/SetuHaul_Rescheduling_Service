@@ -95,7 +95,7 @@ def test_chat_hold_confirm_updates_transcript_board_and_history(demo) -> None:  
     client, _ = demo
     manoj = driver_id(client, "Manoj Sharma")
     first = say(client, manoj, "my truck is 60 minutes late")
-    assert first["status"] == "REPLIED" and "none is held yet" in first["reply"] and first["http_status"] == 200
+    assert first["status"] == "REPLIED" and first["reply"].startswith("These slots are available. Nothing is held yet:\n1. Dock ") and first["http_status"] == 200
     held = say(client, manoj, "I will take the first one")
     assert "holding" in held["reply"]
     state = client.get(f"/demo/api/driver/{manoj}/state").json()

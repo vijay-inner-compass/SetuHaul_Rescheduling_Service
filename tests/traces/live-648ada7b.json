@@ -166,7 +166,7 @@
           "tool_events": []
         }
       ],
-      "reply_text": "12:00–13:00 ke liye D2 ya D4 available options hain; ya 13:00–14:00 ke liye D1. Ye options abhi hold nahi hain. Koi option chahiye?",
+      "reply_text": "Ye slots available hain. Abhi kuch bhi hold nahi hai:\n1. Dock D2, 04 Aug 2026 ko 12:00-13:00\n2. Dock D4, 04 Aug 2026 ko 12:00-13:00\n3. Dock D1, 04 Aug 2026 ko 13:00-14:00\nHold karne ke liye number (1, 2, 3) bataiye. Ye options 09:50 tak valid hain.",
       "reply_status": "REPLIED",
       "escalation_reason": null,
       "handoff_context_keys": [],

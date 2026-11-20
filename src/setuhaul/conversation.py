@@ -260,6 +260,13 @@ def _finalize(
         case = _record(services, req)
         reason, status = req.reason_code, "HANDOFF"
         parts.append(say("handoff", lang, case=case))
+    elif not parts and turn.shown_options:
+        # a menu is a stored fact too: the numbered list comes from the saved option set, never from the model's wording,
+        # so "option 1" in the driver's reply always means the line the driver saw
+        n = len(turn.shown_options)
+        parts.append(say("options_intro", lang))
+        parts.extend(say("options_line", lang, n=str(i), **o) for i, o in enumerate(turn.shown_options, 1))
+        parts.append(say("options_outro", lang, choices=", ".join(str(i) for i in range(1, n + 1)), until=turn.options_valid_until))
     elif parts:
         pass  # something was committed: the system's wording stands alone, the model's text is not used
     elif outcome.status == "DONE" and outcome.text.strip():

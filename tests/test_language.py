@@ -122,7 +122,7 @@ def test_hindi_conversation_end_to_end(chat: Chat) -> None:
     r1 = chat.say("मेरा ट्रक 60 मिनट लेट है, शिपमेंट SHP1006", [
         tc("search_slot_options", shipment_id="SHP1006", report=LATE_60),
         lambda m: say_text("ये विकल्प हैं (अभी कोई होल्ड नहीं है): " + options_text(m))])
-    assert r1.language == "hi" and r1.text.startswith("ये विकल्प हैं")
+    assert r1.language == "hi" and r1.text.startswith("ये स्लॉट उपलब्ध हैं। अभी कुछ भी होल्ड नहीं है:\n1. डॉक ")
     r2 = chat.say("पहला विकल्प ठीक है", [
         tc_dyn("request_hold", lambda m: {"option_set_id": facts_from(m)["latest_option_set_id"], "rank": 1,
                                           "driver_quote": "पहला विकल्प"}), say_text("ठीक है")])

@@ -126,6 +126,8 @@ class TurnState:
     status_read_confirmed: bool = False
     status_confirmed_times: set[str] = field(default_factory=set)  # HH:MM values of confirmed appointments read this turn
     options_shown: bool = False
+    shown_options: list[dict[str, str]] = field(default_factory=list)  # the latest option set shown this turn, as stored (rank order)
+    options_valid_until: str = ""
     committed: list[str] = field(default_factory=list)  # names of write tools that changed state
 
 
@@ -317,6 +319,8 @@ def _search_slot_options(ctx: ToolContext, a: SearchArgs) -> dict[str, Any]:
     mem = ctx.memory.load(ctx.driver_id, ctx.thread_id).state
     ctx.memory.save_structured_state(ctx.driver_id, ctx.thread_id, mem.model_copy(update={"latest_option_set_id": shown.option_set_id}))
     ctx.turn.options_shown = True
+    ctx.turn.shown_options = [_slot_facts(ctx.conn, i.slot_id) for i in shown.items]
+    ctx.turn.options_valid_until = _hhmm(shown.expires_at)
     return {"status": "OK", "option_set_id": shown.option_set_id, "held": False,
             "options": [{"rank": i.rank, **_slot_facts(ctx.conn, i.slot_id), "wait_minutes": i.decision.wait_minutes,
                          "warnings": list(i.decision.warnings)} for i in shown.items],
@@ -350,6 +354,8 @@ def _offer_original_slot(ctx: ToolContext, a: ShipmentArgs) -> dict[str, Any]:
         ctx.memory.save_structured_state(ctx.driver_id, ctx.thread_id,
                                          mem.model_copy(update={"latest_option_set_id": out.option_set.option_set_id}))
         ctx.turn.options_shown = True
+        ctx.turn.shown_options = [_slot_facts(ctx.conn, i.slot_id) for i in out.option_set.items]
+        ctx.turn.options_valid_until = _hhmm(out.option_set.expires_at)
     return {"status": out.status, "reason_codes": list(out.reason_codes), "held": False,
             "option_set_id": out.option_set.option_set_id if out.option_set else None,
             "options": [{"rank": i.rank, **_slot_facts(ctx.conn, i.slot_id)} for i in out.option_set.items] if out.option_set else []}

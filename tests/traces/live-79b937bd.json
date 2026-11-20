@@ -247,7 +247,7 @@
           "tool_events": []
         }
       ],
-      "reply_text": "Your ETA is 11:50. These options are available, but none is held:\n\n1. 04 Aug 2026, 12:00–13:00, Dock D2\n2. 04 Aug 2026, 12:00–13:00, Dock D4\n3. 04 Aug 2026, 13:00–14:00, Dock D1",
+      "reply_text": "These slots are available. Nothing is held yet:\n1. Dock D2, 12:00-13:00 on 04 Aug 2026\n2. Dock D4, 12:00-13:00 on 04 Aug 2026\n3. Dock D1, 13:00-14:00 on 04 Aug 2026\nReply with the number (1, 2, 3) to hold one. These options are valid until 09:50.",
       "reply_status": "REPLIED",
       "escalation_reason": null,
       "handoff_context_keys": [],
