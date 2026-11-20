@@ -33,6 +33,8 @@ class Settings:
     sqlite_busy_timeout_ms: int = 5000
     cancel_cutoff_minutes: int = 120  # provisional (Q6): no automatic cancel closer than this to slot start
     notification_max_attempts: int = 3
+    escalation_sla_minutes: int | None = None  # None: no SLA approved, so none is ever promised (Q16)
+    escalation_reopen_window_hours: int = 24
     model_cost_budget_usd: float = 0.05  # hard stop per handled message (alert level in the plan)
 
 

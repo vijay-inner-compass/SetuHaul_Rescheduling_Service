@@ -15,7 +15,7 @@ The audit and all Phase 1 code are read-only. The table below names what the pro
 `shipments`, `drivers`, `vehicles`, `vehicle_types`, `carriers`, `facilities`, `docks`, `dock_status_events`, `appointment_slots`, `facility_rules`, `facility_contacts`, `facility_checkins`. Slot blocking stays an operations action.
 
 ## New extension tables (named separately)
-`option_sets`, `option_set_items` (Phase 4, migration 001); `labour_windows`, `consignee_commitments` (Phase 4, migration 006, read by feasibility, written only by operations or fixtures); `appointment_hold_meta` (Phase 5, migration 002); `appointment_events`, `notification_outbox`, `maintenance_runs` (migration 003, written in the same transaction as the change they describe); `idempotency_keys`, `appointment_events`, `notification_outbox` (Phase 6); `escalation_cases`, `escalation_events` (Phase 9); `driver_sessions`, `channel_identities`, `conversation_state` (Phase 3, migration 005).
+`option_sets`, `option_set_items` (Phase 4, migration 001); `labour_windows`, `consignee_commitments` (Phase 4, migration 006, read by feasibility, written only by operations or fixtures); `appointment_hold_meta` (Phase 5, migration 002); `appointment_events`, `notification_outbox`, `maintenance_runs` (migration 003, written in the same transaction as the change they describe); `idempotency_keys`, `appointment_events`, `notification_outbox` (Phase 6); `escalation_cases`, `escalation_events` (Phase 9, migration 004, events append-only); `driver_sessions`, `channel_identities`, `conversation_state` (Phase 3, migration 005).
 
 ## Rules
 Writable connections use WAL, `foreign_keys=on` and a 5000 ms busy timeout (`setuhaul.db.open_connection`). Writes happen in `BEGIN IMMEDIATE` transactions. The seed file in `data/` is migrated in place only through numbered files in `migrations/`; the original in `SetuHaul_Data_Package/` is never touched.
@@ -40,3 +40,13 @@ The original appointment row is never modified by any Phase 5 operation.
 | `deliver_pending_notifications` | `notification_outbox` (status, attempts, last_error, delivered_at) | outside any booking transaction |
 
 `appointment_events` is append-only: triggers abort any UPDATE or DELETE.
+
+## Phase 9 writes (exact)
+| Operation | Tables written |
+|---|---|
+| `create_handoff` | `escalation_cases` (insert, or a `DUPLICATE_REQUEST` event only), `escalation_events`, `chat_threads.thread_status` = ESCALATED |
+| `claim_case` | `escalation_cases` (OPEN -> CLAIMED), `escalation_events`, `chat_messages` (one OPERATIONS update) |
+| `resolve_case` | `escalation_cases` (-> RESOLVED, resolution fields), `escalation_events`, `chat_messages` (OPERATIONS update), `chat_threads.thread_status` = OPEN |
+| `cancel_case_by_driver` | `escalation_cases` (-> CANCELLED), `escalation_events`, `chat_messages`, `chat_threads` |
+| `reopen_case` | `escalation_cases` (RESOLVED -> OPEN, `reopened_count`+1), `escalation_events`, `chat_threads` = ESCALATED |
+| `ingest_fallback_file` | the same as `create_handoff`, `source='FALLBACK_FILE'` |

@@ -148,6 +148,36 @@ T: dict[str, dict[str, str]] = {
         "hi": "मैंने अभी तक कुछ भी कन्फर्म या होल्ड नहीं किया है। मैं सिस्टम देखकर आपको बताता हूँ।",
         "hinglish": "Maine abhi tak kuch bhi confirm ya hold nahi kiya hai. Main system dekhkar aapko batata hoon.",
     },
+    "case_claimed": {
+        "en": "A member of the operations team is now looking at your case {case}. You will see updates here in this chat.",
+        "hi": "ऑपरेशंस टीम का एक सदस्य अब आपके केस {case} को देख रहा है। अपडेट आपको इसी चैट में मिलेंगे।",
+        "hinglish": "Operations team ka ek member ab aapke case {case} ko dekh raha hai. Updates aapko isi chat mein milenge.",
+    },
+    "case_resolved": {
+        "en": "Operations has resolved your case {case}: {note}",
+        "hi": "ऑपरेशंस टीम ने आपका केस {case} हल कर दिया है: {note}",
+        "hinglish": "Operations team ne aapka case {case} hal kar diya hai: {note}",
+    },
+    "case_cancelled": {
+        "en": "Your case {case} has been cancelled at your request.",
+        "hi": "आपके कहने पर केस {case} रद्द कर दिया गया है।",
+        "hinglish": "Aapke kehne par case {case} cancel kar diya gaya hai.",
+    },
+    "case_status_open": {
+        "en": "Your case {case} has been received by operations and is waiting for someone to pick it up. Updates will appear here in this chat.",
+        "hi": "आपका केस {case} ऑपरेशंस टीम को मिल गया है और किसी के उठाने का इंतज़ार कर रहा है। अपडेट इसी चैट में दिखेंगे।",
+        "hinglish": "Aapka case {case} operations team ko mil gaya hai aur kisi ke uthane ka intezaar kar raha hai. Updates isi chat mein dikhenge.",
+    },
+    "case_status_claimed": {
+        "en": "Your case {case} is being handled by the operations team. Updates will appear here in this chat.",
+        "hi": "आपका केस {case} ऑपरेशंस टीम देख रही है। अपडेट इसी चैट में दिखेंगे।",
+        "hinglish": "Aapka case {case} operations team dekh rahi hai. Updates isi chat mein dikhenge.",
+    },
+    "sla_suffix": {
+        "en": " Operations aims to respond within {minutes} minutes.",
+        "hi": " ऑपरेशंस टीम {minutes} मिनट के भीतर जवाब देने का लक्ष्य रखती है।",
+        "hinglish": " Operations team {minutes} minute ke andar jawab dene ka lakshya rakhti hai.",
+    },
     "prompt_leak": {
         "en": "I cannot share that. I can help with your delivery slot: tell me what is happening.",
         "hi": "मैं यह साझा नहीं कर सकता। मैं आपके डिलीवरी स्लॉट में मदद कर सकता हूँ: बताइए क्या हो रहा है।",

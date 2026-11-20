@@ -158,6 +158,10 @@ class ConversationMemoryStore:
             blob["turns"] = [t.model_dump() for t in self._trim(turns)]
             self._write_cache(key, blob)
 
+    def invalidate(self, driver_id: str, thread_id: str) -> None:
+        """Drop the cached window so the next load rebuilds from SQL (used when others write to the thread)."""
+        self._redis.delete(cache_key(driver_id, thread_id))
+
     # ---- state -------------------------------------------------------------------------------
     def _read_state(self, driver_id: str, thread_id: str, thread: sqlite3.Row) -> ConversationState:
         row = self._db.execute(

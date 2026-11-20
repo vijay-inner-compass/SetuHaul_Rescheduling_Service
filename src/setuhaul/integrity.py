@@ -41,6 +41,15 @@ _CHECKS: tuple[tuple[str, str], ...] = (
     ("HISTORY_WITHOUT_PARENT",
      ("select e.event_id from appointment_events e left join appointments a using(appointment_id) "
      "where a.appointment_id is null")),
+    ("CASE_CLAIMED_WITHOUT_OWNER",
+     "select case_id from escalation_cases where status='CLAIMED' and (claimed_by is null or claimed_by='')"),
+    ("CASE_RESOLVED_WITHOUT_RESOLUTION",
+     "select case_id from escalation_cases where status='RESOLVED' and (resolved_at is null or resolution_code is null)"),
+    ("CASE_WITHOUT_HISTORY",
+     ("select c.case_id from escalation_cases c left join escalation_events e using(case_id) "
+     "where e.case_id is null")),
+    ("CASE_EVENT_WITHOUT_CASE",
+     "select e.event_id from escalation_events e left join escalation_cases c using(case_id) where c.case_id is null"),
     ("REPLACED_APPOINTMENT_STILL_ACTIVE",
      (f"select n.appointment_id from appointments n join appointments o on o.appointment_id = n.replaced_appointment_id "
      f"where n.is_current=1 and n.appointment_status in {_CURRENT_ACTIVE} and o.appointment_status not in {_ENDED}")),

@@ -1,0 +1,52 @@
+== 1. A real conversation hands off (SHP1014: 21,000 kg, 75 min unload) ==
+  DRIVER : SHP1014 is 70 minutes late
+  SERVICE: I cannot sort this out automatically, so I have passed it to the operations team with the details. Your case reference is ESC-3A62B0D4. Nothing on your booking has been changed by this. You will get updates here in this chat. [HANDOFF / NO_SLOT]
+
+== 2. Coordinator queue ==
+(exit 0) CASE          STATUS   REASON                       DRIVER  SHIPMENT OPENED (IST)        CLAIMED BY
+ESC-3A62B0D4  OPEN     NO_SLOT                      DRV014  SHP1014  2026-08-04 09:35:00 -
+
+== 3. Competing claims ==
+  asha: (exit 0) CLAIMED
+  ben : (exit 2) ALREADY_CLAIMED (held by asha)
+  ben tries to resolve asha's case: (exit 2) NOT_YOUR_CASE (held by asha)
+  driver status now: Your case ESC-3A62B0D4 is being handled by the operations team. Updates will appear here in this chat.
+
+== 4. Resolution and what the driver sees in the chat ==
+  asha: (exit 0) RESOLVED
+  [OPERATIONS] A member of the operations team is now looking at your case ESC-3A62B0D4. You will see updates here in this chat.
+  [OPERATIONS] Operations has resolved your case ESC-3A62B0D4: We booked dock D6 at 14:00 for you.
+
+== 5. Case view for the coordinator ==
+(exit 0) Case ESC-3A62B0D4  [RESOLVED]  reason=NO_SLOT  source=CONVERSATION
+Driver DRV014  thread THR004  shipment SHP1014  language en
+Opened 2026-08-04 09:35:00   SLA due -   claimed by asha   reopened 0x
+Summary: No slot can be offered automatically (NO_SLOT).
+Context:
+  eta: 11:25
+  language: en
+  latest_option_set_id: None
+  missing: []
+  rejections: {'DOCK_EVENT_BLOCK': 10, 'DOCK_TYPE_MISMATCH': 23, 'OWN_CURRENT_SLOT': 1, 'RELEASE_AFTER_SLOT_START': 23, 'SLOT_BLOCKED': 7, 'SLOT_IN_PAST': 12, 'SLOT_OCCUPIED': 13, 'UNLOAD_EXCEEDS_SLOT': 70, 'WEIGHT_EXCEEDS_DOCK_LIMIT': 28}
+  selected_shipment_id: SHP1014
+  tools_executed: ['search_slot_options']
+Recent conversation:
+  [user] SHP1014 is 70 minutes late
+  [user] Origin released me late. ETA 11:25. This load is urgent. Can I get the first possible dock?
+  [assistant] I found one possible standard-dock slot, but warehouse confirmation is still pending. I will not treat it as confirmed until the scheduling system accepts it.
+Current appointment: APT1014A PENDING_CONFIRMATION 2026-08-04T11:00:00+05:30 dock D1
+History:
+  2026-08-04T09:35:00+05:30  CREATED           SYSTEM/-  NO_SLOT
+  2026-08-04T09:38:00+05:30  CLAIMED           COORDINATOR/asha  
+  2026-08-04T09:48:00+05:30  RESOLVED          COORDINATOR/asha  ASSIGNED_SLOT: We booked dock D6 at 14:00 for you.
+Resolution: ASSIGNED_SLOT - We booked dock D6 at 14:00 for you.
+
+== 6. Driver wording by language (no response time promised) ==
+  en        Your case ESC-C13D2CB8 has been received by operations and is waiting for someone to pick it up. Updates will appear here in this chat.
+  hi        आपका केस ESC-99090122 ऑपरेशंस टीम को मिल गया है और किसी के उठाने का इंतज़ार कर रहा है। अपडेट इसी चैट में दिखेंगे।
+  hinglish  Aapka case ESC-9F489569 operations team ko mil gaya hai aur kisi ke uthane ka intezaar kar raha hai. Updates isi chat mein dikhenge.
+
+== 7. Immutable audit trail and invariants ==
+  events: [('CREATED', None), ('CLAIMED', 'asha'), ('RESOLVED', 'asha')]
+  check_invariants -> []
+  unused names kept quiet: claim_case resolve_case
