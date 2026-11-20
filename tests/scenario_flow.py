@@ -78,7 +78,7 @@ class Bundle:
         return stabilise("\n".join(self.transcript))
 
 
-LATE = lambda minutes: {"kind": "late_by", "minutes": minutes}  # noqa: E731
+LATE = lambda minutes: {"kind": "late_by", "minutes": minutes}
 
 
 def options_line(msgs):  # type: ignore[no-untyped-def]
@@ -119,12 +119,12 @@ def run_scenario(workdir: Path | None = None) -> Bundle:
 
     # 1. delay with an ambiguous cause: clarification, then a derived ETA
     b.say("\n-- 1. Delay: the model must ask for the missing travel time, then the ETA is derived --")
-    r = talk("DRV006", "THR001", "09:35:00", "SHP1006 broke down, the repair will take 90 minutes", [
+    talk("DRV006", "THR001", "09:35:00", "SHP1006 broke down, the repair will take 90 minutes", [
         tc("compute_eta", shipment_id="SHP1006", report={"kind": "repair", "minutes": 90}),
         lambda m: say_text(tool_json(m, "compute_eta")["ask_the_driver"])])
     ev = chats["DRV006"].turn_traces[-1].rounds[0].tool_events[0].result
     b.check("clarification: repair time alone is not an ETA", ev["status"] == "NEEDS_INPUT" and ev["code"] == "MISSING_TRAVEL_TIME")
-    r = talk("DRV006", "THR001", "09:35:30", "the drive after that is 45 minutes", [
+    talk("DRV006", "THR001", "09:35:30", "the drive after that is 45 minutes", [
         tc("search_slot_options", shipment_id="SHP1006", report={"kind": "repair", "minutes": 90, "travel_minutes": 45}),
         lambda m: say_text(options_line(m))])
     first = tool_json(chats["DRV006"].last_messages(), "search_slot_options")
@@ -159,7 +159,7 @@ def run_scenario(workdir: Path | None = None) -> Bundle:
 
     # 4. same-slot competition
     b.say("\n-- 4. Same-slot competition: DRV006, DRV012 and DRV013 all ask for slots they were shown --")
-    pick = lambda quote, rank: tc_dyn("request_hold", lambda m: {"option_set_id": facts_from(m)["latest_option_set_id"], "rank": rank, "driver_quote": quote})  # noqa: E731
+    pick = lambda quote, rank: tc_dyn("request_hold", lambda m: {"option_set_id": facts_from(m)["latest_option_set_id"], "rank": rank, "driver_quote": quote})
     r6 = talk("DRV006", "THR001", "09:38:30", "I'll take the second option", [pick("the second option", 2), say_text("done")])
     r12 = talk("DRV012", "THR002", "09:39:00", "I'll take the second option too", [
         pick("the second option", 2), lambda m: say_text(f"Sorry, that slot is no longer available ({tool_json(m, 'request_hold')['status']}). Shall I look for other options?")])

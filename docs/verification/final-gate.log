@@ -1,0 +1,52 @@
+[notice] A new release of pip is available: 25.0.1 -> 26.3
+[notice] To update, run: C:\Users\User\AppData\Local\Temp\claude\29a6da6aec443236\59c1b105-edb2-42b8-baac-8c6ca1b14599\scratchpad\cleanvenv\Scripts\python.exe -m pip install --upgrade pip
+--- clean install done ---
+
+=== python -m pytest -q ===
+........................................................................ [ 43%]
+........................................................................ [ 58%]
+........................................................................ [ 72%]
+........................................................................ [ 87%]
+..............................................................           [100%]
+494 passed in 24.62s
+exit=0
+
+=== python -m ruff check . ===
+162 +     pick = lambda quote, rank: tc_dyn("request_hold", lambda m: {"option_set_id": facts_from(m)["latest_option_set_id"], "rank": rank, "driver_quote": quote})
+163 |     r6 = talk("DRV006", "THR001", "09:38:30", "I'll take the second option", [pick("the second option", 2), say_text("done")])
+    |
+
+Found 7 errors.
+[*] 4 fixable with `--fix` (3 unsafe fixes available with `--fix --unsafe-fixes`).
+exit=1
+
+=== python -m mypy src ===
+Success: no issues found in 35 source files
+exit=0
+
+=== python scripts/audit_data.py ===
+      "parent_id": null,
+      "status": "OK",
+      "duration_ms": 8.24
+    }
+  ]
+}
+exit=0
+
+=== python scripts/replay_traces.py ===
+hinglish-hold-expiry.json                  source=scripted turns=3 checks=12/12 mismatches=0 violations=0 taxonomy=-
+injection-attempt.json                     source=scripted turns=1 checks=7/7 mismatches=0 violations=0 taxonomy={'TRAJECTORY': 1, 'DECISION': 1, 'TECHNICAL_OUTCOME': 1}
+never-mind-release.json                    source=scripted turns=3 checks=13/13 mismatches=0 violations=0 taxonomy=-
+no-slot-handoff.json                       source=scripted turns=1 checks=7/7 mismatches=0 violations=0 taxonomy=-
+
+5/5 traces replayed clean; 56/56 evaluator checks passed
+exit=0
+
+=== python scripts/run_scenario.py ===
+           outbox  CONSIGNEE          APPOINTMENT_CANCELLED  SENT       attempts=1
+           outbox  OPERATIONS         APPOINTMENT_CANCELLED  SENT       attempts=1
+
+-- integrity: check_invariants() -> [] --
+
+23/23 checks passed; wrote C:\GitHub\SetuHaul_Rescheduling_Service\docs\verification\scenario-run.md
+exit=0
