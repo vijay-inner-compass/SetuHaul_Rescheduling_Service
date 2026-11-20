@@ -34,7 +34,7 @@ def main(base: str = "HEAD") -> int:
     bad = 0
     for rel in (c for c in changed if c.endswith(".py")):
         # Read the committed bytes and decode them as UTF-8 ourselves: the Windows default code page cannot read Devanagari text.
-        old = subprocess.run(["git", "show", f"{base}:{rel}"], cwd=ROOT, capture_output=True)
+        old = subprocess.run(["git", "show", f"{base}:{rel}"], cwd=ROOT, capture_output=True, check=False)
         if old.returncode != 0:  # a new file has nothing to compare with
             continue
         if _dump(old.stdout.decode("utf-8")) != _dump((ROOT / rel).read_text(encoding="utf-8")):
