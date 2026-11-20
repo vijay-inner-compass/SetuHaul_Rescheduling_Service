@@ -41,7 +41,7 @@ testpaths = ["tests"]
 line-length = 100
 target-version = "py312"
 src = ["src", "tests"]
-extend-exclude = ["./setuhaul", "./SetuHaul_Data_Package", "./.venv"]
+extend-exclude = ["./setuhaul", "./Archieve", "./SetuHaul_Data_Package", "./.venv"]
 
 [tool.mypy]
 python_version = "3.12"

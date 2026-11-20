@@ -56,7 +56,8 @@ scripts/        audit, replay, scenario, integrity proof, scale profile, live-mo
 load/           Locust profile
 docs/           problem definition, data audit, decision register, operations questions, model contract, client readout,
                 verification/ (every phase's evidence)
-setuhaul/       an earlier flat prototype kept untouched for reference (not part of this build)
+Archieve/       the earlier flat prototype, the brief PDF and the supplied data package, moved here by the owner (not part of this build;
+                the build's database is the hash-pinned copy at data/setuhaul.sqlite3)
 ```
 
 ## The rules the code enforces
