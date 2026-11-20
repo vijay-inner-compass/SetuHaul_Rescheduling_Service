@@ -31,7 +31,19 @@ TURNS = [
 ]
 
 
+def load_dotenv(path: Path) -> None:
+    """Read KEY=VALUE lines from a git-ignored .env without overriding the real environment. Values are never printed."""
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+
+
 def main() -> int:
+    load_dotenv(ROOT / ".env")
     policy = load_model_policy()
     if not (policy.provider and policy.model_id and os.environ.get("SETUHAUL_MODEL_API_KEY")):
         print("BLOCKED: no approved model configured. Set SETUHAUL_MODEL_PROVIDER, SETUHAUL_MODEL_ID and "
