@@ -23,12 +23,26 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from setuhaul.model_gateway import ModelUnavailable, build_gateway, load_model_policy
 
-TURNS = [
-    "SHP1006 has broken down, the repair will take about 90 minutes",
-    "after the repair the drive to the warehouse is about 45 minutes",
-    "I will take the first option",
-    "yes please confirm that slot",
-]
+SCENARIOS = {
+    "english": [
+        "SHP1006 has broken down, the repair will take about 90 minutes",
+        "after the repair the drive to the warehouse is about 45 minutes",
+        "I will take the first option",
+        "yes please confirm that slot",
+    ],
+    "hinglish": [
+        "SHP1006 ki gaadi kharab ho gayi hai, repair mein lagbhag 90 minute lagenge",
+        "repair ke baad warehouse tak drive lagbhag 45 minute ka hai",
+        "pehla option theek hai, wahi le lo",
+        "haan, confirm kar do",
+    ],
+    "hindi": [
+        "SHP1006 का ट्रक खराब हो गया है, मरम्मत में करीब 90 मिनट लगेंगे",
+        "मरम्मत के बाद गोदाम तक ड्राइव करीब 45 मिनट की है",
+        "पहला विकल्प ठीक है",
+        "हाँ, कन्फर्म कर दीजिए",
+    ],
+}
 
 
 def load_dotenv(path: Path) -> None:
@@ -43,6 +57,12 @@ def load_dotenv(path: Path) -> None:
 
 
 def main() -> int:
+    import argparse
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--language", choices=sorted(SCENARIOS), default="english")
+    lang = ap.parse_args().language
+    turns = SCENARIOS[lang]
     load_dotenv(ROOT / ".env")
     policy = load_model_policy()
     if not (policy.provider and policy.model_id and os.environ.get("SETUHAUL_MODEL_API_KEY")):
@@ -94,9 +114,9 @@ def main() -> int:
                                          phone_e164=normalize_phone(row["phone"])), thread_id="THR001")
     sink = InMemoryEscalationSink()
     trace = Trace(trace_id=f"live-{uuid.uuid4().hex[:8]}", source="live", model={"provider": policy.provider, "model_id": policy.model_id},
-                  scenario="repair-clarify-options-hold-confirm", driver_id="DRV006", thread_id="THR001",
+                  scenario=f"repair-clarify-options-hold-confirm-{lang}", driver_id="DRV006", thread_id="THR001",
                   clock_start=clock.now().isoformat())
-    for n, text in enumerate(TURNS, start=1):
+    for n, text in enumerate(turns, start=1):
         clock.advance(timedelta(seconds=20))  # the driver takes a moment between messages
         rec = RecordingGateway(gateway)
         services = ConversationServices(conn=conn, memory=memory, gateway=rec, policy=policy, sink=sink,

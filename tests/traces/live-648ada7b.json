@@ -1,0 +1,378 @@
+{
+  "schema_version": 1,
+  "trace_id": "live-648ada7b",
+  "source": "live",
+  "model": {
+    "provider": "openai",
+    "model_id": "gpt-6-luna"
+  },
+  "scenario": "repair-clarify-options-hold-confirm-hinglish",
+  "world": "snapshot + TEST_FIXTURE labour/consignee evidence",
+  "driver_id": "DRV006",
+  "thread_id": "THR001",
+  "clock_start": "2026-08-04T09:35:00+05:30",
+  "turns": [
+    {
+      "turn": 1,
+      "message_id": "LIVE-1",
+      "advance_s": 20,
+      "driver_text": "SHP1006 ki gaadi kharab ho gayi hai, repair mein lagbhag 90 minute lagenge",
+      "rounds": [
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "offer_original_slot",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "",
+          "model_error": null,
+          "tool_events": [
+            {
+              "call_id": "call_9uyqgVKhxfmkXQQEd86APnJX",
+              "name": "compute_eta",
+              "arguments": {
+                "shipment_id": "SHP1006",
+                "report": {
+                  "kind": "repair",
+                  "minutes": 90
+                }
+              },
+              "result": {
+                "status": "NEEDS_INPUT",
+                "code": "MISSING_TRAVEL_TIME",
+                "missing": [
+                  "travel_minutes"
+                ],
+                "ask_the_driver": "After the repair, how long will the drive to the facility take?"
+              },
+              "executed": true,
+              "error": null
+            }
+          ]
+        },
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "offer_original_slot",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "Repair ke baad facility tak pahunchne mein drive kitni der lagegi?",
+          "model_error": null,
+          "tool_events": []
+        }
+      ],
+      "reply_text": "Repair ke baad facility tak pahunchne mein drive kitni der lagegi?",
+      "reply_status": "REPLIED",
+      "escalation_reason": null,
+      "handoff_context_keys": [],
+      "facts": {
+        "live_hold": false,
+        "has_option_set": false
+      },
+      "verified_hold": false,
+      "verified_confirmed": false,
+      "loop_status": "DONE"
+    },
+    {
+      "turn": 2,
+      "message_id": "LIVE-2",
+      "advance_s": 20,
+      "driver_text": "repair ke baad warehouse tak drive lagbhag 45 minute ka hai",
+      "rounds": [
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "offer_original_slot",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "",
+          "model_error": null,
+          "tool_events": [
+            {
+              "call_id": "call_3oUEczN2XlACW3PJYGqGqGHL",
+              "name": "search_slot_options",
+              "arguments": {
+                "shipment_id": "SHP1006",
+                "report": {
+                  "kind": "repair",
+                  "minutes": 90,
+                  "travel_minutes": 45
+                }
+              },
+              "result": {
+                "status": "OK",
+                "option_set_id": "$OPT1",
+                "held": false,
+                "options": [
+                  {
+                    "rank": 1,
+                    "start": "12:00",
+                    "end": "13:00",
+                    "dock": "D2",
+                    "date": "04 Aug 2026",
+                    "wait_minutes": 9,
+                    "warnings": []
+                  },
+                  {
+                    "rank": 2,
+                    "start": "12:00",
+                    "end": "13:00",
+                    "dock": "D4",
+                    "date": "04 Aug 2026",
+                    "wait_minutes": 9,
+                    "warnings": []
+                  },
+                  {
+                    "rank": 3,
+                    "start": "13:00",
+                    "end": "14:00",
+                    "dock": "D1",
+                    "date": "04 Aug 2026",
+                    "wait_minutes": 69,
+                    "warnings": []
+                  }
+                ],
+                "valid_until": "09:50"
+              },
+              "executed": true,
+              "error": null
+            }
+          ]
+        },
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "offer_original_slot",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "12:00–13:00 ke liye D2 ya D4 available options hain; ya 13:00–14:00 ke liye D1. Ye options abhi hold nahi hain. Koi option chahiye?",
+          "model_error": null,
+          "tool_events": []
+        }
+      ],
+      "reply_text": "12:00–13:00 ke liye D2 ya D4 available options hain; ya 13:00–14:00 ke liye D1. Ye options abhi hold nahi hain. Koi option chahiye?",
+      "reply_status": "REPLIED",
+      "escalation_reason": null,
+      "handoff_context_keys": [],
+      "facts": {
+        "live_hold": false,
+        "has_option_set": false
+      },
+      "verified_hold": false,
+      "verified_confirmed": false,
+      "loop_status": "DONE"
+    },
+    {
+      "turn": 3,
+      "message_id": "LIVE-3",
+      "advance_s": 20,
+      "driver_text": "pehla option theek hai, wahi le lo",
+      "rounds": [
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "compare_option_set",
+            "offer_original_slot",
+            "request_hold",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "",
+          "model_error": null,
+          "tool_events": [
+            {
+              "call_id": "call_SnSMelnTgPvEtDTx3XFqnh5W",
+              "name": "compare_option_set",
+              "arguments": {
+                "option_set_id": "$OPT1"
+              },
+              "result": {
+                "option_set_id": "$OPT1",
+                "expired": false,
+                "rules_changed": false,
+                "still_offerable_ranks": [
+                  1,
+                  2,
+                  3
+                ],
+                "options": [
+                  {
+                    "rank": 1,
+                    "change": "UNCHANGED",
+                    "explanation": "Option 1 still available."
+                  },
+                  {
+                    "rank": 2,
+                    "change": "UNCHANGED",
+                    "explanation": "Option 2 still available."
+                  },
+                  {
+                    "rank": 3,
+                    "change": "UNCHANGED",
+                    "explanation": "Option 3 still available."
+                  }
+                ]
+              },
+              "executed": true,
+              "error": null
+            }
+          ]
+        },
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "compare_option_set",
+            "offer_original_slot",
+            "request_hold",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "",
+          "model_error": null,
+          "tool_events": [
+            {
+              "call_id": "call_mwnloaq4kUdSPJfuN0vBK1Vb",
+              "name": "request_hold",
+              "arguments": {
+                "option_set_id": "$OPT1",
+                "rank": 1,
+                "driver_quote": "pehla option theek hai, wahi le lo"
+              },
+              "result": {
+                "status": "HELD",
+                "appointment_id": "$HOLD1",
+                "start": "12:00",
+                "end": "13:00",
+                "dock": "D2",
+                "date": "04 Aug 2026",
+                "until": "09:39",
+                "note": "Tell the driver it is held until that time and ask them to confirm."
+              },
+              "executed": true,
+              "error": null
+            }
+          ]
+        },
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "compare_option_set",
+            "offer_original_slot",
+            "request_hold",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "Aapka pehla option—04 Aug, 12:00–13:00, D2—09:39 tak hold par hai. Confirm karna ho toh boliye.",
+          "model_error": null,
+          "tool_events": []
+        }
+      ],
+      "reply_text": "Maine aapke liye 04 Aug 2026 ko dock D2 par 12:00-13:00 ka slot 09:39 tak hold kiya hai. Confirm karne ke liye reply karein, ya koi aur option bataiye.",
+      "reply_status": "REPLIED",
+      "escalation_reason": null,
+      "handoff_context_keys": [],
+      "facts": {
+        "live_hold": false,
+        "has_option_set": true
+      },
+      "verified_hold": true,
+      "verified_confirmed": false,
+      "loop_status": "DONE"
+    },
+    {
+      "turn": 4,
+      "message_id": "LIVE-4",
+      "advance_s": 20,
+      "driver_text": "haan, confirm kar do",
+      "rounds": [
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "compare_option_set",
+            "offer_original_slot",
+            "request_hold",
+            "confirm_reschedule",
+            "release_pending_change",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "",
+          "model_error": null,
+          "tool_events": [
+            {
+              "call_id": "call_6UvqLz8U8VXmNcDd1sFvCOrw",
+              "name": "confirm_reschedule",
+              "arguments": {
+                "hold_appointment_id": "$HOLD1",
+                "driver_quote": "haan, confirm kar do"
+              },
+              "result": {
+                "status": "CONFIRMED",
+                "note": "The system will word the confirmation itself."
+              },
+              "executed": true,
+              "error": null
+            }
+          ]
+        },
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "compare_option_set",
+            "offer_original_slot",
+            "request_hold",
+            "confirm_reschedule",
+            "release_pending_change",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "Aapka naya dock appointment confirm ho gaya hai.",
+          "model_error": null,
+          "tool_events": []
+        }
+      ],
+      "reply_text": "Aapki appointment confirm ho gayi hai: dock D2, 04 Aug 2026 ko 12:00-13:00. Reference $HOLD1.",
+      "reply_status": "REPLIED",
+      "escalation_reason": null,
+      "handoff_context_keys": [],
+      "facts": {
+        "live_hold": true,
+        "has_option_set": true
+      },
+      "verified_hold": false,
+      "verified_confirmed": true,
+      "loop_status": "DONE"
+    }
+  ]
+}
