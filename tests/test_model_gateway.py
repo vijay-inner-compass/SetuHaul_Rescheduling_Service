@@ -294,3 +294,17 @@ def test_build_gateway_selects_the_provider_from_policy() -> None:
     assert isinstance(build_gateway(POLICY.model_copy(update={"provider": "anthropic"})), AnthropicAdapter)
     with pytest.raises(ModelUnavailable):
         build_gateway(POLICY.model_copy(update={"provider": "other"}))
+
+
+def test_openai_reasoning_effort_is_sent_only_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    bodies: list[dict] = []  # type: ignore[type-arg]
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(req.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    monkeypatch.delenv("SETUHAUL_OPENAI_REASONING_EFFORT", raising=False)
+    openai(handler).complete(USER, TOOLS, POLICY)
+    monkeypatch.setenv("SETUHAUL_OPENAI_REASONING_EFFORT", "none")
+    openai(handler).complete(USER, TOOLS, POLICY)
+    assert "reasoning_effort" not in bodies[0] and bodies[1]["reasoning_effort"] == "none"

@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "trace_id": "live-20debeb7",
+  "trace_id": "live-f9c78531",
   "source": "live",
   "model": {
     "provider": "openai",
-    "model_id": "GPT-6 Luna"
+    "model_id": "gpt-6-luna"
   },
   "scenario": "repair-clarify-options-hold-confirm",
   "world": "snapshot + TEST_FIXTURE labour/consignee evidence",
@@ -29,7 +29,7 @@
             "escalate_to_operations"
           ],
           "assistant_text": "",
-          "model_error": "PermanentModelError",
+          "model_error": "PermanentModelError: HTTP 400: invalid_request_error Function tools with reasoning_effort are not supported for gpt-6-luna in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none",
           "tool_events": []
         }
       ],
@@ -68,7 +68,7 @@
             "escalate_to_operations"
           ],
           "assistant_text": "",
-          "model_error": "PermanentModelError",
+          "model_error": "PermanentModelError: HTTP 400: invalid_request_error Function tools with reasoning_effort are not supported for gpt-6-luna in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none",
           "tool_events": []
         }
       ],
@@ -107,7 +107,7 @@
             "escalate_to_operations"
           ],
           "assistant_text": "",
-          "model_error": "PermanentModelError",
+          "model_error": "PermanentModelError: HTTP 400: invalid_request_error Function tools with reasoning_effort are not supported for gpt-6-luna in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none",
           "tool_events": []
         }
       ],
@@ -146,7 +146,7 @@
             "escalate_to_operations"
           ],
           "assistant_text": "",
-          "model_error": "PermanentModelError",
+          "model_error": "PermanentModelError: HTTP 400: invalid_request_error Function tools with reasoning_effort are not supported for gpt-6-luna in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none",
           "tool_events": []
         }
       ],

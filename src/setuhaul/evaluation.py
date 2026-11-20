@@ -182,7 +182,7 @@ _ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 def _redact_phone(m: re.Match[str]) -> str:
     """Digit runs that are phone numbers go; ISO dates (also digits and hyphens) stay."""
     s = m.group(0)
-    if _ISO_DATE.fullmatch(s.strip()) or sum(ch.isdigit() for ch in s) < 10:
+    if _ISO_DATE.match(s.strip()) or sum(ch.isdigit() for ch in s) < 10:
         return s
     return "[PHONE]"
 

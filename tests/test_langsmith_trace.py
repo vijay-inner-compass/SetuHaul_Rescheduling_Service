@@ -179,3 +179,7 @@ def test_flush_is_safe_with_no_tracer_and_with_a_broken_one() -> None:
             raise RuntimeError("x")
 
     flush_tracing(Bad())
+
+
+def test_redact_text_keeps_a_date_followed_by_a_time() -> None:
+    assert redact_text("eta 2026-08-04 11:50 and call +91-9000010006") == "eta 2026-08-04 11:50 and call [PHONE]"

@@ -244,3 +244,10 @@ def test_trace_files_round_trip_through_json() -> None:
     for p in TRACES:
         t = load(p)
         assert Trace.model_validate(json.loads(t.model_dump_json())) == t
+
+
+def test_sanitiser_keeps_dates_with_times_and_still_redacts_phone_numbers() -> None:
+    t = mk_trace(mk_turn(reply="ETA 2026-08-04 11:50, started 2026-08-04T09:35:00+05:30, call +91-9000010006 or 9000010006"))
+    text = sanitize_trace(t).model_dump_json()
+    assert "2026-08-04 11:50" in text and "2026-08-04T09:35:00+05:30" in text
+    assert "9000010006" not in text and text.count("[PHONE]") == 2

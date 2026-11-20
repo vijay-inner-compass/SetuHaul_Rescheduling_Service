@@ -241,7 +241,9 @@ class OpenAIAdapter:
     """Chat Completions with function tools over httpx. ``transport`` lets tests inject a mock.
 
     Temperature is omitted unless SETUHAUL_OPENAI_SEND_TEMPERATURE=1, because several current OpenAI models reject any value
-    other than their default. ``SETUHAUL_OPENAI_BASE_URL`` points it at a compatible endpoint (for example Azure OpenAI).
+    other than their default. ``SETUHAUL_OPENAI_REASONING_EFFORT`` (for example ``none``) is sent as ``reasoning_effort``; some
+    reasoning models refuse function tools on Chat Completions otherwise. ``SETUHAUL_OPENAI_BASE_URL`` points it at a
+    compatible endpoint (for example Azure OpenAI).
     """
 
     def __init__(self, api_key: str | None = None, transport: httpx.BaseTransport | None = None, base_url: str | None = None) -> None:
@@ -277,6 +279,9 @@ class OpenAIAdapter:
             body.pop("tools")
         if os.environ.get("SETUHAUL_OPENAI_SEND_TEMPERATURE") == "1":
             body["temperature"] = policy.temperature
+        effort = os.environ.get("SETUHAUL_OPENAI_REASONING_EFFORT", "").strip()
+        if effort:  # some reasoning models reject function tools unless this is "none" (provider error, 2026-11-20)
+            body["reasoning_effort"] = effort
         try:
             with httpx.Client(timeout=policy.call_timeout_s, transport=self._transport) as client:
                 resp = client.post(self._url, json=body, headers={"authorization": f"Bearer {self._key}", "content-type": "application/json"})

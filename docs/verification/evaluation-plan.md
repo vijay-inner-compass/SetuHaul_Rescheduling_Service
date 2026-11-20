@@ -1,5 +1,21 @@
 # Evaluation plan (Phase 10)
 
+## Live run result (2026-11-20): one scenario completed with a real model
+Provider `openai`, model `gpt-6-luna`, `SETUHAUL_OPENAI_REASONING_EFFORT=none` (the model refuses function tools on Chat Completions otherwise).
+Scenario: repair with no travel time -> travel time -> take the first option -> confirm. Sanitised trace: `tests/traces/live-79b937bd.json`
+(a second, failed attempt, rejected by the provider for the reasoning setting, is kept as `tests/traces/live-f9c78531.json`).
+
+I read the whole trace. What the model did, turn by turn:
+1. Looked up the shipment, asked the system for an ETA with only the repair time, received `NEEDS_INPUT` and asked the driver the system's own question. Correct.
+2. Called `compute_eta` then `search_slot_options` with the repair and travel times; presented three options and said none is held. Correct.
+3. Called `compare_option_set` first (as the prompt advises), then `request_hold` with the driver's exact words as the quote. Its own wording ("The first option is held...") was **replaced** by the system's wording from the committed hold, as designed.
+4. Called `confirm_reschedule` with the quote; the reply was the system-worded confirmation from the committed row.
+Results: 18/18 evaluator checks, no failure class on any turn, 11 rounds and 5 executed tool calls in total (caps respected), original appointment ended only on confirm, replays clean offline.
+
+Honest limits: **n = 1 scenario, one run, one model, one language (English).** It shows the contract works with a real model; it does not support any rate. It is not an evaluation of Hindi or Hinglish, of ambiguous or adversarial drivers, or of latency and cost (prices were not configured, so cost was not tracked). The two model-dependent thresholds remain unjudged: median clarification turns was 1 in this run, and 1 of 1 drivers resolved without a person, which is not "80% on the approved safe set".
+
+Found by reading it (not by the model): the sanitiser turned the date-time `2026-08-04 11:50` into `[PHONE]:50`. Fixed in the sanitiser and the LangSmith scrubber; the fixture was regenerated from the raw trace; a test now pins it. No new model-failure evaluator was added because the trace showed no model failure.
+
 ## Status of the live run: ATTEMPTED, NOT YET COMPLETED (was blocked on a key; now blocked on the model id)
 
 **Update 2026-11-20:** the owner configured `openai` with a key and ran the scenario. All four turns failed at the first model call with `HTTP 400 invalid_request_error: invalid model ID`: `.env` had `SETUHAUL_MODEL_ID=GPT-6 Luna`, a display-style name, while the account lists the API id `gpt-6-luna`. The key itself is valid (the models list returned 99 models). The failure was handled safely (`TEMPORARILY_UNAVAILABLE`, `MODEL_UNAVAILABLE` escalation, nothing booked). One of those traces is kept as `tests/traces/live-20debeb7.json`, a replayable fixture of a provider rejecting a request; the other two are in `live_traces/duplicates/` (git-ignored). **No live trace of a working model exists yet**; the steps below still apply once the id is corrected.

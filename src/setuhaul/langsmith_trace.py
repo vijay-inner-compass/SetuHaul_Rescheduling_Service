@@ -35,7 +35,7 @@ def redact_text(s: str) -> str:
 
     def phone(m: re.Match[str]) -> str:
         t = m.group(0)
-        return t if _ISO_DATE.fullmatch(t.strip()) or sum(ch.isdigit() for ch in t) < 10 else "[PHONE]"
+        return t if _ISO_DATE.match(t.strip()) or sum(ch.isdigit() for ch in t) < 10 else "[PHONE]"
 
     return _PHONE.sub(phone, s)
 

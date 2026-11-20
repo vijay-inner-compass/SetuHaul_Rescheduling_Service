@@ -49,8 +49,7 @@ Nothing here supports a claim of operational success: the snapshot is 21 shipmen
   message, and a slot with a pending (not confirmed) appointment.
 
 ## Open risks, most important first
-1. **No live-model run.** The script exists and refuses to run without a provider and key (Q9). Model quality, language quality and the
-   two model-dependent thresholds are unmeasured. Data protection for sending real driver messages to a provider is undecided.
+1. **Live-model evidence is one run.** On 2026-11-20 OpenAI `gpt-6-luna` completed the four-message scenario (18/18 evaluator checks, replays clean; see `docs/verification/evaluation-plan.md`). It is one English scenario with no cost tracking, so model quality at scale, Hindi and Hinglish quality, and the two model-dependent thresholds remain unmeasured. Data protection for real driver messages (Q9) is still undecided.
 2. **Hindi and Hinglish wording is unreviewed** and language detection and the claim guard are heuristics (word lists, regexes).
 3. **Labour and consignee evidence has no source** (Q17); the cancellation cutoff (Q6), ETA buffer (Q3) and priority classes (Q4) are defaults.
 4. **Coordinator and channel integration is minimal:** bearer tokens, a signed-webhook scheme I chose (HMAC-SHA256), updates posted to the chat
@@ -69,7 +68,7 @@ Nothing here supports a claim of operational success: the snapshot is 21 shipmen
 | Unload must fit one slot | in code | needs approval (Q20) |
 | Escalation: reopen window 24 h, no response time promised | in code | proposed (Q16) |
 | Rate limits 20/min and 100/h; language policy English, Hindi, Hinglish | in code | proposed (Q10, Q11) |
-| Model provider, model id, data protection | none set | **blocker** (Q9) |
+| Model provider, model id, data protection | OpenAI `gpt-6-luna` used for one test run; data protection undecided | **blocker for real traffic** (Q9) |
 | Labour and consignee data source | none | **blocker** (Q17) |
 | ETA buffer, priority classes | 0 min, advisory only | blockers for tuning (Q3, Q4) |
 
