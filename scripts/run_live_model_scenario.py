@@ -33,7 +33,7 @@ TURNS = [
 
 def load_dotenv(path: Path) -> None:
     """Read KEY=VALUE lines from a git-ignored .env without overriding the real environment. Values are never printed."""
-    if not path.exists():
+    if os.environ.get("SETUHAUL_DOTENV") == "off" or not path.exists():  # tests set this so they can never reach a provider
         return
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
@@ -49,6 +49,9 @@ def main() -> int:
         print("BLOCKED: no approved model configured. Set SETUHAUL_MODEL_PROVIDER, SETUHAUL_MODEL_ID and "
               "SETUHAUL_MODEL_API_KEY in the environment (decision Q9). Nothing was called.", file=sys.stderr)
         return 3
+    from setuhaul.langsmith_trace import build_tracer, flush_tracing, tracing_status
+
+    print("LangSmith tracing:", tracing_status().reason)
     try:
         gateway = build_gateway(policy)
     except ModelUnavailable as exc:
@@ -117,6 +120,7 @@ def main() -> int:
             print("  FAIL", f)
     for t in clean.turns:
         print(f"  turn {t.turn} failure classes: {classify_failure(t) or '-'}")
+    flush_tracing(build_tracer())  # send any queued LangSmith runs before the process exits (no-op unless opted in)
     print("READ THE FULL TRACE before deriving new evaluations from it.")
     return 0 if all(f.ok for f in findings) else 1
 

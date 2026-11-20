@@ -20,6 +20,7 @@ from datetime import datetime
 from typing import Annotated, Any, Literal, Protocol, TypedDict
 
 import httpx
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -162,6 +163,20 @@ class ScriptedGateway:
 
 
 # ---- the one provider adapter -------------------------------------------------------------------
+def _api_error(resp: httpx.Response) -> str:
+    """Status plus the provider's own error code and message (never request headers or keys), capped in length."""
+    detail = ""
+    try:
+        err = resp.json().get("error", {})
+        if isinstance(err, dict):
+            detail = " ".join(str(x) for x in (err.get("type"), err.get("code"), err.get("message")) if x)
+        elif err:
+            detail = str(err)
+    except ValueError:
+        pass
+    return f"HTTP {resp.status_code}" + (f": {detail[:200]}" if detail else "")
+
+
 class AnthropicAdapter:
     """Messages API over httpx. ``transport`` lets tests inject a mock; the key never leaves the env."""
 
@@ -210,9 +225,9 @@ class AnthropicAdapter:
         except httpx.TransportError as exc:
             raise TransientModelError(str(exc)) from exc
         if resp.status_code == 429 or resp.status_code >= 500:
-            raise TransientModelError(f"HTTP {resp.status_code}")
+            raise TransientModelError(_api_error(resp))
         if resp.status_code >= 400:
-            raise PermanentModelError(f"HTTP {resp.status_code}")
+            raise PermanentModelError(_api_error(resp))
         data = resp.json()
         text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
         calls = tuple(ToolCall(id=b["id"], name=b["name"], arguments=b.get("input", {}))
@@ -270,9 +285,9 @@ class OpenAIAdapter:
         except httpx.TransportError as exc:
             raise TransientModelError(str(exc)) from exc
         if resp.status_code == 429 or resp.status_code >= 500:
-            raise TransientModelError(f"HTTP {resp.status_code}")
+            raise TransientModelError(_api_error(resp))
         if resp.status_code >= 400:
-            raise PermanentModelError(f"HTTP {resp.status_code}")
+            raise PermanentModelError(_api_error(resp))
         data = resp.json()
         choice = (data.get("choices") or [{}])[0].get("message", {})
         calls = []
@@ -411,9 +426,18 @@ def run_bounded_loop(
     graph.add_conditional_edges("model", after_model, {"tools": "tools", "end": END})
     graph.add_conditional_edges("tools", after_tools, {"model": "model", "end": END})
     app = graph.compile()
+    from setuhaul.langsmith_trace import (
+        build_tracer,  # opt-in only; None unless SETUHAUL_LANGSMITH=approved and a key is set
+    )
+
+    tracer = build_tracer()
+    config: RunnableConfig = {"recursion_limit": 2 * policy.max_rounds + 10}  # backstop only
+    if tracer is not None:
+        config["callbacks"] = [tracer]
+        config["run_name"] = "setuhaul.conversation_loop"
     final: dict[str, Any] = app.invoke(
         {"messages": list(messages), "rounds": 0, "tool_executions": 0, "cost": 0.0, "status": "", "text": "", "error": ""},
-        config={"recursion_limit": 2 * policy.max_rounds + 10},  # backstop only
+        config=config,
     )
     return LoopOutcome(
         status=final["status"] or "DONE",

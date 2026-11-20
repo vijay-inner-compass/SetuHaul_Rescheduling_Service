@@ -177,3 +177,14 @@ def test_describing_someone_elses_booking_is_not_a_claim_about_this_drivers(text
 @pytest.mark.parametrize("text", ["Your slot is booked.", "It was booked for you.", "You are now booked on dock D2."])
 def test_claims_about_this_drivers_booking_are_still_caught(text: str) -> None:
     assert claims_confirmed(text)
+
+
+@pytest.mark.parametrize("text", ["Nothing has been booked or held by this message.", "I have not confirmed or held anything yet.",
+                                  "Your slot is not confirmed.", "No appointment has been booked."])
+def test_denials_are_not_mistaken_for_claims(text: str) -> None:
+    assert not claims_confirmed(text) and not claims_held(text)
+
+
+def test_a_denial_does_not_hide_a_real_claim_in_the_same_reply() -> None:
+    assert claims_confirmed("Nothing was held earlier. Your appointment is now confirmed.")
+    assert claims_held("I have not changed anything else. I am holding the 12:00 slot for you.")

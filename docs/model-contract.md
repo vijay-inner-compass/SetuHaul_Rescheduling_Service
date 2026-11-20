@@ -16,7 +16,7 @@ Two provider adapters exist, `anthropic` and `openai`, chosen by `SETUHAUL_MODEL
 
 The loop is a LangGraph state graph (decision D13). Its recursion limit is only a backstop: a mutation test that
 removes the round guard is stopped by the backstop, and the cap tests fail, proving the guards are what enforce it.
-External tracing (LangSmith) is forced off in code until operations approves a provider and redaction.
+External tracing (LangSmith) is OFF unless `SETUHAUL_LANGSMITH=approved` and `LANGSMITH_API_KEY` are both set (`langsmith_trace.py`). Global LangChain tracing stays forced off; an explicit tracer is attached whose client scrubs inputs, outputs and metadata (phones, emails, secrets and secret-named keys; `SETUHAUL_LANGSMITH_HIDE_TEXT=1` hides all message text). A tracing failure never breaks a turn. Never enabled in tests, the load profile or replay.
 
 ## What the model can call
 Read tools: `list_my_shipments`, `get_shipment_status`, `compute_eta`, `search_slot_options`, `compare_option_set`,

@@ -222,7 +222,7 @@ def test_recording_gateway_keeps_calls_and_errors() -> None:
     with pytest.raises(PermanentModelError):
         rec.complete([], [], POLICY)
     calls = rec.drain()
-    assert calls[0].response is not None and calls[0].offered == ("t",) and calls[1].error == "PermanentModelError"
+    assert calls[0].response is not None and calls[0].offered == ("t",) and calls[1].error is not None and calls[1].error.startswith("PermanentModelError")
     assert rec.drain() == []
 
 
@@ -230,11 +230,14 @@ def test_recording_gateway_keeps_calls_and_errors() -> None:
 def test_live_scenario_refuses_to_run_without_an_approved_model(tmp_path: Path) -> None:
     import os
 
+    before = set((ROOT / "live_traces").glob("*.raw.json")) if (ROOT / "live_traces").exists() else set()
     env = {k: v for k, v in os.environ.items() if not k.startswith(("SETUHAUL_MODEL", "ANTHROPIC"))}
+    env["SETUHAUL_DOTENV"] = "off"  # the script reads .env; a test must never pick up a real key and call a provider
     r = subprocess.run([sys.executable, str(ROOT / "scripts" / "run_live_model_scenario.py")], env=env, capture_output=True,
                        text=True, cwd=tmp_path, check=False)
     assert r.returncode == 3 and "BLOCKED" in r.stderr and "Nothing was called" in r.stderr
-    assert not (ROOT / "live_traces").exists() or not list((ROOT / "live_traces").glob("*.raw.json"))
+    after = set((ROOT / "live_traces").glob("*.raw.json")) if (ROOT / "live_traces").exists() else set()
+    assert after == before  # a refused run writes nothing
 
 
 def test_trace_files_round_trip_through_json() -> None:

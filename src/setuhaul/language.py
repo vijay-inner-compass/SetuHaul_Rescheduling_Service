@@ -210,9 +210,15 @@ _HOLD_CLAIMS = [re.compile(p, re.IGNORECASE) for p in (
 )]
 
 
+# "Nothing has been booked or held" and "I have not confirmed anything" deny a booking; they must not count as claiming one.
+_NEGATED = re.compile(r"\b(nothing|not|never|no|isn't|hasn't|haven't|wasn't)\b[^.!?\n]{0,40}?\b(confirmed|booked|held|holding)\b", re.IGNORECASE)
+
+
 def claims_confirmed(text: str) -> bool:
+    text = _NEGATED.sub(" ", text)
     return any(p.search(text) for p in _CONFIRM_CLAIMS)
 
 
 def claims_held(text: str) -> bool:
+    text = _NEGATED.sub(" ", text)
     return any(p.search(text) for p in _HOLD_CLAIMS)

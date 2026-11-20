@@ -1,6 +1,12 @@
 # Evaluation plan (Phase 10)
 
-## Status of the live run: BLOCKED
+## Status of the live run: ATTEMPTED, NOT YET COMPLETED (was blocked on a key; now blocked on the model id)
+
+**Update 2026-11-20:** the owner configured `openai` with a key and ran the scenario. All four turns failed at the first model call with `HTTP 400 invalid_request_error: invalid model ID`: `.env` had `SETUHAUL_MODEL_ID=GPT-6 Luna`, a display-style name, while the account lists the API id `gpt-6-luna`. The key itself is valid (the models list returned 99 models). The failure was handled safely (`TEMPORARILY_UNAVAILABLE`, `MODEL_UNAVAILABLE` escalation, nothing booked). One of those traces is kept as `tests/traces/live-20debeb7.json`, a replayable fixture of a provider rejecting a request; the other two are in `live_traces/duplicates/` (git-ignored). **No live trace of a working model exists yet**; the steps below still apply once the id is corrected.
+
+(The original status follows.)
+
+## Status as first written: BLOCKED
 The plan asks for at least one real-model scenario. **None has been run.** No provider, model id or key is configured
 (decision Q9 is unanswered) and I will not invent a trace. Everything that does not need a model is built and tested:
 `scripts/run_live_model_scenario.py` exits with code 3 and calls nothing until `SETUHAUL_MODEL_PROVIDER`,

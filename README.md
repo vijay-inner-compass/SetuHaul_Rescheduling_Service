@@ -43,7 +43,7 @@ Coordinators can also use the CLI: `python -m setuhaul.coordinator --db data/wor
 
 Model configuration comes from the environment only: `SETUHAUL_MODEL_PROVIDER`, `SETUHAUL_MODEL_ID`, `SETUHAUL_MODEL_API_KEY`
 (`SETUHAUL_MODEL_PROVIDER` is `openai` or `anthropic`; optionally a git-ignored `.env`, see `.env.example`). With none set, every turn takes the safe "cannot check bookings right now"
-path and opens an escalation case. Load-test-only switches (`SETUHAUL_USE_STUB_MODEL`, `fakeredis://`, `SETUHAUL_FAKE_NOW`) are not for production.
+path and opens an escalation case. Optional LangSmith tracing is off unless `SETUHAUL_LANGSMITH=approved` and `LANGSMITH_API_KEY` are set (scrubbed first; see `.env.example`). Load-test-only switches (`SETUHAUL_USE_STUB_MODEL`, `fakeredis://`, `SETUHAUL_FAKE_NOW`) are not for production.
 
 ## Layout
 ```

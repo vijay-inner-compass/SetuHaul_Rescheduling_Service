@@ -40,8 +40,11 @@ from setuhaul.model_gateway import (
     ModelMessage,
     ModelPolicy,
     ModelResponse,
+    ModelTimeout,
+    PermanentModelError,
     ScriptedGateway,
     ToolCall,
+    TransientModelError,
 )
 
 SCHEMA_VERSION = 1
@@ -118,7 +121,7 @@ class RecordingGateway:
         try:
             resp = self._inner.complete(messages, tools, policy)
         except Exception as exc:
-            self.calls.append(RecordedCall(tuple(messages), offered, None, type(exc).__name__))
+            self.calls.append(RecordedCall(tuple(messages), offered, None, f"{type(exc).__name__}: {str(exc)[:200]}"))
             raise
         self.calls.append(RecordedCall(tuple(messages), offered, resp))
         return resp
@@ -403,6 +406,9 @@ def replay_trace(
         for rnd in t.rounds:
             def step(msgs: Sequence[ModelMessage], rnd: RoundTrace = rnd) -> ModelResponse:
                 _scan_ids(msgs, ids)
+                if rnd.model_error:  # a recorded provider failure is replayed as the same kind of failure
+                    kind = rnd.model_error.split(":", 1)[0]
+                    raise {"TransientModelError": TransientModelError, "ModelTimeout": ModelTimeout}.get(kind, PermanentModelError)(rnd.model_error)
                 return ModelResponse(text=rnd.assistant_text, tool_calls=tuple(
                     ToolCall(id=e.call_id, name=e.name, arguments=_resolve(e.arguments, ids)) for e in rnd.tool_events))
             steps.append(step)
