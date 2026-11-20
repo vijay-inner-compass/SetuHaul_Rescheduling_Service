@@ -1,70 +1,32 @@
-Unable to find image 'python:3.12-slim' locally
-3.12-slim: Pulling from library/python
-05e0eee5572e: Pulling fs layer
-37fb86c2a767: Pulling fs layer
-68bced9e0afa: Pulling fs layer
-2dc99d2d0a39: Pulling fs layer
-2dc99d2d0a39: Download complete
-68bced9e0afa: Download complete
-05e0eee5572e: Download complete
-f26199dfe4a6: Download complete
-e0a5f9afcd02: Download complete
-37fb86c2a767: Download complete
-37fb86c2a767: Pull complete
-68bced9e0afa: Pull complete
-2dc99d2d0a39: Pull complete
-05e0eee5572e: Pull complete
-Digest: sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
-Status: Downloaded newer image for python:3.12-slim
 === Debian GNU/Linux 13 (trixie), Python 3.12.16 ===
-[notice] A new release of pip is available: 25.0.1 -> 26.3
-[notice] To update, run: pip install --upgrade pip
---- clean install done ---
 
 === python -m pytest -q ===
-........................................................................ [ 43%]
-........................................................................ [ 58%]
-........................................................................ [ 72%]
 ........................................................................ [ 87%]
 ..............................................................           [100%]
-494 passed in 33.82s
+494 passed in 34.89s
 exit=0
 
 === python -m ruff check . ===
-
-EXE002 The file is executable but no shebang is present
---> tests/trace_tools.py:1:1
-
-Found 168 errors.
-[*] 25 fixable with `--fix` (45 unsafe fixes available with `--fix --unsafe-fixes`).
-exit=1
+All checks passed!
+exit=0
 
 === python -m mypy src ===
 Success: no issues found in 35 source files
 exit=0
 
 === python scripts/audit_data.py ===
-      "parent_id": null,
-      "status": "OK",
-      "duration_ms": 4.95
     }
   ]
 }
 exit=0
 
 === python scripts/replay_traces.py ===
-hinglish-hold-expiry.json                  source=scripted turns=3 checks=12/12 mismatches=0 violations=0 taxonomy=-
-injection-attempt.json                     source=scripted turns=1 checks=7/7 mismatches=0 violations=0 taxonomy={'TRAJECTORY': 1, 'DECISION': 1, 'TECHNICAL_OUTCOME': 1}
-never-mind-release.json                    source=scripted turns=3 checks=13/13 mismatches=0 violations=0 taxonomy=-
 no-slot-handoff.json                       source=scripted turns=1 checks=7/7 mismatches=0 violations=0 taxonomy=-
 
 5/5 traces replayed clean; 56/56 evaluator checks passed
 exit=0
 
 === python scripts/run_scenario.py ===
-           outbox  CONSIGNEE          APPOINTMENT_CANCELLED  SENT       attempts=1
-           outbox  OPERATIONS         APPOINTMENT_CANCELLED  SENT       attempts=1
-
 -- integrity: check_invariants() -> [] --
 
 23/23 checks passed; wrote /work/docs/verification/scenario-run.md
