@@ -88,6 +88,7 @@ class AppDeps:
     run_maintenance: bool = False
     maintenance_interval_s: float | None = None
     exporter: InMemoryExporter | None = None
+    demo: Any = None  # a demo_ui.DemoState turns on the localhost-only demo screen
 
 
 class MessageIn(BaseModel):
@@ -367,6 +368,10 @@ def create_app(deps: AppDeps) -> FastAPI:
             return _reject(rid, 401, "UNAUTHORIZED")
         return await run_in_threadpool(with_conn, rid, lambda c: transition_response(rid, reopen_case(c, case_id, who, deps.clock)))
 
+    if deps.demo is not None:
+        from setuhaul.demo_ui import register_demo
+
+        register_demo(app, deps, process)
     return app
 
 
