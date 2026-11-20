@@ -36,7 +36,7 @@ def search_and_list(chat: Chat) -> None:
 
 # --- clarification ---------------------------------------------------------------------------------
 def test_repair_without_travel_time_asks_a_question_and_does_nothing_else(chat: Chat) -> None:
-    ask = lambda msgs: say_text(tool_json(msgs, "compute_eta")["ask_the_driver"])  # noqa: E731
+    ask = lambda msgs: say_text(tool_json(msgs, "compute_eta")["ask_the_driver"])
     r = chat.say("my truck broke down, the repair will take 90 minutes",
                  [tc("compute_eta", shipment_id="SHP1006", report={"kind": "repair", "minutes": 90}), ask])
     assert r.status == "REPLIED" and "drive" in r.text.lower() and r.tools_executed == ["compute_eta"]

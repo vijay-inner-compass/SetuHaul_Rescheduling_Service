@@ -32,11 +32,11 @@ class LanguageDetection:
 def _script_counts(text: str) -> tuple[int, int, int]:
     latin = deva = other = 0
     for ch in text:
-        if not ch.isalpha():
-            continue
         code = ord(ch)
-        if 0x0900 <= code <= 0x097F:
-            deva += 1
+        if 0x0900 <= code <= 0x097F and not (0x0964 <= code <= 0x096F):
+            deva += 1  # includes vowel signs, which are not "alphabetic" but are Devanagari text
+        elif not ch.isalpha():
+            continue
         elif unicodedata.name(ch, "").startswith("LATIN"):
             latin += 1
         else:
@@ -166,6 +166,7 @@ _CONFIRM_CLAIMS = [re.compile(p, re.IGNORECASE) for p in (
     r"\b(is|are|was|been|now|got|am)\s+(now\s+)?(confirmed|booked)\b",
     r"\bi('ve|\s+have)\s+(now\s+)?(confirmed|booked)\b",
     r"\b(booking|appointment|slot|reschedule)\s+(is\s+)?confirmed\b",
+    r"\bi\s+(just\s+|now\s+)?(confirmed|booked)\b",
     r"\bconfirm(ed)?\s+ho\s+gay[ai]\b", r"\bbook\s+ho\s+gay[ai]\b", r"\bbook\s+kar\s+diya\b",
     r"\bconfirm\s+kar\s+diya\b", r"कन्फर्म\s+हो\s+गई?\b", r"कन्फर्म\s+कर\s+दिया", r"बुक\s+हो\s+गया",
     r"बुक\s+कर\s+दिया",

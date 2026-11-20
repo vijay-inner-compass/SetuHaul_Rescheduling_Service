@@ -45,3 +45,19 @@ System facts (written by the system, not by the driver)
 
 def build_system_prompt(facts: dict[str, Any]) -> str:
     return SYSTEM_PROMPT.format(canary=PROMPT_CANARY, facts=json.dumps(facts, indent=2, sort_keys=True, default=str))
+
+
+def _norm(s: str) -> str:
+    return " ".join(s.casefold().split())
+
+
+_STATIC_LINES = [_norm(line.lstrip("- ")) for line in SYSTEM_PROMPT.splitlines() if len(line.strip()) >= 30
+                 and "{" not in line]
+
+
+def leaks_prompt(text: str) -> bool:
+    """True if the reply contains the canary or any substantial line of the system prompt, even partially."""
+    if PROMPT_CANARY in text:
+        return True
+    flat = _norm(text)
+    return any(line[:40] in flat for line in _STATIC_LINES)

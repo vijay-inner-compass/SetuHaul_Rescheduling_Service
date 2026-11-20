@@ -37,7 +37,7 @@ from setuhaul.model_gateway import (
     run_bounded_loop,
 )
 from setuhaul.observability import InMemoryExporter, RequestContext, log_event, start_span
-from setuhaul.prompts import PROMPT_CANARY, build_system_prompt
+from setuhaul.prompts import build_system_prompt, leaks_prompt
 from setuhaul.tools import ServiceUnavailable, ToolContext, ToolRegistry, TurnState
 
 ReplyStatus = Literal["REPLIED", "HANDOFF", "TEMPORARILY_UNAVAILABLE", "LANGUAGE_PROMPT"]
@@ -167,13 +167,13 @@ def _to_model_messages(system: str, ctx: ConversationContext) -> list[ModelMessa
 
 def _guard(text: str, lang: str, turn: TurnState, live_hold: bool) -> str:
     """Block model text that leaks the prompt or claims a state the database does not back."""
-    if PROMPT_CANARY in text:
+    if leaks_prompt(text):
         return say("prompt_leak", lang)
     if claims_confirmed(text) and not turn.confirmed_appointment_id:
         if not turn.status_read_confirmed:
             return say("unverified_claim", lang)
         # backed only by reading an existing confirmed appointment: it may name only the times it returned
-        mentioned = {m.replace(".", ":").zfill(5) for m in re.findall(r"\d{1,2}[:.]\d{2}", text)}
+        mentioned = {m.replace(".", ":").zfill(5) for m in re.findall(r"\b\d{1,2}[:.]\d{2}\b", text)}
         if mentioned - turn.status_confirmed_times:
             return say("unverified_claim", lang)
     if claims_held(text) and not live_hold:

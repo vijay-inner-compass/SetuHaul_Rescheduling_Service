@@ -23,7 +23,14 @@ from setuhaul.conversation import (
 from setuhaul.escalation import InMemoryEscalationSink, JsonlEscalationSink
 from setuhaul.identity import TrustedDriverContext, normalize_phone
 from setuhaul.memory import ConversationMemoryStore
-from setuhaul.model_gateway import ModelMessage, ModelPolicy, ModelResponse, ScriptedGateway, Step, ToolCall
+from setuhaul.model_gateway import (
+    ModelMessage,
+    ModelPolicy,
+    ModelResponse,
+    ScriptedGateway,
+    Step,
+    ToolCall,
+)
 
 POLICY = ModelPolicy(provider="scripted", model_id="scripted")
 
