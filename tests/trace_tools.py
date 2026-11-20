@@ -29,11 +29,24 @@ class TraceChat(Chat):
         self.gateway = recorder._inner  # type: ignore[assignment]
         services = ConversationServices(conn=self.db, memory=self.memory, gateway=recorder, policy=POLICY, sink=self.sink,
                                         fallback_sink=self.fallback, exporter=self.exporter)
-        before = len(self.sink.requests)
+        before = self._handoffs()
         reply = handle_message(InboundMessage(message_id=mid, text=text), self.trusted, self.clock, services)
-        keys = list(self.sink.requests[-1].context) if len(self.sink.requests) > before else []
+        keys = self._latest_keys() if self._handoffs() > before else []
         self.turn_traces.append(build_turn_trace(self.n, mid, text, recorder.drain(), reply, keys, advance_s))
         return reply
+
+    def _handoffs(self) -> int:
+        if hasattr(self.sink, "requests"):
+            return len(self.sink.requests)
+        return int(self.db.execute("select count(*) from escalation_cases").fetchone()[0])
+
+    def _latest_keys(self) -> list[str]:
+        if hasattr(self.sink, "requests"):
+            return list(self.sink.requests[-1].context)
+        import json
+
+        row = self.db.execute("select context_json from escalation_cases order by rowid desc limit 1").fetchone()
+        return list(json.loads(row[0]))
 
     def trace(self) -> Trace:
         raw = Trace(trace_id=f"scripted-{self.scenario}", source="scripted", scenario=self.scenario, driver_id=self.driver,

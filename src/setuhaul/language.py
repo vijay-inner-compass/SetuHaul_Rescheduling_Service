@@ -193,7 +193,8 @@ def say(key: str, lang: str | None, **fields: str) -> str:
 
 # ---- claim detection (used by the output guard) -----------------------------------------------------
 _CONFIRM_CLAIMS = [re.compile(p, re.IGNORECASE) for p in (
-    r"\b(is|are|was|been|now|got|am)\s+(now\s+)?(confirmed|booked)\b",
+    # "booked by someone else" describes another party's booking, not a claim about this driver's
+    r"\b(is|are|was|been|now|got|am)\s+(now\s+)?(confirmed|booked)\b(?!\s+(by|for)\s+(someone|somebody|another|other|a\s+different|the\s+planner|a\s+planner))",
     r"\bi('ve|\s+have)\s+(now\s+)?(confirmed|booked)\b",
     r"\b(booking|appointment|slot|reschedule)\s+(is\s+)?confirmed\b",
     r"\bi\s+(just\s+|now\s+)?(confirmed|booked)\b",

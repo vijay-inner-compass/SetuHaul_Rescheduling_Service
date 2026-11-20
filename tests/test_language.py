@@ -166,3 +166,14 @@ def test_reply_language_follows_the_driver_when_they_switch(chat: Chat) -> None:
     a = chat.say("which of my shipments are late?", [say_text("Which shipment do you mean?")])
     b = chat.say("मेरी गाड़ी लेट है", [say_text("कौन सी शिपमेंट?")])
     assert (a.language, b.language) == ("en", "hi")
+
+
+@pytest.mark.parametrize("text", ["Option 1 was booked by someone else.", "That slot was booked by another driver.",
+                                  "Option 2 is booked for a different truck."])
+def test_describing_someone_elses_booking_is_not_a_claim_about_this_drivers(text: str) -> None:
+    assert not claims_confirmed(text)
+
+
+@pytest.mark.parametrize("text", ["Your slot is booked.", "It was booked for you.", "You are now booked on dock D2."])
+def test_claims_about_this_drivers_booking_are_still_caught(text: str) -> None:
+    assert claims_confirmed(text)
