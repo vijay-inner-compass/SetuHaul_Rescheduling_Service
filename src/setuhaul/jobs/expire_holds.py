@@ -57,7 +57,7 @@ def expire_due_holds(conn: sqlite3.Connection, clock: Clock, limit: int = 100) -
 class MaintenanceRunner:
     def __init__(
         self,
-        conn: sqlite3.Connection,
+        conn: sqlite3.Connection | None,
         clock: Clock,
         interval_seconds: float | None = None,
         conn_factory: Callable[[], sqlite3.Connection] | None = None,
@@ -69,18 +69,26 @@ class MaintenanceRunner:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
+    def close(self) -> None:
+        if self._conn is not None:
+            self._conn.close()
+
+    def _db(self) -> sqlite3.Connection:
+        assert self._conn is not None, "this runner was built without a connection; use start() with a conn_factory"
+        return self._conn
+
     def _purge_due(self) -> bool:
-        row = self._conn.execute("select last_run_epoch from maintenance_runs where job_name=?", (PURGE_JOB,)).fetchone()
+        row = self._db().execute("select last_run_epoch from maintenance_runs where job_name=?", (PURGE_JOB,)).fetchone()
         return row is None or int(self._clock.now().timestamp()) - row["last_run_epoch"] >= PURGE_EVERY.total_seconds()
 
     def run_once(self) -> MaintenanceResult:
-        expired = expire_due_holds(self._conn, self._clock).expired
+        expired = expire_due_holds(self._db(), self._clock).expired
         purged = 0
         if self._purge_due():
             now = self._clock.now()
-            purged = purge_option_sets(self._conn, now - RETENTION)
-            with immediate(self._conn):
-                self._conn.execute(
+            purged = purge_option_sets(self._db(), now - RETENTION)
+            with immediate(self._db()):
+                self._db().execute(
                     "insert into maintenance_runs (job_name, last_run_at, last_run_epoch) values (?,?,?) "
                     "on conflict(job_name) do update set last_run_at=excluded.last_run_at, "
                     "last_run_epoch=excluded.last_run_epoch",
@@ -95,7 +103,11 @@ class MaintenanceRunner:
         """
         if self._factory is None:
             raise RuntimeError("start() needs conn_factory so the background thread owns its connection")
-        self.run_once()  # sweep at startup, as the plan requires
+        boot = MaintenanceRunner(self._factory(), self._clock, self._interval)  # opened and closed on this thread
+        try:
+            boot.run_once()  # sweep at startup, as the plan requires
+        finally:
+            boot.close()
         factory = self._factory
 
         def loop() -> None:
@@ -104,7 +116,7 @@ class MaintenanceRunner:
                 while not self._stop.wait(self._interval):
                     worker.run_once()
             finally:
-                worker._conn.close()
+                worker.close()
 
         self._thread = threading.Thread(target=loop, name="setuhaul-maintenance", daemon=True)
         self._thread.start()
