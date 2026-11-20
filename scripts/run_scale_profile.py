@@ -156,7 +156,8 @@ def saturation(fixture: Path, writers_list: tuple[int, ...] = (1, 4, 8, 16), sec
         stop_at = time.perf_counter() + seconds
         start = threading.Barrier(writers)
 
-        def loop(job: tuple[str, str, str, str, bool]) -> None:
+        def loop(job: tuple[str, str, str, str, bool], work: Path = work, start: threading.Barrier = start, stop_at: float = stop_at,
+                 clock: FakeClock = clock, lock: threading.Lock = lock, lat: list[float] = lat, classes: dict[str, int] = classes) -> None:
             driver, thread, sid, opt, usable = job
             conn = open_connection(path=work)
             start.wait()
