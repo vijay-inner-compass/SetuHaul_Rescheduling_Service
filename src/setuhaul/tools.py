@@ -54,17 +54,21 @@ from setuhaul.capacity import build_facility_state
 # Injectable clock.
 from setuhaul.clock import Clock
 
+# Runtime settings (GPS thresholds).
+from setuhaul.config import load_settings
+
 # IST timezone and timestamp parsing.
 from setuhaul.db import IST, parse_operational_timestamp
 
 # The hand-off request type.
 from setuhaul.escalation import HandoffRequest
 
-# ETA derivation.
+# ETA derivation, and the GPS travel-time lookup it can use.
 from setuhaul.eta import derive_eta, load_eta_records
 
 # Slot search.
 from setuhaul.feasibility import build_context, search_feasible_slots
+from setuhaul.gps import gps_travel_minutes_for
 
 # Authorisation helpers; the driver's identity is trusted context, never a tool argument.
 from setuhaul.identity import AuthError, TrustedDriverContext, authorize_shipment
@@ -193,6 +197,8 @@ class TurnState:
     options_shown: bool = False
     shown_options: list[dict[str, str]] = field(default_factory=list)  # the latest option set shown this turn, as stored (rank order)
     options_valid_until: str = ""
+    # Minutes by which the driver's ETA and the GPS ETA disagree, when a search found them far apart (else None).
+    gps_discrepancy_minutes: int | None = None
     committed: list[str] = field(default_factory=list)  # names of write tools that changed state
 
 
@@ -296,16 +302,25 @@ def _eta_for(ctx: ToolContext, shipment_id: str, report: ReportArgs | None) -> E
     gate_row = ctx.conn.execute("select gate_in_ts from facility_checkins where shipment_id=?", (shipment_id,)).fetchone()
     # Wrap the gate time (or None).
     gate = GateEvidence(gate_in_ts=parse_operational_timestamp(gate_row[0]) if gate_row and gate_row[0] else None)
-    # Apply the ETA rules.
-    return derive_eta(_report(ctx, report) if report else None, planned, current, gate, ctx.clock)
+    # Policy values (freshness window, mismatch threshold, speed) come from the settings, as in the API layer.
+    settings = load_settings()
+    # Remaining drive time from the latest fresh GPS ping, or None when there is none.
+    gps_minutes = gps_travel_minutes_for(ctx.conn, shipment_id, ctx.clock, settings)
+    # Apply the ETA rules, with GPS filling a missing travel time and cross-checking the driver's figure.
+    return derive_eta(_report(ctx, report) if report else None, planned, current, gate, ctx.clock,
+                      gps_travel_minutes=gps_minutes, gps_mismatch_minutes=settings.gps_mismatch_minutes)
 
 
 # Convert an ETA outcome to the dictionary the model sees.
 def _eta_payload(eta: EtaEvidence | ClarificationNeeded | EtaConflict) -> dict[str, Any]:
     # A usable ETA.
     if isinstance(eta, EtaEvidence):
-        return {"status": "ETA", "eta": f"{eta.eta.astimezone(IST):%Y-%m-%d %H:%M}", "source": eta.source,
-                "confidence": eta.confidence, "baseline": eta.baseline_type.value}
+        payload: dict[str, Any] = {"status": "ETA", "eta": f"{eta.eta.astimezone(IST):%Y-%m-%d %H:%M}", "source": eta.source,
+                                   "confidence": eta.confidence, "baseline": eta.baseline_type.value}
+        # Surface the GPS-vs-driver gap only when GPS actually disagreed, so other payloads keep their shape.
+        if eta.gps_discrepancy_minutes is not None:
+            payload["gps_discrepancy_minutes"] = eta.gps_discrepancy_minutes
+        return payload
     # A question the model must ask the driver.
     if isinstance(eta, ClarificationNeeded):
         return {"status": "NEEDS_INPUT", "code": eta.code, "missing": list(eta.missing), "ask_the_driver": eta.question}
@@ -435,11 +450,22 @@ def _search_slot_options(ctx: ToolContext, a: SearchArgs) -> dict[str, Any]:
     # Diagnostic facts attached to a hand-off.
     summary = {"eta": f"{eta.eta.astimezone(IST):%H:%M}", "rejections": result.rejection_counts,
                "missing": sorted({m for d in result.incomplete for m in d.missing})}
+    # Text added to the hand-off summary and the GPS facts added to payloads, only when GPS disagreed with the driver.
+    gps_note = ""
+    gps_facts: dict[str, Any] = {}
+    # Set on every search (None when there is no gap), so an earlier search in this turn cannot leak its note into this menu.
+    ctx.turn.gps_discrepancy_minutes = eta.gps_discrepancy_minutes
+    if eta.gps_discrepancy_minutes is not None:
+        # The facts the coordinator and the model need: the gap, where the ETA came from, and how far it is trusted.
+        gps_facts = {"gps_discrepancy_minutes": eta.gps_discrepancy_minutes, "eta_source": eta.source, "confidence": eta.confidence}
+        summary.update(gps_facts)
+        gps_note = (f" GPS disagrees with the driver's ETA by {eta.gps_discrepancy_minutes} min "
+                    f"(eta source {eta.source}, confidence {eta.confidence}).")
     # No slot can be offered: map the result to a hand-off reason, raise it, and tell the model to promise nothing.
     if result.status != "OK":
         reason = {"NO_SLOT": "NO_SLOT", "REQUIRES_APPROVAL": "APPROVAL_REQUIRED",
                   "INCOMPLETE_FEASIBILITY_DATA": "INCOMPLETE_FEASIBILITY_DATA"}[result.status]
-        _handoff(ctx, reason, a.shipment_id, f"No slot can be offered automatically ({result.status}).", **summary)
+        _handoff(ctx, reason, a.shipment_id, f"No slot can be offered automatically ({result.status}).{gps_note}", **summary)
         return {"status": result.status, "options": [], "note": "Do not promise any slot; operations will take over."}
     # Take the best three.
     ranked = rank_options(result.feasible, limit=3)
@@ -456,7 +482,7 @@ def _search_slot_options(ctx: ToolContext, a: SearchArgs) -> dict[str, Any]:
     return {"status": "OK", "option_set_id": shown.option_set_id, "held": False,
             "options": [{"rank": i.rank, **_slot_facts(ctx.conn, i.slot_id), "wait_minutes": i.decision.wait_minutes,
                          "warnings": list(i.decision.warnings)} for i in shown.items],
-            "valid_until": _hhmm(shown.expires_at)}
+            "valid_until": _hhmm(shown.expires_at), **gps_facts}
 
 
 # Read tool: what changed in a previously shown menu.

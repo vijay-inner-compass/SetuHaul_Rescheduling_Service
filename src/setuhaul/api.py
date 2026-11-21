@@ -96,6 +96,9 @@ from setuhaul.escalation import (
     resolve_case,
 )
 
+# GPS ping storage and the driver's active shipment.
+from setuhaul.gps import UnknownShipment, active_shipment_for_driver, store_ping
+
 # Phone-to-driver lookup and webhook signature check.
 from setuhaul.identity import AuthError, resolve_driver, verify_channel_request
 
@@ -120,10 +123,15 @@ from setuhaul.observability import InMemoryExporter
 # Per-driver rate limiting.
 from setuhaul.rate_limit import RateLimits, check_rate_limit
 
+# The validated ping shape.
+from setuhaul.schemas import GpsPing
+
 # A message stuck in PROCESSING for this long is presumed abandoned and may be reclaimed.
 STALE_PROCESSING_SECONDS = 60
 # A signed status request older than this (5 minutes) is rejected, so a captured request cannot be replayed later.
 SIGNATURE_WINDOW_SECONDS = 300
+# A GPS ping may be stamped at most this far (5 minutes) ahead of the server clock; allows small device clock drift only.
+GPS_MAX_FUTURE_SECONDS = 300
 
 
 class UnconfiguredGateway:
@@ -175,6 +183,20 @@ class MessageIn(BaseModel):
     message_id: str = Field(min_length=1, max_length=128)
     # The driver's message, 1 to 2000 characters.
     text: str = Field(min_length=1, max_length=2000)
+
+
+# A telematics ping body: GpsPing's validated fields (range, aware time, extra='forbid') plus the shipment id.
+class TelematicsPingIn(GpsPing):
+    # The shipment the vehicle is serving.
+    shipment_id: str = Field(min_length=1, max_length=64)
+
+
+# A driver-shared location body: GpsPing's fields plus the sender phone (JSON key 'from').
+class DriverLocationIn(GpsPing):
+    model_config = ConfigDict(populate_by_name=True)
+
+    # Sender phone number.
+    sender: str = Field(alias="from", min_length=5, max_length=32)
 
 
 # Body of the coordinator 'resolve' call.
@@ -413,6 +435,87 @@ def create_app(deps: AppDeps) -> FastAPI:
             return _reject(rid, 422, "INVALID_REQUEST")
         # Run the pipeline in a worker thread.
         return await run_in_threadpool(process, payload, rid)
+
+    # ---- GPS pings --------------------------------------------------------------------------------------
+    # Shared by both GPS routes: verify the signature, parse, then store in one committed write transaction.
+    # `store` runs on a worker thread with the open connection and the parsed body; it returns a ping id or a rejection response.
+    async def ingest_ping(request: Request, model: type[GpsPing],
+                          store: Callable[[sqlite3.Connection, Any, str], int | JSONResponse]) -> JSONResponse:
+        # This request's id.
+        rid = request.state.request_id
+        # The raw bytes: the signature is checked over these BEFORE any parsing.
+        raw = await request.body()
+        try:
+            # Verify the HMAC signature.
+            verify_channel_request(raw, request.headers.get("x-signature", ""), deps.webhook_secret)
+        except AuthError as exc:
+            # Bad or missing signature: 401, nothing parsed yet.
+            return _reject(rid, 401, exc.code)
+        try:
+            # Only now parse and validate the body (coordinate range and aware time are enforced by GpsPing).
+            payload = model.model_validate(json.loads(raw))
+        except (ValueError, ValidationError):
+            # Malformed body: a bare 422, with no values echoed back.
+            return _reject(rid, 422, "INVALID_REQUEST")
+        # A fix stamped far in the future (a skewed device clock) would shadow every real ping after it: refuse it.
+        if payload.recorded_at > deps.clock.now() + timedelta(seconds=GPS_MAX_FUTURE_SECONDS):
+            return _reject(rid, 422, "INVALID_REQUEST")
+
+        # Blocking database work, run in a worker thread.
+        def work() -> JSONResponse:
+            try:
+                # A fresh connection per request (SQLite connections are not shared across threads).
+                conn = open_connection(path=deps.db_path)
+            except (sqlite3.Error, FileNotFoundError):
+                # The database could not be opened.
+                return _reject(rid, 503, "DATABASE_UNAVAILABLE")
+            try:
+                # One write transaction: committed on success, rolled back on error.
+                with immediate(conn):
+                    result = store(conn, payload, rid)
+                # A rejection response from the store callback is passed straight through.
+                if isinstance(result, JSONResponse):
+                    return result
+                # Success: report the new ping id.
+                return JSONResponse({"status": "STORED", "ping_id": result, "request_id": rid})
+            except UnknownShipment:
+                # No such shipment (the id is not echoed).
+                return _reject(rid, 404, "UNKNOWN_SHIPMENT")
+            except sqlite3.Error:
+                return _reject(rid, 503, "DATABASE_UNAVAILABLE")
+            finally:
+                conn.close()
+
+        # Run it off the event loop.
+        return await run_in_threadpool(work)
+
+    # Telematics feed: a signed ping for a named shipment.
+    @app.post("/v1/gps/pings")
+    async def gps_ping(request: Request) -> JSONResponse:
+        # Store the ping against the shipment named in the body.
+        def store(conn: sqlite3.Connection, p: TelematicsPingIn, rid: str) -> int:
+            return store_ping(conn, p.shipment_id, GpsPing(lat=p.lat, lon=p.lon, recorded_at=p.recorded_at), deps.clock, "TELEMATICS")
+
+        return await ingest_ping(request, TelematicsPingIn, store)
+
+    # Chat-channel adapter: a driver shares their location; it is stored against their active shipment.
+    @app.post("/v1/driver/location")
+    async def driver_location(request: Request) -> JSONResponse:
+        # Identify the driver, find their open shipment, store the ping.
+        def store(conn: sqlite3.Connection, p: DriverLocationIn, rid: str) -> int | JSONResponse:
+            try:
+                # Identity comes from the phone number, never from the body's content.
+                driver = resolve_driver(conn, p.sender)
+            except AuthError as exc:
+                return _reject(rid, 403, exc.code)
+            # The shipment being driven now.
+            shipment_id = active_shipment_for_driver(conn, driver.driver_id)
+            if shipment_id is None:
+                # Nothing active: nothing stored.
+                return _reject(rid, 404, "NO_ACTIVE_SHIPMENT")
+            return store_ping(conn, shipment_id, GpsPing(lat=p.lat, lon=p.lon, recorded_at=p.recorded_at), deps.clock, "DRIVER_SHARED")
+
+        return await ingest_ping(request, DriverLocationIn, store)
 
     # ---- driver status ----------------------------------------------------------------------------------
     # Read a driver's case status and recent exceptions (read-only).

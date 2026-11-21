@@ -63,6 +63,9 @@ from setuhaul.capacity import build_facility_state
 # A controllable clock.
 from setuhaul.clock import FakeClock
 
+# Settings loader (travel-time constants for the GPS readout).
+from setuhaul.config import load_settings
+
 # Database helpers.
 from setuhaul.db import (
     IST,
@@ -75,6 +78,9 @@ from setuhaul.db import (
 # Case queue operations for the operations panel.
 from setuhaul.escalation import claim_case, get_driver_case_status, list_open_cases, resolve_case
 
+# GPS ping storage and the active-shipment lookup.
+from setuhaul.gps import active_shipment_for_driver, gps_travel_minutes_for, store_ping
+
 # Maps phone numbers to drivers.
 from setuhaul.identity import provision_identities
 
@@ -83,6 +89,12 @@ from setuhaul.jobs.expire_holds import expire_due_holds
 
 # Delivers queued downstream notices when the button is pressed.
 from setuhaul.notifications import deliver_pending_notifications
+
+# The validated ping type stored by store_ping.
+from setuhaul.schemas import GpsPing
+
+# Straight-line travel estimate and distance for the GPS readout.
+from setuhaul.travel import StraightLineEstimator, haversine_km
 
 # The demo's starting moment: the snapshot is dated 4 Aug 2026.
 DEMO_START = "2026-08-04T09:35:00+05:30"
@@ -167,6 +179,16 @@ class ResolveIn(BaseModel):
     note: str = Field(max_length=500)
 
 
+# A GPS position sent from the demo console, with how old the fix should look.
+class GpsIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    driver_id: str
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    age_minutes: int = Field(ge=0, le=1440)
+
+
 def seed_demo_evidence(conn: sqlite3.Connection) -> None:
     """Labour and consignee evidence the snapshot lacks, labelled DEMO_FIXTURE, plus a clean chat history."""
     # The demo day.
@@ -179,6 +201,20 @@ def seed_demo_evidence(conn: sqlite3.Connection) -> None:
     for (sid,) in conn.execute("select shipment_id from shipments").fetchall():
         conn.execute("insert or replace into consignee_commitments (shipment_id, latest_arrival, penalty_applies, exceptional, source, recorded_at) "
                      "values (?, NULL, 0, 0, 'DEMO_FIXTURE', ?)", (sid, f"{day}T06:00:00+05:30"))
+    # A fresh GPS ping for each active demo driver's active load, 60 km straight north of the destination dock.
+    seed_clock = FakeClock(parse_operational_timestamp(DEMO_START))
+    # The same drivers the driver picker lists: active, and not generated test drivers.
+    for (did,) in conn.execute("select driver_id from drivers where driver_status='ACTIVE' and driver_id not like 'GEN-%'").fetchall():
+        # The load being driven, if any.
+        sid = active_shipment_for_driver(conn, did)
+        if sid is None:
+            continue
+        # The load's destination facility.
+        fac = conn.execute("select f.lat, f.lon from shipments s join facilities f on f.facility_id=s.destination_facility_id where s.shipment_id=?", (sid,)).fetchone()
+        if fac is None or fac["lat"] is None or fac["lon"] is None:
+            continue
+        # One degree of latitude is about 111.2 km, so 60 km north adds 60/111.2 degrees.
+        store_ping(conn, sid, GpsPing(lat=fac["lat"] + 60 / 111.2, lon=fac["lon"], recorded_at=seed_clock.now()), seed_clock, "DEMO_FIXTURE")
     conn.execute("delete from chat_messages")  # the demo starts every conversation from nothing
     # Save the seed rows.
     conn.commit()
@@ -360,6 +396,85 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
                 # The driver's hand-off case, in plain words.
                 case = get_driver_case_status(conn, driver_id)
                 return {"messages": msgs, "hold": held, "case": {"status": case.status, "text": case.text} if case else None, "clock": clock_info()}
+            finally:
+                conn.close()
+
+        return local_only(request) or await run_in_threadpool(read)
+
+    # Build the GPS readout for one load: the dock, the latest ping, distance, travel time and GPS ETA. Used by both GPS routes.
+    def gps_readout(conn: sqlite3.Connection, shipment_id: str) -> dict[str, Any]:
+        settings = load_settings()
+        now = demo.clock.now()
+        # The destination facility (the dock the truck is heading for).
+        fac = conn.execute("select f.facility_name, f.lat, f.lon from shipments s join facilities f on f.facility_id=s.destination_facility_id "
+                           "where s.shipment_id=?", (shipment_id,)).fetchone()
+        out: dict[str, Any] = {"facility": {"lat": fac["lat"], "lon": fac["lon"], "name": fac["facility_name"]},
+                               "ping": None, "distance_km": None, "travel_minutes": None, "gps_eta": None,
+                               # False when the dock has no coordinates (a facility without them simply gets no GPS ETA).
+                               "has_coordinates": fac["lat"] is not None and fac["lon"] is not None}
+        # The latest ping by recorded time, whatever its age (the readout shows stale ones too).
+        row = conn.execute("select lat, lon, recorded_at from gps_pings where shipment_id=? order by recorded_at desc, ping_id desc limit 1",
+                           (shipment_id,)).fetchone()
+        if row is None:
+            return out
+        # A future-dated ping counts as age zero.
+        age = max(now - parse_operational_timestamp(row["recorded_at"]), timedelta(0))
+        fresh = age <= timedelta(minutes=settings.gps_max_age_minutes)
+        out["ping"] = {"lat": row["lat"], "lon": row["lon"], "age_minutes": int(age.total_seconds() // 60), "fresh": fresh}
+        # No dock coordinates: show the ping but no distance, travel time or GPS ETA.
+        if not out["has_coordinates"]:
+            return out
+        out["distance_km"] = round(haversine_km(row["lat"], row["lon"], fac["lat"], fac["lon"]), 1)
+        # Travel time and ETA only come from a fresh ping (the same rule the ETA tools use).
+        travel = gps_travel_minutes_for(conn, shipment_id, demo.clock, settings)
+        if travel is not None:
+            out["travel_minutes"] = travel
+            out["gps_eta"] = f"{(now + timedelta(minutes=travel)).astimezone(IST):%H:%M}"
+        return out
+
+    # Send a GPS position as the driver's phone would (without the signature step) and read back what the service makes of it.
+    @app.post("/demo/api/gps")
+    async def gps_send(request: Request, body: GpsIn) -> Any:
+        denied = local_only(request)
+        if denied:
+            return denied
+
+        def go() -> Any:
+            conn = db()
+            try:
+                # Unknown driver.
+                if conn.execute("select 1 from drivers where driver_id=?", (body.driver_id,)).fetchone() is None:
+                    return JSONResponse({"status": "REJECTED", "reason_code": "UNKNOWN_DRIVER"}, status_code=404)
+                # The load being driven.
+                sid = active_shipment_for_driver(conn, body.driver_id)
+                if sid is None:
+                    return JSONResponse({"status": "REJECTED", "reason_code": "NO_ACTIVE_SHIPMENT"}, status_code=404)
+                # Stamp the fix as old as the console asked; the demo clock itself does not move.
+                recorded = demo.clock.now() - timedelta(minutes=body.age_minutes)
+                with immediate(conn):
+                    # In the demo the ping just sent is the truck's latest word, so drop any ping stamped later (for example the seeded
+                    # one); otherwise a deliberately old test ping would be ignored in favour of it. The real API never does this.
+                    # Both timestamps are normalised to IST by store_ping, so this lexical comparison is chronological.
+                    conn.execute("delete from gps_pings where shipment_id=? and recorded_at>?", (sid, recorded.astimezone(IST).isoformat()))
+                    store_ping(conn, sid, GpsPing(lat=body.lat, lon=body.lon, recorded_at=recorded), demo.clock, "DEMO_CONSOLE")
+                return gps_readout(conn, sid)
+            finally:
+                conn.close()
+
+        return await run_in_threadpool(go)
+
+    # The GPS readout for a driver's active load.
+    @app.get("/demo/api/driver/{driver_id}/gps")
+    async def driver_gps(request: Request, driver_id: str) -> Any:
+        def read() -> Any:
+            conn = db(True)
+            try:
+                if conn.execute("select 1 from drivers where driver_id=?", (driver_id,)).fetchone() is None:
+                    return JSONResponse({"status": "REJECTED", "reason_code": "UNKNOWN_DRIVER"}, status_code=404)
+                sid = active_shipment_for_driver(conn, driver_id)
+                if sid is None:
+                    return JSONResponse({"status": "REJECTED", "reason_code": "NO_ACTIVE_SHIPMENT"}, status_code=404)
+                return gps_readout(conn, sid)
             finally:
                 conn.close()
 
@@ -590,7 +705,31 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
                     # One notice line.
                     outbox.append({"to": o["recipient_ref"], "role": o["recipient_type"].replace("_", " ").title(), "status": o["status"], "attempts": o["attempts"],
                                    "kind": json.loads(o["payload_json"]).get("kind", "").replace("_", " ").title()})
-                return {"events": events, "outbox": outbox, "clock": clock_info()}
+                # The 10 most recent GPS pings, newest first, each explained with the arithmetic behind the GPS ETA.
+                settings = load_settings()
+                estimator = StraightLineEstimator(settings)
+                gps = []
+                for p in conn.execute("select p.shipment_id, p.lat, p.lon, p.recorded_at, p.received_at, f.lat as flat, f.lon as flon from gps_pings p "
+                                      "join shipments s using(shipment_id) join facilities f on f.facility_id=s.destination_facility_id "
+                                      "order by p.ping_id desc limit 10"):
+                    received = parse_operational_timestamp(p["received_at"])
+                    # Ping age when it arrived.
+                    age = max(received - parse_operational_timestamp(p["recorded_at"]), timedelta(0))
+                    # A dock without coordinates cannot be measured from: say so instead of computing a distance.
+                    if p["flat"] is None or p["flon"] is None:
+                        gps.append({"time": _hhmmss(received), "text": f"{label.get(p['shipment_id'], '')}: dock has no coordinates -> no GPS ETA"})
+                        continue
+                    km = haversine_km(p["lat"], p["lon"], p["flat"], p["flon"])
+                    head = f"{label.get(p['shipment_id'], '')}: ping {int(age.total_seconds() // 60)} min old, {km:.1f} km from dock"
+                    # A stale ping gives no estimate.
+                    if age > timedelta(minutes=settings.gps_max_age_minutes):
+                        text = f"{head}, too old to use (limit {settings.gps_max_age_minutes} min) -> no GPS ETA"
+                    else:
+                        mins = estimator.estimate(p["lat"], p["lon"], p["flat"], p["flon"])
+                        text = (f"{head}, x{settings.gps_road_factor:g} road factor at {settings.gps_avg_speed_kmph:g} km/h = {mins} min"
+                                f" -> GPS ETA {(received + timedelta(minutes=mins)).astimezone(IST):%H:%M}")
+                    gps.append({"time": _hhmmss(received), "text": text})
+                return {"events": events, "outbox": outbox, "gps": gps, "clock": clock_info()}
             finally:
                 conn.close()
 

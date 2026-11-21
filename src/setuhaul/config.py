@@ -60,6 +60,14 @@ class Settings:
     # A resolved case may be reopened within 24 hours.
     escalation_reopen_window_hours: int = 24
     model_cost_budget_usd: float = 0.05  # hard stop per handled message (alert level in the plan)
+    # A GPS ping older than 15 minutes is stale and ignored.
+    gps_max_age_minutes: int = 15
+    # A driver ETA more than 30 minutes away from the GPS ETA is flagged as a discrepancy.
+    gps_mismatch_minutes: int = 30
+    # Assumed average road speed (km/h) for turning distance into travel time; tune against demo data.
+    gps_avg_speed_kmph: float = 40.0
+    # Multiplier from straight-line to road distance; tune against demo data.
+    gps_road_factor: float = 1.3
 
 
 def load_settings() -> Settings:

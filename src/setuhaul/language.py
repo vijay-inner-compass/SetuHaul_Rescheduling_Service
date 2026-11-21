@@ -180,6 +180,13 @@ T: dict[str, dict[str, str]] = {
         "hi": "होल्ड करने के लिए नंबर ({choices}) बताइए। ये विकल्प {until} तक मान्य हैं।",
         "hinglish": "Hold karne ke liye number ({choices}) bataiye. Ye options {until} tak valid hain.",
     },
+    # Added after a menu when the truck's GPS disagrees with the driver's report; the gap is absolute, so no direction is claimed.
+    "gps_note": {
+        "en": "Note: your truck's GPS suggests your arrival differs from your report by about {minutes} minutes.",
+        "hi": "ध्यान दें: आपके ट्रक के GPS के अनुसार आपके पहुंचने का समय आपकी बताई जानकारी से लगभग {minutes} मिनट अलग है।",
+        "hinglish": "Dhyan dein: aapke truck ke GPS ke hisaab se aapke pahunchne ka time aapki batayi jaankari se lagbhag "
+                    "{minutes} minute alag hai.",
+    },
     # Told when a reschedule is confirmed. Built from the committed appointment row.
     "confirmed": {
         "en": "Your appointment is confirmed: dock {dock}, {start}-{end} on {date}. Reference {ref}.",

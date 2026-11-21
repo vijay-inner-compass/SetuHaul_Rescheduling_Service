@@ -404,6 +404,9 @@ def _finalize(
         parts.extend(say("options_line", lang, n=str(i), **o) for i, o in enumerate(turn.shown_options, 1))
         # Closing line: which numbers can be chosen and until when.
         parts.append(say("options_outro", lang, choices=", ".join(str(i) for i in range(1, n + 1)), until=turn.options_valid_until))
+        # GPS disagreed with the driver's report: say so in the system's own wording (only then, so other replies are unchanged).
+        if turn.gps_discrepancy_minutes is not None:
+            parts.append(say("gps_note", lang, minutes=str(turn.gps_discrepancy_minutes)))
     elif parts:
         pass  # something was committed: the system's wording stands alone, the model's text is not used
     # Nothing committed and no hand-off: use the model's text, but only after the output guard.

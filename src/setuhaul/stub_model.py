@@ -44,7 +44,10 @@ class StubGateway:
             # A successful search: list the options (the system re-words this as a numbered menu anyway).
             if last.name == "search_slot_options" and data.get("status") == "OK":
                 opts = "; ".join(f"{o['rank']}) {o['start']} dock {o['dock']}" for o in data["options"])
-                return ModelResponse(text=f"Here are your options (none is held yet): {opts}")
+                # When GPS disagreed with the driver, add one neutral sentence (the key is absent otherwise).
+                note = (f" Note: your truck's GPS suggests your arrival differs from your report by about "
+                        f"{data['gps_discrepancy_minutes']} minutes.") if "gps_discrepancy_minutes" in data else ""
+                return ModelResponse(text=f"Here are your options (none is held yet): {opts}{note}")
             # The tool needs more information: pass its question straight through.
             if data.get("status") == "NEEDS_INPUT":
                 return ModelResponse(text=data.get("ask_the_driver", "Can you tell me more?"))
