@@ -130,6 +130,8 @@ from setuhaul.rate_limit import RateLimits, check_rate_limit
 STALE_PROCESSING_SECONDS = 60
 # A signed status request older than this (5 minutes) is rejected, so a captured request cannot be replayed later.
 SIGNATURE_WINDOW_SECONDS = 300
+# A GPS ping may be stamped at most this far (5 minutes) ahead of the server clock; allows small device clock drift only.
+GPS_MAX_FUTURE_SECONDS = 300
 
 
 class UnconfiguredGateway:
@@ -454,6 +456,9 @@ def create_app(deps: AppDeps) -> FastAPI:
             payload = model.model_validate(json.loads(raw))
         except (ValueError, ValidationError):
             # Malformed body: a bare 422, with no values echoed back.
+            return _reject(rid, 422, "INVALID_REQUEST")
+        # A fix stamped far in the future (a skewed device clock) would shadow every real ping after it: refuse it.
+        if payload.recorded_at > deps.clock.now() + timedelta(seconds=GPS_MAX_FUTURE_SECONDS):
             return _reject(rid, 422, "INVALID_REQUEST")
 
         # Blocking database work, run in a worker thread.

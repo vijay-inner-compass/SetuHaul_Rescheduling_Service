@@ -9,6 +9,9 @@ import json
 # sqlite3 for the Connection type.
 import sqlite3
 
+# timedelta builds the future offsets.
+from datetime import timedelta
+
 # Fixture, signing helper and the seeded driver phone are reused from the existing API tests.
 from tests.test_api import PHONE, env, sign  # noqa: F401 - env is a pytest fixture
 
@@ -72,7 +75,7 @@ def test_signature_is_checked_before_parsing(env) -> None:  # type: ignore[no-un
     _, client, _, _, _ = env
     for path in (PINGS, LOCATION):
         r = post_to(client, path, b"{not json", signature="deadbeef")
-        assert r.status_code == 401
+        assert r.status_code == 401 and r.json()["reason_code"] == "INVALID_SIGNATURE"
 
 
 def test_invalid_bodies_are_422_without_echoing_values(env) -> None:  # type: ignore[no-untyped-def]
@@ -100,6 +103,7 @@ def test_database_outage_is_503(env) -> None:  # type: ignore[no-untyped-def]
     path.unlink()
     r = post_to(client, PINGS, ping_body())
     assert r.status_code == 503 and r.json()["reason_code"] == "DATABASE_UNAVAILABLE"
+    assert set(r.json()) == {"status", "reason_code", "request_id"}
 
 
 def test_driver_location_stores_against_the_active_shipment(env) -> None:  # type: ignore[no-untyped-def]
@@ -112,18 +116,43 @@ def test_driver_location_stores_against_the_active_shipment(env) -> None:  # typ
 
 def test_driver_location_rejects_bad_signature_and_bad_body(env) -> None:  # type: ignore[no-untyped-def]
     _, client, _, _, path = env
-    assert post_to(client, LOCATION, location_body(), signature="deadbeef").status_code == 401
-    assert post_to(client, LOCATION, location_body(lat=91)).status_code == 422
-    assert post_to(client, LOCATION, location_body(recorded_at="2026-11-21T09:34:00")).status_code == 422
-    assert post_to(client, LOCATION, location_body(extra="x")).status_code == 422
+    r = post_to(client, LOCATION, location_body(), signature="deadbeef")
+    assert r.status_code == 401 and r.json()["reason_code"] == "INVALID_SIGNATURE"
+    for bad in (location_body(lat=91), location_body(recorded_at="2026-11-21T09:34:00"), location_body(extra="x")):
+        r = post_to(client, LOCATION, bad)
+        assert r.status_code == 422 and r.json()["reason_code"] == "INVALID_REQUEST"
     assert stored(path) == []
 
 
 def test_driver_location_from_an_unknown_phone_is_403(env) -> None:  # type: ignore[no-untyped-def]
     _, client, _, _, path = env
     r = post_to(client, LOCATION, location_body(**{"from": "+91 99999 99999"}))
-    assert r.status_code == 403
+    assert r.status_code == 403 and r.json()["reason_code"] == "UNKNOWN_PHONE"
     assert stored(path) == []
+
+
+def test_driver_location_with_a_malformed_phone_is_403_invalid_phone(env) -> None:  # type: ignore[no-untyped-def]
+    _, client, _, _, path = env
+    r = post_to(client, LOCATION, location_body(**{"from": "12345"}))
+    assert r.status_code == 403 and r.json()["reason_code"] == "INVALID_PHONE"
+    assert stored(path) == []
+
+
+def test_ping_up_to_five_minutes_ahead_is_stored_and_beyond_is_422(env) -> None:  # type: ignore[no-untyped-def]
+    _, client, _, clock, path = env
+    now = clock.now()
+    # Exactly 5 minutes and 4 minutes ahead are accepted, on both routes.
+    assert post_to(client, PINGS, ping_body(recorded_at=(now + timedelta(minutes=4)).isoformat())).status_code == 200
+    assert post_to(client, LOCATION, location_body(recorded_at=(now + timedelta(minutes=5)).isoformat())).status_code == 200
+    assert len(stored(path)) == 2
+    # One second past the limit and 6 minutes ahead are refused on both routes, and nothing more is stored.
+    for route, make in ((PINGS, ping_body), (LOCATION, location_body)):
+        for ahead in (timedelta(minutes=5, seconds=1), timedelta(minutes=6)):
+            r = post_to(client, route, make(recorded_at=(now + ahead).isoformat()))
+            assert r.status_code == 422 and r.json()["reason_code"] == "INVALID_REQUEST"
+    assert len(stored(path)) == 2
+    # A ping far in the past is unaffected.
+    assert post_to(client, PINGS, ping_body(recorded_at=(now - timedelta(days=2)).isoformat())).status_code == 200
 
 
 def test_driver_with_only_closed_shipments_gets_404_and_nothing_stored(env) -> None:  # type: ignore[no-untyped-def]
