@@ -409,7 +409,9 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
         fac = conn.execute("select f.facility_name, f.lat, f.lon from shipments s join facilities f on f.facility_id=s.destination_facility_id "
                            "where s.shipment_id=?", (shipment_id,)).fetchone()
         out: dict[str, Any] = {"facility": {"lat": fac["lat"], "lon": fac["lon"], "name": fac["facility_name"]},
-                               "ping": None, "distance_km": None, "travel_minutes": None, "gps_eta": None}
+                               "ping": None, "distance_km": None, "travel_minutes": None, "gps_eta": None,
+                               # False when the dock has no coordinates (a facility without them simply gets no GPS ETA).
+                               "has_coordinates": fac["lat"] is not None and fac["lon"] is not None}
         # The latest ping by recorded time, whatever its age (the readout shows stale ones too).
         row = conn.execute("select lat, lon, recorded_at from gps_pings where shipment_id=? order by recorded_at desc, ping_id desc limit 1",
                            (shipment_id,)).fetchone()
@@ -419,6 +421,9 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
         age = max(now - parse_operational_timestamp(row["recorded_at"]), timedelta(0))
         fresh = age <= timedelta(minutes=settings.gps_max_age_minutes)
         out["ping"] = {"lat": row["lat"], "lon": row["lon"], "age_minutes": int(age.total_seconds() // 60), "fresh": fresh}
+        # No dock coordinates: show the ping but no distance, travel time or GPS ETA.
+        if not out["has_coordinates"]:
+            return out
         out["distance_km"] = round(haversine_km(row["lat"], row["lon"], fac["lat"], fac["lon"]), 1)
         # Travel time and ETA only come from a fresh ping (the same rule the ETA tools use).
         travel = gps_travel_minutes_for(conn, shipment_id, demo.clock, settings)
@@ -710,6 +715,10 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
                     received = parse_operational_timestamp(p["received_at"])
                     # Ping age when it arrived.
                     age = max(received - parse_operational_timestamp(p["recorded_at"]), timedelta(0))
+                    # A dock without coordinates cannot be measured from: say so instead of computing a distance.
+                    if p["flat"] is None or p["flon"] is None:
+                        gps.append({"time": _hhmmss(received), "text": f"{label.get(p['shipment_id'], '')}: dock has no coordinates -> no GPS ETA"})
+                        continue
                     km = haversine_km(p["lat"], p["lon"], p["flat"], p["flon"])
                     head = f"{label.get(p['shipment_id'], '')}: ping {int(age.total_seconds() // 60)} min old, {km:.1f} km from dock"
                     # A stale ping gives no estimate.

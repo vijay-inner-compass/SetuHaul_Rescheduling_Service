@@ -58,3 +58,30 @@ def test_gps_values_from_the_api_are_escaped(html: str) -> None:
     assert "esc(g.text)" in html and "esc(g.time)" in html
     assert "esc(d.facility.name)" in html or "esc(fac.name)" in html
     assert "esc(" in html.split("function renderGps", 1)[1].split("function sendPing", 1)[0]
+
+
+# Changing driver (or resetting) wipes the panel and switches Send off, so one driver's position cannot go to another.
+def test_page_clears_the_panel_when_the_driver_changes(html: str) -> None:
+    # The helper turns Send off and empties the readout and message.
+    assert 'function gpsClear(){state.gps.ok=false;gpsEnable(false);$("#gpsRead").textContent="";$("#gpsMsg").textContent="";}' in html
+    # Both the driver selector and the reset button call it.
+    assert 'state.gps.driver=null;gpsClear();renderDriverCard()' in html
+    assert 'state.gps.driver=null;gpsClear();toast(' in html
+
+
+# Send is off from the first paint, before any readout has loaded.
+def test_page_disables_send_at_startup(html: str) -> None:
+    assert html.index("gpsEnable(false); // Send stays off") < html.index("\ninit();")
+
+
+# A reply that arrives after the driver changed is dropped, and the ping carries the driver it was made for.
+def test_page_ignores_a_stale_ping_reply(html: str) -> None:
+    assert "const did=state.driverId;" in html and "driver_id:did" in html
+    assert "if(did!==state.driverId)return;" in html
+
+
+# A failed readout is shown in the panel as text, not swallowed.
+def test_page_reports_a_failed_readout(html: str) -> None:
+    assert "GPS readout unavailable:" in html
+    # And a dock without coordinates says so and turns the controls off.
+    assert "Dock has no coordinates" in html

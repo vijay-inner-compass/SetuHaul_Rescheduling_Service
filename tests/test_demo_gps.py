@@ -225,3 +225,36 @@ def test_scenario_c_same_repair_after_a_stale_ping_asks_the_travel_time_question
     eta = eta_for(deps, did, ReportArgs(kind="repair", minutes=45))
     assert not isinstance(eta, EtaEvidence)
     assert eta.code == "MISSING_TRAVEL_TIME"
+
+
+# --- a dock without coordinates ---------------------------------------------------------------------------------
+# Migration 009 allows NULL lat/lon: such a facility simply gets no GPS ETA, and the console must not crash.
+def test_readout_and_activity_survive_a_dock_without_coordinates(demo) -> None:  # type: ignore[no-untyped-def]
+    client, deps = demo
+    did = driver_id(client, "Manoj Sharma")
+    conn = open_connection(path=deps.demo.db_path)
+    try:
+        sid = active_shipment_for_driver(conn, did)
+        # Blank the coordinates of this load's destination dock (the seeded fixture ping for it is already stored).
+        conn.execute("update facilities set lat=NULL, lon=NULL where facility_id=(select destination_facility_id from shipments where shipment_id=?)", (sid,))
+        conn.commit()
+    finally:
+        conn.close()
+    r = client.get(f"/demo/api/driver/{did}/gps")
+    assert r.status_code == 200
+    out = r.json()
+    # The usual keys stay; the figures that need the dock are empty and one flag says why.
+    assert out["has_coordinates"] is False
+    assert out["distance_km"] is None and out["travel_minutes"] is None and out["gps_eta"] is None
+    assert out["facility"]["lat"] is None and out["ping"] is not None
+    # The activity feed explains it instead of failing.
+    feed = client.get("/demo/api/activity")
+    assert feed.status_code == 200
+    assert any("dock has no coordinates" in g["text"] for g in feed.json()["gps"])
+
+
+# A normal dock reports that it has coordinates.
+def test_readout_flags_a_dock_with_coordinates(demo) -> None:  # type: ignore[no-untyped-def]
+    client, _ = demo
+    did = driver_id(client, "Manoj Sharma")
+    assert client.get(f"/demo/api/driver/{did}/gps").json()["has_coordinates"] is True
