@@ -111,6 +111,8 @@ GPS: ~2h 00m away -> GPS ETA 16:00 (ping 2 min old, fresh)
 | Fill in travel time | "Breakdown, repair takes 45 minutes" (no drive time) | 30 km out | No travel-time question; ETA = repair + GPS travel, source `GPS_ASSISTED` |
 | Stale ping | same repair message | ping age over 15 min | Falls back to asking for the drive time, as today |
 
+**Note (as built).** The console's Send calls the shared `store_ping` function directly, the same way `/demo/api/chat` calls the real pipeline and skips only the signature step, rather than going over HTTP to `/v1/gps/pings`. It therefore bypasses that endpoint's signature check, driver lookup and 5-minute future-time guard. It also deletes pings stamped later than the one sent for that shipment, so a back-dated test ping can become the latest.
+
 **Explainability.** The activity feed logs GPS distance, ping age and the travel-time arithmetic, so a viewer can see why the ETA came out as it did.
 
 ## Testing
