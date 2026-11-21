@@ -123,7 +123,9 @@ class DemoState:
     # The demo's own database copy.
     db_path: Path
     # Rebuilds the database, cache and clock.
-    reset: Callable[[], None]
+    reset: Callable[..., None]
+    # True: the dock board starts empty (no existing appointments), so every slot can be allocated from scratch.
+    fresh: bool = False
     live_factory: Callable[[], Any] | None = None  # a real model gateway, if one is configured
     # 'stub' (rule-based) or 'live' (a real model).
     model_mode: str = "stub"
@@ -154,6 +156,13 @@ class SlotIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     slot_id: str
+
+
+# A reset request. fresh=True starts an empty dock board, fresh=False the supplied schedule, and leaving it out keeps the current mode.
+class ResetIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    fresh: bool | None = None
 
 
 # A request to switch the model mode.
@@ -222,9 +231,17 @@ def seed_demo_evidence(conn: sqlite3.Connection) -> None:
     provision_identities(conn)
 
 
+# Delete a file if it can be deleted; a file another connection still holds open (Windows) is simply left behind.
+def _try_unlink(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 # Create a fresh demo database.
-def build_demo_db(path: Path) -> None:
-    # Delete any old database and its WAL files.
+def build_demo_db(path: Path, fresh: bool = False) -> None:
+    # Delete any old database and its WAL files, if they can be deleted (Windows refuses while another connection has them open).
     for suffix in ("", "-wal", "-shm"):
         Path(str(path) + suffix).unlink(missing_ok=True)
     # Copy the seed database and apply migrations.
@@ -233,6 +250,14 @@ def build_demo_db(path: Path) -> None:
     conn = open_connection(path=path)
     try:
         seed_demo_evidence(conn)
+        # An empty dock board: remove the supplied appointments, so every slot is available and loads have no booking yet.
+        if fresh:
+            # Warehouse messages that pointed at an appointment keep their text but lose the link (the column allows empty).
+            conn.execute("update operational_messages set appointment_id = NULL")
+            # An appointment may point at the one it replaced; clear those links first, then delete the rows.
+            conn.execute("update appointments set replaced_appointment_id = NULL")
+            conn.execute("delete from appointments")
+            conn.commit()
     finally:
         conn.close()
 
@@ -294,7 +319,7 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
             finally:
                 conn.close()
             return {"clock": clock_info(), "model_mode": demo.model_mode, "live_available": demo.live_factory is not None,
-                    "coordinators": list(demo.coordinators), "facilities": facilities, "message_advance_seconds": MESSAGE_ADVANCE_SECONDS}
+                    "coordinators": list(demo.coordinators), "facilities": facilities, "message_advance_seconds": MESSAGE_ADVANCE_SECONDS, "fresh": demo.fresh}
 
         return local_only(request) or await run_in_threadpool(read)
 
@@ -602,13 +627,13 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
 
     # Reset: new database, empty cache, clock back to the start.
     @app.post("/demo/api/reset")
-    async def reset(request: Request) -> Any:
+    async def reset(request: Request, body: ResetIn | None = None) -> Any:
         denied = local_only(request)
         if denied:
             return denied
-        # Run the blocking reset in a worker thread.
-        await run_in_threadpool(demo.reset)
-        return {"status": "RESET", "clock": clock_info()}
+        # Run the blocking reset in a worker thread, optionally switching between the supplied schedule and an empty board.
+        await run_in_threadpool(demo.reset, body.fresh if body else None)
+        return {"status": "RESET", "fresh": demo.fresh, "clock": clock_info()}
 
     # The hand-off queue for the operations panel.
     @app.get("/demo/api/cases")
@@ -754,7 +779,8 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
         return await run_in_threadpool(go)
 
 
-def build_demo_app(workdir: Path | None = None, live_factory: Callable[[], Any] | None = None, policy: Any = None) -> tuple[FastAPI, Any]:
+def build_demo_app(workdir: Path | None = None, live_factory: Callable[[], Any] | None = None, policy: Any = None,
+                   fresh: bool = False) -> tuple[FastAPI, Any]:
     """The service wired for the demo: fixed clock, in-process cache, a stub or live model, no real channel."""
     # An in-process fake Redis, so no server is needed.
     import fakeredis
@@ -778,19 +804,34 @@ def build_demo_app(workdir: Path | None = None, live_factory: Callable[[], Any] 
     # The fake cache.
     redis = fakeredis.FakeRedis(decode_responses=True)
 
-    # Rebuild everything to the starting state.
-    def reset() -> None:
-        # Fresh database with demo evidence.
-        build_demo_db(db_path)
+    # Build the first database.
+    build_demo_db(db_path, fresh)
+    # Shared state for the routes (its reset function is attached just below).
+    state = DemoState(clock=clock, db_path=db_path, reset=lambda **_: None, fresh=fresh, live_factory=live_factory)
+    # Counts resets, so each one gets its own database file.
+    generation = {"n": 0}
+
+    # Rebuild everything to the starting state; pass fresh=True/False to switch the board mode, or nothing to keep it.
+    def reset(fresh: bool | None = None) -> None:
+        if fresh is not None:
+            state.fresh = fresh
+        # A NEW database file each time: deleting the old one fails on Windows while the page's polling still has it open.
+        generation["n"] += 1
+        old = state.db_path
+        new = work / f"demo-{generation['n']}.sqlite3"
+        build_demo_db(new, state.fresh)
+        # Switch every route (and the message pipeline) to the new file.
+        state.db_path = new
+        deps.db_path = new
         # Empty the cache.
         redis.flushall()
         # Clock back to the start.
         clock.set(parse_operational_timestamp(DEMO_START))
+        # Remove the old file and its WAL files if possible; leftovers are harmless.
+        for suffix in ("", "-wal", "-shm"):
+            _try_unlink(Path(str(old) + suffix))
 
-    # Start from a clean state.
-    reset()
-    # Shared state for the routes.
-    state = DemoState(clock=clock, db_path=db_path, reset=reset, live_factory=live_factory)
+    state.reset = reset
     # Wire the real app: demo clock, fake cache, a throwaway webhook secret, and a gateway factory that follows the model mode.
     deps = AppDeps(
         db_path=db_path, redis=redis, webhook_secret=os.urandom(16), coordinator_tokens={}, fallback_path=work / "fallback.jsonl",

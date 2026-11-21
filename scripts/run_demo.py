@@ -59,6 +59,8 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=8800)
     # Do not open the browser automatically.
     ap.add_argument("--no-browser", action="store_true")
+    # Start with an empty dock board (no existing appointments) so every slot can be allocated from scratch.
+    ap.add_argument("--fresh", action="store_true", help="start with an empty dock board")
     # Parse the command line.
     args = ap.parse_args()
     # Load configuration (provider, model id, keys) from .env.
@@ -92,7 +94,7 @@ def main() -> int:
         except ModelUnavailable:
             live = None
     # Build the demo app (fixed clock, fake cache, stub or live model).
-    app, _deps = build_demo_app(live_factory=live, policy=policy if live else None)
+    app, _deps = build_demo_app(live_factory=live, policy=policy if live else None, fresh=args.fresh)
     # Where the page will be.
     url = f"http://127.0.0.1:{args.port}/demo"
     # Tell the user where to go.

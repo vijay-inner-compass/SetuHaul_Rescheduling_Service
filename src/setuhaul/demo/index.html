@@ -489,8 +489,9 @@ $("#langSeg").onclick=e=>{const b=e.target.closest("button");if(b){state.lang=b.
 async function advance(seconds,sweep){const r=await api("/demo/api/clock",{seconds,sweep});if(r.ok){setClock(r.data.clock);if(sweep)toast(r.data.swept?`${r.data.swept} lapsed hold(s) released and the driver was notified.`:"Time moved on. No hold had lapsed.",r.data.swept?"ok":"");}
   refreshDriver();refreshBoard();refreshOps();}
 $("#adv1").onclick=()=>advance(60,false);$("#adv3").onclick=()=>advance(181,true);
-$("#resetBtn").onclick=()=>modal("Reset the demonstration",`<div>This restores the original schedule, clears every conversation and case, and sets the clock back to 09:35.</div>`,
-  [{label:"Cancel"},{label:"Reset",primary:true,run:async()=>{await api("/demo/api/reset",{});state.gps.driver=null;gpsClear();toast("Demonstration reset.","ok");await init(true);}}]);
+async function doReset(fresh){const r=await api("/demo/api/reset",fresh===null?{}:{fresh});if(!r.ok){toast("Reset failed. Try again.","bad");return;}state.gps.driver=null;gpsClear();toast(fresh?"Empty dock board ready.":"Demonstration reset.","ok");await init(true);}
+$("#resetBtn").onclick=()=>modal("Reset the demonstration",`<div>Clears every conversation and case and sets the clock back to 09:35. Choose the dock board you want: <b>the supplied schedule</b> (existing bookings) or <b>an empty board</b> (every slot free, so you allocate from scratch).</div>`,
+  [{label:"Cancel"},{label:"Empty dock board",run:()=>{doReset(true);}},{label:"Supplied schedule",primary:true,run:()=>{doReset(false);}}]);
 async function setModel(mode){const r=await api("/demo/api/model",{mode});if(r.ok){state.cfg.model_mode=mode;paintModel();toast(mode==="live"?"Live model on. Replies now come from the real model.":"Rule-based assistant on.");}else toast("No live model is configured in .env.","bad");}
 function paintModel(){$("#modelStub").setAttribute("aria-pressed",String(state.cfg.model_mode==="stub"));$("#modelLive").setAttribute("aria-pressed",String(state.cfg.model_mode==="live"));$("#modelLive").disabled=!state.cfg.live_available;}
 $("#modelStub").onclick=()=>setModel("stub");$("#modelLive").onclick=()=>setModel("live");

@@ -18,7 +18,7 @@ nothing about model quality. For realistic wording, configure a provider in `.en
 The page has three panels: **Driver console** (chat), **Dock board** (docks by hour) and **Operations** (cases, activity).
 The top bar has the simulated clock, the assistant switch, **+1 min**, **+3 min and sweep** and **Reset demo**.
 
-Press **Reset demo** between scenarios.
+Press **Reset demo** between scenarios. The reset dialog offers **Supplied schedule** (the snapshot's existing bookings) or **Empty dock board** (every slot free, so you allocate from scratch). To start empty, run `python scripts/run_demo.py --fresh`.
 
 ## 1. Talk track (about 10 minutes)
 

@@ -210,3 +210,60 @@ def test_bad_input_is_rejected_cleanly(demo) -> None:  # type: ignore[no-untyped
     assert client.post("/demo/api/chat", json={"driver_id": "x", "text": ""}).status_code == 422
     assert client.post("/demo/api/clock", json={"seconds": 0}).status_code == 422
     assert client.get("/demo/api/board", params={"facility_id": "NOPE"}).status_code == 404
+
+
+# --- an empty dock board, and resets that keep working ---------------------------------------------------------
+def statuses(client: TestClient) -> set[str]:
+    return {s["status"] for d in client.get("/demo/api/board").json()["docks"] for s in d["slots"]}
+
+
+def test_an_empty_board_has_every_slot_free_and_loads_without_bookings(tmp_path: Path) -> None:
+    app, _ = build_demo_app(tmp_path / "fresh", fresh=True)
+    client = TestClient(app)
+    assert client.get("/demo/api/config").json()["fresh"] is True
+    assert "BOOKED" not in statuses(client) and "HELD" not in statuses(client)
+    assert all(s["appointment"] is None for d in client.get("/demo/api/drivers").json()["drivers"] for s in d["shipments"])
+
+
+def test_a_driver_can_book_from_an_empty_board(tmp_path: Path) -> None:
+    # A load with no appointment at all still gets options, a hold and a confirmation on the empty board.
+    app, _ = build_demo_app(tmp_path / "fresh2", fresh=True)
+    client = TestClient(app)
+    manoj = driver_id(client, "Manoj Sharma")
+    assert "These slots are available" in say(client, manoj, "my truck is 60 minutes late")["reply"]
+    assert "holding" in say(client, manoj, "1")["reply"].lower()
+    assert "confirmed" in say(client, manoj, "confirm")["reply"].lower()
+    assert "BOOKED" in statuses(client)
+
+
+def test_reset_can_switch_between_the_supplied_schedule_and_an_empty_board(demo) -> None:  # type: ignore[no-untyped-def]
+    client, _ = demo
+    assert "BOOKED" in statuses(client)  # the supplied schedule has bookings
+    assert client.post("/demo/api/reset", json={"fresh": True}).json()["fresh"] is True
+    assert "BOOKED" not in statuses(client)
+    assert client.post("/demo/api/reset", json={}).json()["fresh"] is True  # no choice given: the mode is kept
+    assert "BOOKED" not in statuses(client)
+    assert client.post("/demo/api/reset", json={"fresh": False}).json()["fresh"] is False
+    assert "BOOKED" in statuses(client)
+
+
+def test_reset_keeps_working_while_the_page_keeps_reading(demo) -> None:  # type: ignore[no-untyped-def]
+    # The page polls every few seconds; a reset used to fail (HTTP 500) when it clashed with a read on Windows.
+    import threading
+
+    client, _ = demo
+    stop = threading.Event()
+
+    def poll() -> None:
+        while not stop.is_set():
+            client.get("/demo/api/board")
+            client.get("/demo/api/cases")
+
+    t = threading.Thread(target=poll)
+    t.start()
+    try:
+        codes = [client.post("/demo/api/reset", json={}).status_code for _ in range(6)]
+    finally:
+        stop.set()
+        t.join()
+    assert codes == [200] * 6
