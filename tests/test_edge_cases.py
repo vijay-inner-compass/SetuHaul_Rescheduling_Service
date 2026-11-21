@@ -131,3 +131,55 @@ def test_a_delay_given_in_hours_gets_an_answer_not_the_generic_question(env) -> 
     body = post(client, msg("book my slot after 2 hours as i am running late", mid="H-1")).json()
     assert body["reply"] != "How late are you, and which shipment is it?" and body["status"] in ("REPLIED", "HANDOFF")
     assert "These slots are available" in body["reply"] or body["status"] == "HANDOFF"
+
+
+# --- cancelling and releasing with the rule-based assistant; the dock board must follow ------------------------
+def _board_statuses(client) -> set[str]:  # type: ignore[no-untyped-def]
+    return {s["status"] for d in client.get("/demo/api/board").json()["docks"] for s in d["slots"]}
+
+
+def test_cancelling_a_confirmed_appointment_frees_its_slot_on_the_board(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from setuhaul.demo_ui import build_demo_app
+
+    client = TestClient(build_demo_app(tmp_path / "cx", fresh=True)[0])
+    did = next(d["id"] for d in client.get("/demo/api/drivers").json()["drivers"] if d["name"] == "Manoj Sharma")
+
+    def say(t: str) -> str:
+        return client.post("/demo/api/chat", json={"driver_id": did, "text": t}).json()["reply"]
+
+    say("my truck is 60 minutes late")
+    say("1")
+    assert "confirmed" in say("confirm").lower() and "BOOKED" in _board_statuses(client)
+    assert "cancelled" in say("cancel my appointment").lower()
+    assert "BOOKED" not in _board_statuses(client) and "HELD" not in _board_statuses(client)
+
+
+def test_keeping_the_original_slot_releases_the_hold_on_the_board(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from setuhaul.demo_ui import build_demo_app
+
+    client = TestClient(build_demo_app(tmp_path / "rel", fresh=True)[0])
+    did = next(d["id"] for d in client.get("/demo/api/drivers").json()["drivers"] if d["name"] == "Manoj Sharma")
+
+    def say(t: str) -> str:
+        return client.post("/demo/api/chat", json={"driver_id": did, "text": t}).json()["reply"]
+
+    say("my truck is 60 minutes late")
+    say("1")
+    assert "HELD" in _board_statuses(client)
+    assert "released" in say("keep my original slot").lower()
+    assert "HELD" not in _board_statuses(client)
+
+
+def test_cancelling_with_nothing_booked_says_so(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from setuhaul.demo_ui import build_demo_app
+
+    client = TestClient(build_demo_app(tmp_path / "none", fresh=True)[0])
+    did = next(d["id"] for d in client.get("/demo/api/drivers").json()["drivers"] if d["name"] == "Manoj Sharma")
+    reply = client.post("/demo/api/chat", json={"driver_id": did, "text": "cancel my appointment"}).json()["reply"]
+    assert "could not find an appointment" in reply.lower()

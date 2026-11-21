@@ -82,6 +82,14 @@ class StubGateway:
             # The tool needs more information: pass its question straight through.
             if data.get("status") == "NEEDS_INPUT":
                 return ModelResponse(text=data.get("ask_the_driver", "Can you tell me more?"))
+            # A cancellation that could not be done: say why in plain words (a cancellation that worked is worded by the system).
+            if last.name == "cancel_appointment" and data.get("status") == "NOT_FOUND":
+                return ModelResponse(text="I could not find an appointment to cancel.")
+            if last.name == "cancel_appointment" and data.get("status") == "NOT_CANCELLABLE":
+                return ModelResponse(text="Unloading has already started, so this appointment cannot be cancelled here.")
+            # "Never mind" with no hold to release.
+            if last.name == "release_pending_change" and data.get("status") == "NOTHING_PENDING":
+                return ModelResponse(text="There is no pending change to release. Your original appointment stands.")
             # Anything else: a neutral acknowledgement.
             return ModelResponse(text="Thanks, noted.")
         # Otherwise the last message is the driver's own text.
@@ -89,6 +97,17 @@ class StubGateway:
         low = text.lower()
         # The first active shipment is assumed to be the one meant.
         shipment = (facts.get("active_shipment_ids") or [None])[0]
+        # The shipment a cancel or release is about: the thread's selected one, else the first active one.
+        target = facts.get("selected_shipment_id") or shipment
+        # "never mind" / "keep my original slot" while a hold exists: release the hold; the original appointment is untouched.
+        keep = next((w for w in ("never mind", "keep my original", "original slot", "original") if w in low), None)
+        if keep and target and facts.get("live_hold"):
+            return ModelResponse(tool_calls=(ToolCall(id="s1", name="release_pending_change", arguments={
+                "shipment_id": target, "driver_quote": keep}),))
+        # "cancel": cancel the confirmed appointment (the rules may instead hand it to a person).
+        if "cancel" in low and target:
+            return ModelResponse(tool_calls=(ToolCall(id="s1", name="cancel_appointment", arguments={
+                "shipment_id": target, "driver_quote": "cancel"}),))
         # "confirm" while a live hold exists: call the confirm tool with the driver's word as the quote.
         if "confirm" in low and facts.get("live_hold"):
             return ModelResponse(tool_calls=(ToolCall(id="s1", name="confirm_reschedule", arguments={
