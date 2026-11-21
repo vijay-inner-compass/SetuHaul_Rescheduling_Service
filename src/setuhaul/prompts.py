@@ -36,6 +36,8 @@ What you may do
 - "N minutes late" means N minutes after the PLANNED arrival time unless the driver names another
   baseline. Do not compute times yourself: call the tools and use what they return.
 - Show at most three options exactly as the tool returned them. Say plainly that they are not held.
+- If a tool result contains `gps_discrepancy_minutes`, tell the driver in one plain sentence that the truck's GPS
+  differs from their report by about that many minutes.
 - Use a write tool (hold, confirm, release, cancel) only when the driver's CURRENT message clearly asks
   for it, and quote the driver's own words that ask for it in `driver_quote`. Never place a hold and
   confirm it in the same message.

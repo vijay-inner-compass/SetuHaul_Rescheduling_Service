@@ -197,6 +197,8 @@ class TurnState:
     options_shown: bool = False
     shown_options: list[dict[str, str]] = field(default_factory=list)  # the latest option set shown this turn, as stored (rank order)
     options_valid_until: str = ""
+    # Minutes by which the driver's ETA and the GPS ETA disagree, when a search found them far apart (else None).
+    gps_discrepancy_minutes: int | None = None
     committed: list[str] = field(default_factory=list)  # names of write tools that changed state
 
 
@@ -448,11 +450,22 @@ def _search_slot_options(ctx: ToolContext, a: SearchArgs) -> dict[str, Any]:
     # Diagnostic facts attached to a hand-off.
     summary = {"eta": f"{eta.eta.astimezone(IST):%H:%M}", "rejections": result.rejection_counts,
                "missing": sorted({m for d in result.incomplete for m in d.missing})}
+    # Text added to the hand-off summary and the GPS facts added to payloads, only when GPS disagreed with the driver.
+    gps_note = ""
+    gps_facts: dict[str, Any] = {}
+    if eta.gps_discrepancy_minutes is not None:
+        # The facts the coordinator and the model need: the gap, where the ETA came from, and how far it is trusted.
+        gps_facts = {"gps_discrepancy_minutes": eta.gps_discrepancy_minutes, "eta_source": eta.source, "confidence": eta.confidence}
+        summary.update(gps_facts)
+        gps_note = (f" GPS disagrees with the driver's ETA by {eta.gps_discrepancy_minutes} min "
+                    f"(eta source {eta.source}, confidence {eta.confidence}).")
+        # Remembered so the reply renderer can tell the driver in its own fixed wording.
+        ctx.turn.gps_discrepancy_minutes = eta.gps_discrepancy_minutes
     # No slot can be offered: map the result to a hand-off reason, raise it, and tell the model to promise nothing.
     if result.status != "OK":
         reason = {"NO_SLOT": "NO_SLOT", "REQUIRES_APPROVAL": "APPROVAL_REQUIRED",
                   "INCOMPLETE_FEASIBILITY_DATA": "INCOMPLETE_FEASIBILITY_DATA"}[result.status]
-        _handoff(ctx, reason, a.shipment_id, f"No slot can be offered automatically ({result.status}).", **summary)
+        _handoff(ctx, reason, a.shipment_id, f"No slot can be offered automatically ({result.status}).{gps_note}", **summary)
         return {"status": result.status, "options": [], "note": "Do not promise any slot; operations will take over."}
     # Take the best three.
     ranked = rank_options(result.feasible, limit=3)
@@ -469,7 +482,7 @@ def _search_slot_options(ctx: ToolContext, a: SearchArgs) -> dict[str, Any]:
     return {"status": "OK", "option_set_id": shown.option_set_id, "held": False,
             "options": [{"rank": i.rank, **_slot_facts(ctx.conn, i.slot_id), "wait_minutes": i.decision.wait_minutes,
                          "warnings": list(i.decision.warnings)} for i in shown.items],
-            "valid_until": _hhmm(shown.expires_at)}
+            "valid_until": _hhmm(shown.expires_at), **gps_facts}
 
 
 # Read tool: what changed in a previously shown menu.

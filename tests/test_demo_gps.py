@@ -196,14 +196,15 @@ def test_scenario_a_driver_far_later_than_gps_says_gets_a_discrepancy(demo) -> N
     # A ping about 120 km out: GPS says roughly four hours of driving.
     out = send(client, did, 120).json()
     assert out["travel_minutes"] == 234
-    # The real pipeline still answers the "20 minutes late" message normally.
+    # The real pipeline still answers the "20 minutes late" message normally, and the reply now carries the GPS note.
     reply = say(client, did, "my truck is 20 minutes late")
     assert reply["status"] == "REPLIED"
-    # The ETA the tools derive for that same report is flagged, with a lowered confidence. The discrepancy is not
-    # visible in the reply text (the reply shows slot options only), so it is asserted on the derived ETA.
+    # Exact gap, worked by hand: planned 10:20 + 20 = 10:40; GPS ETA = 09:35:20 + 234 min = 13:29:20; 169 min 20 s -> 169.
+    assert "differs from your report by about 169 minutes" in reply["reply"]
+    # The ETA the tools derive for that same report is flagged with the same gap and a lowered confidence.
     eta = eta_for(deps, did, ReportArgs(kind="late_by", minutes=20))
     assert isinstance(eta, EtaEvidence) and eta.source == "DRIVER_DECLARED"
-    assert eta.gps_discrepancy_minutes is not None and eta.gps_discrepancy_minutes > 30
+    assert eta.gps_discrepancy_minutes == 169
     assert eta.confidence == "LOW"
 
 
