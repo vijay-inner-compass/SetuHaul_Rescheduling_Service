@@ -150,19 +150,19 @@ class CompareArgs(_Args):
 class HoldArgs(_Args):
     option_set_id: str
     rank: int = Field(ge=1, le=3)
-    driver_quote: str = Field(min_length=2, description="The driver's own words, copied from their current message.")
+    driver_quote: str = Field(min_length=1, description="The driver's own words, copied from their current message.")
 
 
 # Arguments for confirm_reschedule.
 class ConfirmArgs(_Args):
     hold_appointment_id: str
-    driver_quote: str = Field(min_length=2)
+    driver_quote: str = Field(min_length=1)
 
 
 # Arguments for write tools that act on a shipment: it also needs the driver's own words.
 class ShipmentQuoteArgs(_Args):
     shipment_id: str
-    driver_quote: str = Field(min_length=2)
+    driver_quote: str = Field(min_length=1)
 
 
 # Arguments for escalate_to_operations. Only these model-chosen reasons are allowed; system reasons (NO_SLOT etc.) are raised by code.
@@ -248,8 +248,10 @@ def _norm(s: str) -> str:
 def _quote_present(ctx: ToolContext, quote: str) -> bool:
     # Normalise the claimed quote.
     q = _norm(quote)
-    # It must be at least 2 characters and be found in the normalised message.
-    return len(q) >= 2 and q in _norm(ctx.message_text)
+    # The whole message, normalised. A one-character quote (the driver replied just "3") counts only when it IS the whole message.
+    msg = _norm(ctx.message_text)
+    # Otherwise the quote must be at least 2 characters and be found inside the message.
+    return bool(q) and q in msg and (len(q) >= 2 or q == msg)
 
 
 # Turn a 24-hour 'HH:MM' into today's date at that time, in IST.

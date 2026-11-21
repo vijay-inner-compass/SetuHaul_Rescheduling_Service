@@ -35,6 +35,9 @@ Legend: **Demo** = can be shown on the demo console; **Script** = shown by an ev
 | Driver has two active shipments and does not say which | asks which | `test_two_active_shipments_the_driver_is_asked_which` |
 | Option number outside 1 to 3 | `INVALID_ARGUMENTS`, nothing held | `test_a_rank_outside_the_menu_is_rejected_and_holds_nothing` |
 | Option number never shown | `INVALID_OPTION` | `test_unknown_rank_is_rejected` |
+| Driver replies with just "3" | holds menu line 3 (a one-character quote counts only when it is the whole message) | `test_a_reply_of_just_a_number_holds_that_menu_line` |
+| "3" appears inside a longer, unrelated message | not approval | `test_a_one_character_quote_inside_a_longer_message_is_not_approval` |
+| Demo's rule-based assistant given a menu number | places the hold | `test_the_rule_based_assistant_understands_a_menu_number` |
 | Quote with odd spacing or case | still authorises | `test_the_real_quote_does_authorise_it_even_with_odd_spacing_and_case` |
 | Driver's acceptable window reversed | invalid | `test_driver_constraints_window_must_be_ordered` |
 

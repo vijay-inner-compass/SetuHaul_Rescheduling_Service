@@ -23,6 +23,8 @@ from typing import Any
 from setuhaul.model_gateway import ModelMessage, ModelPolicy, ModelResponse, ToolCall
 
 # Matches "60 minutes", "5 min", "30 mins": one to three digits then a minutes word.
+# A bare menu choice: "3", "option 3", "number 3" or "no. 3" (digits 1 to 9; the tool layer rejects ranks outside 1 to 3).
+_PICK = re.compile(r"(?:(?:option|number|no\.?)\s*)?([1-9])")
 _MIN = re.compile(r"(\d{1,3})\s*(?:minutes?|mins?)", re.IGNORECASE)
 
 
@@ -62,6 +64,11 @@ class StubGateway:
         if "confirm" in low and facts.get("live_hold"):
             return ModelResponse(tool_calls=(ToolCall(id="s1", name="confirm_reschedule", arguments={
                 "hold_appointment_id": facts["live_hold"]["appointment_id"], "driver_quote": "confirm"}),))
+        # A menu number ("3", "option 2", "number 1") after options were shown: hold that line, quoting the driver's own text.
+        pick = _PICK.fullmatch(low.strip())
+        if pick and facts.get("latest_option_set_id"):
+            return ModelResponse(tool_calls=(ToolCall(id="s1", name="request_hold", arguments={
+                "option_set_id": facts["latest_option_set_id"], "rank": int(pick.group(1)), "driver_quote": low.strip()}),))
         # "first" or "take" after options were shown: hold option 1.
         if ("first" in low or "take" in low) and facts.get("latest_option_set_id"):
             quote = "first" if "first" in low else "take"

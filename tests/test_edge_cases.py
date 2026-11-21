@@ -83,3 +83,32 @@ def test_an_empty_message_is_refused_before_the_model(env) -> None:  # type: ign
     _, client, calls, *_ = env
     assert post(client, msg("", mid="EMPTY-1")).status_code == 422
     assert calls.n == 0
+
+
+# --- replying with just a number (the menu says "Reply with the number") --------------------------------------
+def test_a_reply_of_just_a_number_holds_that_menu_line(chat: Chat) -> None:
+    # The driver sends "3" and nothing else; the model quotes "3". One character is enough when it IS the whole message.
+    chat.say("SHP1006 is running 60 minutes late", [tc("search_slot_options", shipment_id="SHP1006", report=LATE_60), say_text("x")])
+    third = chat.rows("select slot_id from option_set_items where displayed_rank=3 order by rowid desc limit 1")[0][0]
+    r = chat.say("3", [
+        tc_dyn("request_hold", lambda m: {"option_set_id": facts_from(m)["latest_option_set_id"], "rank": 3, "driver_quote": "3"}),
+        say_text("ok")])
+    assert r.verified_hold and chat.rows("select slot_id from appointments where appointment_status='HELD'") == [(third,)]
+
+
+def test_a_one_character_quote_inside_a_longer_message_is_not_approval(chat: Chat) -> None:
+    # "3" appears in the message, but the message is about something else, so it cannot authorise a hold.
+    chat.say("SHP1006 is running 60 minutes late", [tc("search_slot_options", shipment_id="SHP1006", report=LATE_60), say_text("x")])
+    chat.say("I have 3 trucks on this road", [
+        tc_dyn("request_hold", lambda m: {"option_set_id": facts_from(m)["latest_option_set_id"], "rank": 3, "driver_quote": "3"}),
+        say_text("ok")])
+    assert tool_json(chat.last_messages(), "request_hold")["error"] == "APPROVAL_NOT_PRESENT"
+    assert chat.held() == 0
+
+
+def test_the_rule_based_assistant_understands_a_menu_number(env) -> None:  # type: ignore[no-untyped-def]  # noqa: F811
+    # The demo's stand-in assistant must follow its own menu instruction: "3" after the menu places a hold.
+    _, client, *_ = env
+    assert "These slots are available" in post(client, msg("my truck is 60 minutes late", mid="N-1")).json()["reply"]
+    r = post(client, msg("3", mid="N-2")).json()
+    assert "holding" in r["reply"].lower() and r["status"] == "REPLIED"
