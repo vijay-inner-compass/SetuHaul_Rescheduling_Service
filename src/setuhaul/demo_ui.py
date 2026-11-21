@@ -58,8 +58,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
 # The same facility snapshot the service uses, to draw the dock board.
-# Releases a hold when a new ping shows the truck can no longer reach it.
-from setuhaul.booking import reassess_hold_after_position_change
+# Releases or re-offers slots when a new ping arrives (same handling as the real API).
+from setuhaul.booking import make_hold_checker
 
 # The capacity snapshot
 from setuhaul.capacity import build_facility_state
@@ -83,7 +83,12 @@ from setuhaul.db import (
 from setuhaul.escalation import claim_case, get_driver_case_status, list_open_cases, resolve_case
 
 # GPS ping storage and the active-shipment lookup.
-from setuhaul.gps import active_shipment_for_driver, gps_travel_minutes_for, store_ping
+from setuhaul.gps import (
+    active_shipment_for_driver,
+    gps_travel_minutes_for,
+    open_shipments_for_driver,
+    store_ping,
+)
 
 # Maps phone numbers to drivers.
 from setuhaul.identity import provision_identities
@@ -91,8 +96,14 @@ from setuhaul.identity import provision_identities
 # The hold-expiry sweep, triggered by a button.
 from setuhaul.jobs.expire_holds import expire_due_holds
 
+# Conversation memory, used to write the driver's messages.
+from setuhaul.memory import ConversationMemoryStore
+
 # Delivers queued downstream notices when the button is pressed.
 from setuhaul.notifications import deliver_pending_notifications
+
+# A new truck position: confirmation, hold release, earlier-slot offers.
+from setuhaul.position import handle_driver_position
 
 # The validated ping type stored by store_ping.
 from setuhaul.schemas import GpsPing
@@ -480,10 +491,14 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
                     # In the demo the ping just sent is the truck's latest word, so drop any ping stamped later (for example the seeded
                     # one); otherwise a deliberately old test ping would be ignored in favour of it. The real API never does this.
                     # Both timestamps are normalised to IST by store_ping, so this lexical comparison is chronological.
-                    conn.execute("delete from gps_pings where shipment_id=? and recorded_at>?", (sid, recorded.astimezone(IST).isoformat()))
+                    # Across all the driver's loads: the position lookup is per driver, so an older ping on any load must not shadow this one.
+                    for shipment_id in open_shipments_for_driver(conn, body.driver_id):
+                        conn.execute("delete from gps_pings where shipment_id=? and recorded_at>?", (shipment_id, recorded.astimezone(IST).isoformat()))
                     store_ping(conn, sid, GpsPing(lat=body.lat, lon=body.lon, recorded_at=recorded), demo.clock, "DEMO_CONSOLE")
-                # The truck has a new position: release the load's live hold at once if it is now out of reach (same as the real API).
-                reassess_hold_after_position_change(conn, sid, demo.clock)
+                # The truck has a new position: confirm it to the driver, release a hold that is now out of reach, and offer earlier slots
+                # if the truck is much closer (exactly as the real API does).
+                memory = ConversationMemoryStore(conn, deps.redis, demo.clock, load_settings(), hold_checker=make_hold_checker(conn, demo.clock))
+                handle_driver_position(conn, body.driver_id, demo.clock, memory)
                 return gps_readout(conn, sid)
             finally:
                 conn.close()

@@ -50,16 +50,22 @@ def store_ping(conn: sqlite3.Connection, shipment_id: str, ping: GpsPing, clock:
     return cur.lastrowid
 
 
+def open_shipments_for_driver(conn: sqlite3.Connection, driver_id: str) -> list[str]:
+    """All the driver's open shipments, earliest planned ETA first."""
+    # Open means neither COMPLETED nor CANCELLED.
+    rows = conn.execute(
+        "SELECT shipment_id FROM shipments WHERE driver_id = ? AND current_status NOT IN ('COMPLETED', 'CANCELLED') "
+        "ORDER BY original_eta_ts, shipment_id",
+        (driver_id,),
+    ).fetchall()
+    return [r["shipment_id"] for r in rows]
+
+
 def active_shipment_for_driver(conn: sqlite3.Connection, driver_id: str) -> str | None:
     """The driver's open shipment with the earliest original ETA, or None if there is none."""
-    # Open means neither COMPLETED nor CANCELLED; the earliest planned ETA is the one being driven.
-    row = conn.execute(
-        "SELECT shipment_id FROM shipments WHERE driver_id = ? AND current_status NOT IN ('COMPLETED', 'CANCELLED') "
-        "ORDER BY original_eta_ts, shipment_id LIMIT 1",
-        (driver_id,),
-    ).fetchone()
-    # No row means the driver has nothing active.
-    return row["shipment_id"] if row else None
+    # The earliest planned ETA is the one being driven; no open shipment means nothing is active.
+    ids = open_shipments_for_driver(conn, driver_id)
+    return ids[0] if ids else None
 
 
 def load_latest_ping(conn: sqlite3.Connection, shipment_id: str, clock: Clock, max_age_minutes: int) -> GpsPing | None:
@@ -102,15 +108,39 @@ def gps_travel_minutes_for(conn: sqlite3.Connection, shipment_id: str, clock: Cl
     return StraightLineEstimator(settings).estimate(ping.lat, ping.lon, dest["lat"], dest["lon"])
 
 
-def gps_arrival_floor(conn: sqlite3.Connection, shipment_id: str, clock: Clock, settings: Settings) -> datetime | None:
-    """The earliest the truck can reach the facility from its latest FRESH ping: now plus the straight-line drive.
-
-    None when there is no fresh ping or no coordinates. It is used only as a floor: a slot that starts before this moment
-    cannot be reached, whatever the driver said. It never makes an arrival earlier than the driver's own figure.
-    """
-    # Drive time from the latest fresh ping (None: nothing to go on).
-    minutes = gps_travel_minutes_for(conn, shipment_id, clock, settings)
-    if minutes is None:
+def load_latest_driver_ping(conn: sqlite3.Connection, driver_id: str, clock: Clock, max_age_minutes: int) -> GpsPing | None:
+    """The driver's latest FRESH ping across all their shipments. A truck has one position, whichever load it is chasing."""
+    # Newest by recorded time over every shipment of this driver; the later-inserted ping wins a tie.
+    row = conn.execute(
+        "SELECT p.lat, p.lon, p.recorded_at FROM gps_pings p JOIN shipments s ON s.shipment_id = p.shipment_id "
+        "WHERE s.driver_id = ? ORDER BY p.recorded_at DESC, p.ping_id DESC LIMIT 1", (driver_id,)).fetchone()
+    if row is None:
         return None
+    recorded = parse_operational_timestamp(row["recorded_at"])
+    # A future-dated ping counts as age zero; too old means ignored.
+    if max(clock.now() - recorded, timedelta(0)) > timedelta(minutes=max_age_minutes):
+        return None
+    return GpsPing(lat=row["lat"], lon=row["lon"], recorded_at=recorded)
+
+
+def gps_arrival_floor(conn: sqlite3.Connection, shipment_id: str, clock: Clock, settings: Settings) -> datetime | None:
+    """The earliest the truck can reach THIS shipment's dock from the driver's latest FRESH ping: now plus the straight-line drive.
+
+    The ping may be stored against any of the driver's loads (a truck has one position); the distance is measured to this load's own
+    dock. None when there is no fresh ping or no coordinates. It is used only as a floor: a slot that starts before this moment cannot
+    be reached, whatever the driver said. It never makes an arrival earlier than the driver's own figure.
+    """
+    # This shipment's driver and its dock.
+    row = conn.execute(
+        "SELECT s.driver_id, f.lat, f.lon FROM shipments s JOIN facilities f ON f.facility_id = s.destination_facility_id "
+        "WHERE s.shipment_id = ?", (shipment_id,)).fetchone()
+    if row is None or row["lat"] is None or row["lon"] is None:
+        return None
+    # The truck's latest fresh position (None: nothing to go on).
+    ping = load_latest_driver_ping(conn, row["driver_id"], clock, settings.gps_max_age_minutes)
+    if ping is None:
+        return None
+    # Straight-line drive from the truck to this load's dock.
+    minutes = StraightLineEstimator(settings).estimate(ping.lat, ping.lon, row["lat"], row["lon"])
     # The truck is somewhere right now, so the soonest it can arrive is now plus that drive.
     return clock.now() + timedelta(minutes=minutes)

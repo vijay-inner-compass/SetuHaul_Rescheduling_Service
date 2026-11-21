@@ -64,7 +64,7 @@ from redis import Redis
 from starlette.concurrency import run_in_threadpool
 
 # Live hold checker for conversation memory.
-from setuhaul.booking import make_hold_checker, reassess_hold_after_position_change
+from setuhaul.booking import make_hold_checker
 
 # Real or simulated clock.
 from setuhaul.clock import Clock, SystemClock
@@ -119,6 +119,10 @@ from setuhaul.model_gateway import (
 
 # Span exporter type.
 from setuhaul.observability import InMemoryExporter
+
+# Per-driver rate limiting.
+# A new truck position: confirmation, hold release and earlier-slot offers.
+from setuhaul.position import handle_driver_position, handle_new_position
 
 # Per-driver rate limiting.
 from setuhaul.rate_limit import RateLimits, check_rate_limit
@@ -476,12 +480,20 @@ def create_app(deps: AppDeps) -> FastAPI:
                 # A rejection response from the store callback is passed straight through.
                 if isinstance(result, JSONResponse):
                     return result
-                # The truck has a new position: if the shipment's live hold is now out of reach, release it at once.
-                # The ping is already stored, so a failure here must not turn the ingest into an error.
+                # The truck has a new position: tell the driver, release a hold that is now out of reach, and offer earlier slots if
+                # the truck is much closer. The ping is already stored, so a failure here must not turn the ingest into an error.
                 try:
-                    row = conn.execute("select shipment_id from gps_pings where ping_id=?", (result,)).fetchone()
+                    row = conn.execute("select p.shipment_id, p.source, s.driver_id from gps_pings p join shipments s using(shipment_id) "
+                                       "where p.ping_id=?", (result,)).fetchone()
                     if row is not None:
-                        reassess_hold_after_position_change(conn, row["shipment_id"], deps.clock)
+                        memory = ConversationMemoryStore(conn, deps.redis, deps.clock, load_settings(),
+                                                         hold_checker=make_hold_checker(conn, deps.clock))
+                        if row["source"] == "DRIVER_SHARED":
+                            # A driver's own position applies to all of their open loads.
+                            handle_driver_position(conn, row["driver_id"], deps.clock, memory)
+                        else:
+                            # A telematics ping names one shipment.
+                            handle_new_position(conn, row["shipment_id"], deps.clock, memory)
                 except Exception:  # noqa: BLE001, S110 - the ping is stored; reassessment is best effort and retried on the next ping
                     pass
                 # Success: report the new ping id.

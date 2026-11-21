@@ -189,6 +189,19 @@ T: dict[str, dict[str, str]] = {
         "hinglish": "Aapke truck ki position badal gayi hai, isliye us slot tak time par nahi pahunch sakte. Kuch bhi hold nahi hai "
                     "aur aapki original appointment waisi hi hai. Chahein toh main dobara dhoondh sakta hoon.",
     },
+    # Told to the driver after every new position: it was received, how far the dock is and when they could arrive.
+    "position_received": {
+        "en": "Thanks, I have your new position: about {km} km from the dock, about {minutes} minutes away, so you could arrive around {eta}.",
+        "hi": "धन्यवाद, मुझे आपकी नई स्थिति मिल गई है: डॉक से लगभग {km} किमी दूर, लगभग {minutes} मिनट की दूरी, यानी आप लगभग {eta} तक पहुंच सकते हैं।",
+        "hinglish": "Thanks, mujhe aapki nayi position mil gayi hai: dock se lagbhag {km} km door, lagbhag {minutes} minute ki doori, yaani aap "
+                    "lagbhag {eta} tak pahunch sakte hain.",
+    },
+    # First line of an offer of earlier slots when the truck has come closer; the numbered lines and closing line follow (options_line, options_outro).
+    "earlier_intro": {
+        "en": "For order {order}: your truck is closer now, so earlier slots than your current one are available. Nothing is held yet:",
+        "hi": "ऑर्डर {order} के लिए: आपका ट्रक अब पास है, इसलिए आपके मौजूदा स्लॉट से पहले के स्लॉट उपलब्ध हैं। अभी कुछ भी होल्ड नहीं है:",
+        "hinglish": "Order {order} ke liye: aapka truck ab paas hai, isliye aapke maujooda slot se pehle ke slots available hain. Abhi kuch bhi hold nahi hai:",
+    },
     # Told to the driver when a new GPS ping showed the held slot is out of reach and the hold was released at once.
     "position_released": {
         "en": "Your truck's position has changed, so I have released the hold on {start}-{end} at dock {dock}: it can no longer be "

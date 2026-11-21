@@ -274,3 +274,89 @@ def test_confirming_after_a_far_ping_that_was_not_reassessed_still_refuses(chat:
     assert "position has changed" in r.text and not r.verified_confirmed
     assert chat.held() == 0  # the hold was released
     assert chat.rows("select appointment_status from appointments where appointment_id='APT1006'") == [("CONFIRMED",)]  # original stands
+
+
+# --- a position update is confirmed, and a closer truck is offered earlier slots ----------------------------------------
+def _booked_or_held_starts(client) -> list[str]:  # type: ignore[no-untyped-def]
+    return sorted(s["start"] for d in client.get("/demo/api/board").json()["docks"] for s in d["slots"] if s["status"] in ("BOOKED", "HELD"))
+
+
+def test_every_ping_is_confirmed_to_the_driver_with_distance_and_drive_time(tmp_path: Path) -> None:
+    _, ping, _, _, chat = _gps_demo(tmp_path)
+    ping(24)
+    msgs = [t for t in chat() if "your new position" in t]
+    assert len(msgs) == 1 and "about 24 km" in msgs[0] and "minutes away" in msgs[0] and "arrive around" in msgs[0]
+
+
+def test_a_closer_truck_is_offered_earlier_slots_and_can_switch_its_booking(tmp_path: Path) -> None:
+    # Far away (165 km) the earliest reachable slot is mid-afternoon; at 24 km much earlier slots open up.
+    client, ping, say, _held, chat = _gps_demo(tmp_path)
+    ping(165)
+    say("my truck is 60 minutes late")
+    say("1")
+    assert "confirmed" in say("confirm").lower()
+    late = _booked_or_held_starts(client)[0]
+    ping(24)  # the truck is now much closer
+    offer = [t for t in chat() if "earlier slots than your current one" in t]
+    assert len(offer) == 1 and "1. Dock" in offer[0] and "Reply with the number" in offer[0]
+    first_offered = offer[0].split("\n")[1].split(", ")[1].split("-")[0]
+    assert first_offered < late  # genuinely earlier than the slot it had
+    # Picking by number holds the earlier slot (the confirmed one stays until the swap is confirmed), then confirming swaps them.
+    assert "holding" in say("1").lower()
+    assert "confirmed" in say("confirm").lower()
+    assert _booked_or_held_starts(client) == [first_offered]  # the old late slot is free again, only the new one is booked
+
+
+def test_the_same_offer_is_not_repeated_for_every_ping(tmp_path: Path) -> None:
+    _client, ping, say, _, chat = _gps_demo(tmp_path)
+    ping(165)
+    say("my truck is 60 minutes late")
+    say("1")
+    say("confirm")
+    ping(24)
+    ping(23)
+    ping(22)
+    assert len([t for t in chat() if "earlier slots than your current one" in t]) == 1  # one offer, three confirmations
+    assert len([t for t in chat() if "your new position" in t]) == 4  # 165, 24, 23, 22
+
+
+def test_no_offer_when_the_current_slot_is_already_as_early_as_it_gets(tmp_path: Path) -> None:
+    _, ping, say, _, chat = _gps_demo(tmp_path)
+    ping(20)
+    say("my truck is 60 minutes late")
+    say("1")
+    say("confirm")
+    ping(5)  # closer, but there is nothing at least 30 minutes earlier than the slot it already has
+    assert not any("earlier slots than your current one" in t for t in chat())
+
+
+def test_a_search_from_far_away_does_not_offer_slots_the_truck_cannot_reach(tmp_path: Path) -> None:
+    # At 300 km (about 10 hours) nothing before about 19:30 can be reached, so the first menu must not show 12:00 or 13:00.
+    _, ping, say, _, _ = _gps_demo(tmp_path)
+    ping(300)
+    reply = say("my truck is 60 minutes late")
+    starts = [ln.split(", ")[1].split("-")[0] for ln in reply.split("\n") if ln[:2] in ("1.", "2.", "3.")]
+    assert all(s >= "19:00" for s in starts) or "operations" in reply.lower()
+
+
+def test_a_position_update_reaches_the_load_with_the_late_booking_even_when_it_is_not_the_first_load(tmp_path: Path) -> None:
+    # Sandeep Meena has two open loads; the ping attaches to the first (09:00), his 18:00 booking is on the second. The truck has one
+    # position, so moving it close must still offer earlier slots for the 18:00 load, naming its order.
+    from fastapi.testclient import TestClient
+
+    from setuhaul.demo_ui import build_demo_app
+
+    client = TestClient(build_demo_app(tmp_path / "two", live_factory=StubGateway)[0])  # the supplied schedule, with its bookings
+    sandeep = next(d for d in client.get("/demo/api/drivers").json()["drivers"] if d["name"] == "Sandeep Meena")
+    late = next(s for s in sandeep["shipments"] if s["appointment"] and s["appointment"].startswith("18:00"))
+    fac = client.get(f"/demo/api/driver/{sandeep['id']}/gps").json()["facility"]
+    for km in (165, 24):
+        r = client.post("/demo/api/gps", json={"driver_id": sandeep["id"], "lat": fac["lat"] + km / 111.2, "lon": fac["lon"], "age_minutes": 0})
+        assert r.status_code == 200
+    texts = [m["text"] for m in client.get(f"/demo/api/driver/{sandeep['id']}/state").json()["messages"]]
+    offers = [t for t in texts if "earlier slots than your current one" in t]
+    # At 165 km the 15:00 slots already beat 18:00; at 24 km much earlier ones open up, so the second offer starts earlier than the first.
+    assert len(offers) == 2 and all(o.startswith(f"For order {late['order']}:") and "1. Dock" in o for o in offers)
+    first_start = [o.split("\n")[1].split(", ")[1].split("-")[0] for o in offers]
+    assert first_start[1] < first_start[0] < "18:00"
+    assert len([t for t in texts if "your new position" in t]) == 2  # each ping confirmed once, not once per load

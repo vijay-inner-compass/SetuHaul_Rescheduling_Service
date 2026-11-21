@@ -97,6 +97,12 @@ Legend: **Demo** = can be shown on the demo console; **Script** = shown by an ev
 | Truck moves far away after the menu, before the driver picks | no hold; the system says the position changed | `test_a_ping_that_moves_the_truck_away_before_the_driver_picks_blocks_the_hold` |
 | Truck moves closer | nothing is refused (GPS never makes arrival earlier) | `test_a_ping_that_moves_the_truck_closer_changes_nothing` |
 | Far ping stored without the immediate re-check, then confirm | confirm refuses and releases; original stands | `test_confirming_after_a_far_ping_that_was_not_reassessed_still_refuses` |
+| Any new ping | the driver is told the distance, drive time and earliest arrival | `test_every_ping_is_confirmed_to_the_driver_with_distance_and_drive_time` |
+| Truck moves much closer after booking a late slot | earlier slots are offered; picking one swaps the booking and frees the old slot | `test_a_closer_truck_is_offered_earlier_slots_and_can_switch_its_booking` |
+| Several pings in a row | the same offer is not repeated | `test_the_same_offer_is_not_repeated_for_every_ping` |
+| Closer, but nothing 30 minutes earlier than the current slot, or the driver's own later ETA binds | no offer | `test_no_offer_when_the_current_slot_is_already_as_early_as_it_gets` |
+| Search from far away | the first menu lists only slots the truck can reach | `test_a_search_from_far_away_does_not_offer_slots_the_truck_cannot_reach` |
+| Driver with two loads, ping stored on the first, late booking on the second | the second load is still offered earlier slots, naming its order | `test_a_position_update_reaches_the_load_with_the_late_booking_even_when_it_is_not_the_first_load` |
 | Dock breaks down after the menu was shown | option blocked | `test_dock_breakdown_after_showing_blocks_the_option` |
 | Slot removed from the schedule | disappears | `test_slot_removed_from_schedule_disappears` |
 | Facility rules changed | flagged | `test_changed_facility_rules_are_flagged` |

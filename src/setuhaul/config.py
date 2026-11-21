@@ -68,6 +68,8 @@ class Settings:
     gps_avg_speed_kmph: float = 40.0
     # Multiplier from straight-line to road distance; tune against demo data.
     gps_road_factor: float = 1.3
+    # When the truck moves closer, earlier slots are offered only if the best one starts at least this many minutes before the current slot.
+    gps_reoffer_gain_minutes: int = 30
 
 
 def load_settings() -> Settings:

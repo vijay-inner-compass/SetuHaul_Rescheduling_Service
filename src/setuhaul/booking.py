@@ -60,9 +60,6 @@ from setuhaul.gps import gps_arrival_floor
 # Authorisation error.
 from setuhaul.identity import AuthError
 
-# Driver-facing wording in three languages.
-from setuhaul.language import say
-
 # Downstream notices for confirmed changes.
 from setuhaul.notifications import enqueue_downstream
 
@@ -212,6 +209,7 @@ def acquire_hold(
     rank: int,
     clock: Clock,
     ttl_seconds: int | None = None,
+    supersede: bool = False,
 ) -> HoldResult:
     """Hold the slot shown at ``rank``. First successful commit wins (FCFS, decision D5)."""
     # Load the menu the driver saw. This also proves the menu belongs to this driver, thread and shipment.
@@ -245,8 +243,10 @@ def acquire_hold(
                         status="HELD", outcome=OutcomeClass.SUCCESS, appointment_id=existing["appointment_id"],
                         slot_id=item.slot_id, expires_at=parse_operational_timestamp(meta["expires_at"]),
                     )
-                # A different slot: one hold per shipment, so refuse and say which hold exists.
-                return _fail("SHIPMENT_ALREADY_HELD", existing_appointment_id=existing["appointment_id"])
+                # A different slot: one hold per shipment. Refuse and say which hold exists, unless the driver is deliberately
+                # switching to another option (supersede): then the old hold is released below, only once the new one is certain.
+                if not supersede:
+                    return _fail("SHIPMENT_ALREADY_HELD", existing_appointment_id=existing["appointment_id"])
             # Re-check the chosen option against the facility as it is right now, inside the lock.
             state = build_facility_state(conn, opt.facility_id, now)
             # Where the truck is now (latest fresh GPS ping): a slot it can no longer reach in time is refused.
@@ -257,6 +257,11 @@ def acquire_hold(
             if diff_item.change not in ("UNCHANGED", "CHANGED_STILL_FEASIBLE"):
                 taken = diff_item.change in ("NEWLY_HELD", "NEWLY_OCCUPIED")
                 return _fail("SLOT_CONFLICT" if taken else "OPTION_CHANGED", diff=diff_item)
+            # Switching holds: the new option has passed every check, so release the old hold in the same transaction.
+            # If the insert below fails, the whole transaction rolls back and the old hold is kept.
+            if existing is not None and existing["slot_id"] != item.slot_id:
+                release_hold_in_txn(conn, existing["appointment_id"], shipment_id, "SUPERSEDED", now, "DRIVER", driver_id,
+                                    "SUPERSEDED_BY_NEW_CHOICE")
             # The shipment's current appointment, which the hold would eventually replace.
             original = conn.execute(
                 "select appointment_id from appointments where shipment_id=? and is_current=1 "
@@ -650,12 +655,12 @@ def render_confirmation_text(conn: sqlite3.Connection, appointment_id: str) -> s
 
 
 # ---- the truck moved ----------------------------------------------------------------------------------------
-def reassess_hold_after_position_change(conn: sqlite3.Connection, shipment_id: str, clock: Clock) -> str | None:
+def reassess_hold_after_position_change(conn: sqlite3.Connection, shipment_id: str, clock: Clock) -> dict[str, str] | None:
     """A new GPS ping has arrived. If the shipment's live hold is for a slot the truck can no longer reach in time from
-    where it is now, release the hold at once (the dock is freed for others) and tell the driver in the chat.
+    where it is now, release the hold at once (the dock is freed for others).
 
-    Returns the released hold's appointment id, or None when there is no hold, no fresh ping, or the slot is still reachable.
-    The original appointment is never touched.
+    Returns the released slot's facts (appointment_id, start, end, dock) so the caller can tell the driver, or None when there is
+    no hold, no fresh ping, or the slot is still reachable. The original appointment is never touched.
     """
     now = clock.now()
     # Where the truck is now; without a fresh ping there is nothing to reassess.
@@ -682,13 +687,6 @@ def reassess_hold_after_position_change(conn: sqlite3.Connection, shipment_id: s
             return None
         # Free the slot, recording that the system did it because the position changed.
         release_hold_in_txn(conn, row["appointment_id"], shipment_id, "SYSTEM", now, "SYSTEM", None, "POSITION_CHANGED")
-        # Tell the driver in their chat and their language.
-        state_row = conn.execute("select state_json from conversation_state where driver_id=? and thread_id=?",
-                                 (row["driver_id"], row["thread_id"])).fetchone()
-        lang = (json.loads(state_row["state_json"]).get("language") if state_row else None) or "en"
-        dock = state.docks[slot.dock_id].code
-        text = say("position_released", lang, start=f"{slot.start:%H:%M}", end=f"{slot.end:%H:%M}", dock=dock)
-        conn.execute(
-            "insert into chat_messages (chat_message_id, thread_id, sender_type, message_text, message_ts) values (?,?, 'AGENT', ?, ?)",
-            ("MSG-" + uuid.uuid4().hex[:12].upper(), row["thread_id"], text, now.isoformat()))
-    return str(row["appointment_id"])
+    # What was released, for the message to the driver (written by the caller, which has the conversation memory).
+    return {"appointment_id": str(row["appointment_id"]), "start": f"{slot.start:%H:%M}", "end": f"{slot.end:%H:%M}",
+            "dock": state.docks[slot.dock_id].code}

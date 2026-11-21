@@ -68,7 +68,7 @@ from setuhaul.eta import derive_eta, load_eta_records
 
 # Slot search.
 from setuhaul.feasibility import build_context, search_feasible_slots
-from setuhaul.gps import gps_travel_minutes_for
+from setuhaul.gps import gps_arrival_floor, gps_travel_minutes_for
 
 # Authorisation helpers; the driver's identity is trusted context, never a tool argument.
 from setuhaul.identity import AuthError, TrustedDriverContext, authorize_shipment
@@ -445,8 +445,16 @@ def _search_slot_options(ctx: ToolContext, a: SearchArgs) -> dict[str, Any]:
         latest_acceptable=_today_at(ctx, a.latest_time) if a.latest_time else None)
     # One reading of now.
     now = ctx.clock.now()
+    # The truck cannot arrive sooner than its latest GPS position allows, whatever was reported: slots it cannot reach are not offered.
+    # (The floor only ever moves the arrival later; the discrepancy, if any, was already worked out above and is still reported.)
+    floor = gps_arrival_floor(ctx.conn, a.shipment_id, ctx.clock, load_settings())
+    # The arrival the slot search uses. `eta` itself stays as derived, because the reply and the hand-off report the driver's figure.
+    search_eta = eta
+    if floor is not None and floor > eta.eta:
+        # Marked as GPS-assisted: the truck's position, not the driver's figure, was the binding limit (later offers rely on this).
+        search_eta = eta.model_copy(update={"eta": floor, "source": "GPS_ASSISTED"})
     # The feasibility context for this shipment.
-    fctx = build_context(ctx.conn, a.shipment_id, eta, now, constraints)
+    fctx = build_context(ctx.conn, a.shipment_id, search_eta, now, constraints)
     # A fresh snapshot of the facility.
     state = build_facility_state(ctx.conn, fctx.facility_id, now)
     # Judge every slot.
@@ -541,7 +549,8 @@ def _request_hold(ctx: ToolContext, a: HoldArgs) -> dict[str, Any]:
         return {"status": "NOT_LATEST_OPTION_SET", "note": "Only the most recently shown options can be held."}
     row = ctx.conn.execute("select shipment_id from option_sets where option_set_id=?", (a.option_set_id,)).fetchone()
     # The transactional hold (first commit wins).
-    r = acquire_hold(ctx.conn, ctx.driver_id, ctx.thread_id, row["shipment_id"], a.option_set_id, a.rank, ctx.clock)
+    # supersede: picking another option while holding one switches the hold (the old one is released only if the new one succeeds).
+    r = acquire_hold(ctx.conn, ctx.driver_id, ctx.thread_id, row["shipment_id"], a.option_set_id, a.rank, ctx.clock, supersede=True)
     # A system error must not be reported as a normal answer.
     _check_system(r.status, r.outcome)
     # Not held: say so and let the model offer to search again.
