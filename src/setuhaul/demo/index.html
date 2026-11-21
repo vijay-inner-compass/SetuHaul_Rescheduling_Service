@@ -96,6 +96,13 @@ label.field{display:block;font-size:12px;color:var(--ink-2);margin:0 0 4px;font-
 .chips button{border:1px solid var(--line-strong);background:#fff;border-radius:999px;padding:4px 10px;font-size:12px;cursor:pointer;color:var(--ink-2)}
 .chips button:hover{border-color:var(--brand-2);color:var(--brand)}
 .sendrow{display:flex;gap:8px}
+/* truck position (GPS) panel */
+.gpsbox{border:1px solid var(--line);border-radius:6px;padding:9px 11px;margin-bottom:12px;background:var(--surface-2)}
+.gpsbox input[type=number]{font:inherit;border:1px solid var(--line-strong);border-radius:6px;padding:6px 8px;background:#fff;color:var(--ink);width:100%}
+.gpsbox input[type=range]{width:100%}
+.gpsgrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px}
+.gpsread{font-size:12.5px;margin-top:8px}
+.gpsmsg{font-size:12.5px;color:var(--bad);margin-top:6px}
 .typing{align-self:flex-start;color:var(--ink-3);font-size:12.5px;padding:2px 4px}
 
 /* dock board */
@@ -174,6 +181,23 @@ table.t td{padding:7px 6px;border-bottom:1px solid var(--line);vertical-align:to
       <select id="driverSel"></select>
       <div class="driver-card"><div class="avatar" id="avatar">--</div><div><h3 id="driverName">Select a driver</h3><div class="muted" id="driverSub"></div></div></div>
       <div class="loads" id="loads"></div>
+      <!-- Truck position: an editable GPS ping, sent only when the button is pressed -->
+      <div class="gpsbox" id="gpsBox">
+        <div class="section-title" style="margin-top:0">Truck position</div>
+        <div id="gpsNone" class="muted" style="display:none"></div>
+        <div id="gpsForm">
+          <label class="field" for="gpsDist">Distance from the dock: <span id="gpsDistOut">0</span> km</label>
+          <input type="range" id="gpsDist" min="0" max="300" step="1" value="0">
+          <div class="gpsgrid" style="margin-top:8px">
+            <div><label class="field" for="gpsLat">Latitude</label><input type="number" id="gpsLat" step="any" min="-90" max="90"></div>
+            <div><label class="field" for="gpsLon">Longitude</label><input type="number" id="gpsLon" step="any" min="-180" max="180"></div>
+            <div><label class="field" for="gpsAge">Ping age (min)</label><input type="number" id="gpsAge" step="1" min="0" max="1440" value="0"></div>
+          </div>
+          <button class="btn small primary" id="gpsSend" type="button">Send ping</button>
+        </div>
+        <div class="gpsread" id="gpsRead" role="status"></div>
+        <div class="gpsmsg" id="gpsMsg" role="alert"></div>
+      </div>
       <div id="banners"></div>
       <div class="section-title">Conversation</div>
       <div class="thread" id="thread"><div class="empty">No messages yet. Pick a quick message below or type your own.</div></div>
@@ -230,7 +254,7 @@ table.t td{padding:7px 6px;border-bottom:1px solid var(--line);vertical-align:to
 "use strict";
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const state={drivers:[],driverId:null,facility:null,facilities:[],tab:"cases",lang:"en",cfg:null,busy:false,coordinators:[],lastCases:[],lastActivity:null,holdEnds:null};
+const state={drivers:[],driverId:null,facility:null,facilities:[],tab:"cases",lang:"en",cfg:null,busy:false,coordinators:[],lastCases:[],lastActivity:null,holdEnds:null,gps:{driver:null,fac:null,dirty:false,ok:false}};
 const QUICK={
   en:[["Running 60 minutes late","my truck is 60 minutes late"],["Breakdown, 90 minute repair","my truck broke down, the repair will take 90 minutes"],["Take the first option","I will take the first option"],["Confirm it","yes, please confirm"],["Keep my original slot","never mind, keep my original slot"],["Cancel my appointment","please cancel my appointment"]],
   hinglish:[["60 minute late","meri gaadi 60 minute late hai"],["Gaadi kharab","meri gaadi kharab ho gayi hai, repair mein 90 minute lagenge"],["Pehla option","pehla option theek hai"],["Confirm karo","haan, confirm kar do"],["Original slot rakho","rehne do, mera original slot rakho"]],
@@ -293,6 +317,7 @@ async function refreshDriver(){
   if(!state.driverId)return;
   const r=await api(`/demo/api/driver/${encodeURIComponent(state.driverId)}/state`);
   if(r.ok){renderThread(r.data);renderBanners(r.data);setClock(r.data.clock);}
+  refreshGps(false);
 }
 async function send(text){
   if(!text.trim()||state.busy)return;
@@ -310,6 +335,68 @@ async function send(text){
   }
   await Promise.all([refreshDriver(),refreshBoard(),refreshOps(),refreshDrivers()]);
 }
+
+/* truck position (GPS) */
+const GPS_KM=111.2; // km per degree of latitude
+// Straight-line distance in km, for display only (the server readout after Send is authoritative).
+function hav(a,b,c,d){const R=6371,r=x=>x*Math.PI/180,p=r(c-a),q=r(d-b);const h=Math.sin(p/2)**2+Math.cos(r(a))*Math.cos(r(c))*Math.sin(q/2)**2;return 2*R*Math.asin(Math.min(1,Math.sqrt(h)));}
+function gpsEnable(on){["#gpsDist","#gpsLat","#gpsLon","#gpsAge","#gpsSend"].forEach(i=>{$(i).disabled=!on;});}
+// Show the figures the server reported for the last ping.
+function renderGps(d){
+  const fac=d.facility,p=d.ping;state.gps.fac=fac;
+  if(!p){$("#gpsRead").innerHTML=`No ping yet for this load. Dock: ${esc(fac.name)}.`;return;}
+  const age=`${esc(p.age_minutes)} min old, <span class="chip ${p.fresh?"ok":"warn"}">${p.fresh?"fresh":"stale, unusable"}</span>`;
+  $("#gpsRead").innerHTML=`<b>${esc(d.distance_km)} km</b> from ${esc(fac.name)}, ping ${age}`+
+    (p.fresh?`<br>Drive time about ${esc(d.travel_minutes)} min, GPS ETA ${esc(d.gps_eta)}`:`<br>No GPS ETA (the ping is too old to use).`);
+}
+// Fill the inputs from a server readout, or from the dock when no ping exists.
+function fillGps(d){
+  const p=d.ping,fac=d.facility;
+  $("#gpsLat").value=p?p.lat:fac.lat;$("#gpsLon").value=p?p.lon:fac.lon;$("#gpsAge").value=p?p.age_minutes:0;
+  syncDist();state.gps.dirty=false;
+}
+// Recompute the slider and its label from the typed lat/lon (display only).
+function syncDist(){
+  const f=state.gps.fac;if(!f)return;
+  const la=parseFloat($("#gpsLat").value),lo=parseFloat($("#gpsLon").value);
+  const km=Number.isFinite(la)&&Number.isFinite(lo)?hav(f.lat,f.lon,la,lo):0;
+  $("#gpsDist").value=Math.min(300,Math.round(km));$("#gpsDistOut").textContent=km.toFixed(1);
+}
+// Load the readout for the selected driver; keep the user's unsent edits unless forced.
+async function refreshGps(force){
+  if(!state.driverId)return;
+  const did=state.driverId,g=state.gps;
+  const r=await api(`/demo/api/driver/${encodeURIComponent(did)}/gps`);
+  if(did!==state.driverId)return;
+  if(r.status===404&&r.data.reason_code==="NO_ACTIVE_SHIPMENT"){
+    g.ok=false;g.driver=did;g.dirty=false;gpsEnable(false);$("#gpsMsg").textContent="";$("#gpsRead").textContent="";
+    $("#gpsNone").style.display="";$("#gpsNone").innerHTML=esc("No active load, so no GPS");$("#gpsForm").style.display="none";return;
+  }
+  if(!r.ok){return;}
+  $("#gpsNone").style.display="none";$("#gpsForm").style.display="";gpsEnable(true);g.ok=true;
+  const fresh=force||g.driver!==did;g.driver=did;
+  if(fresh){$("#gpsMsg").textContent="";g.fac=r.data.facility;fillGps(r.data);renderGps(r.data);}
+  else if(!g.dirty){g.fac=r.data.facility;renderGps(r.data);}
+}
+function sendPing(){
+  const g=state.gps;if(!g.ok)return;
+  const body={driver_id:state.driverId,lat:parseFloat($("#gpsLat").value),lon:parseFloat($("#gpsLon").value),age_minutes:parseInt($("#gpsAge").value||"0",10)};
+  if(!Number.isFinite(body.lat)||!Number.isFinite(body.lon)||!Number.isFinite(body.age_minutes)){$("#gpsMsg").textContent="Enter a latitude, a longitude and a ping age.";return;}
+  $("#gpsSend").disabled=true;
+  api("/demo/api/gps",body).then(r=>{
+    $("#gpsSend").disabled=false;
+    if(r.ok){$("#gpsMsg").textContent="";g.dirty=false;renderGps(r.data);refreshActivity();return;}
+    // Show why the server refused, inside the panel.
+    const rc=r.data.reason_code;
+    const why=rc==="INVALID_REQUEST"?"latitude must be -90 to 90, longitude -180 to 180, age 0 to 1440 minutes":rc==="NO_ACTIVE_SHIPMENT"?"this driver has no active load":rc?rc.replaceAll("_"," ").toLowerCase():"the request failed";
+    $("#gpsMsg").textContent=`Ping not accepted: ${why}`;
+  });
+}
+$("#gpsDist").oninput=e=>{const f=state.gps.fac;if(!f)return;const km=parseFloat(e.target.value);
+  $("#gpsLat").value=(f.lat+km/GPS_KM).toFixed(5);$("#gpsLon").value=f.lon;$("#gpsDistOut").textContent=km.toFixed(1);state.gps.dirty=true;};
+["#gpsLat","#gpsLon"].forEach(i=>{$(i).oninput=()=>{syncDist();state.gps.dirty=true;};});
+$("#gpsAge").oninput=()=>{state.gps.dirty=true;};
+$("#gpsSend").onclick=sendPing;
 
 /* board */
 async function refreshBoard(){
@@ -370,6 +457,7 @@ async function refreshActivity(){
   if(state.tab!=="activity")return;
   const OB={SENT:["ok","Delivered"],PENDING:["warn","Queued"],FAILED:["bad","Retrying"],PERMANENT_FAILURE:["bad","Failed"]};
   $("#opsBody").innerHTML=`<div class="section-title" style="margin-top:0">Appointment history</div>${a.events.length?`<ul class="feed">${a.events.map(e=>`<li><time>${esc(e.time)}</time><b>${esc(e.who||"System")}</b> — ${esc(e.text)} <span class="muted">(${esc(e.by)})</span></li>`).join("")}</ul>`:`<div class="empty">No bookings yet.</div>`}
+   <div class="section-title">GPS pings</div>${(a.gps||[]).length?`<ul class="feed">${a.gps.map(g=>`<li><time>${esc(g.time)}</time>${esc(g.text)}</li>`).join("")}</ul>`:`<div class="empty">No GPS pings yet.</div>`}
    <div class="section-title">Downstream notifications</div>${a.outbox.length?`<table class="t"><thead><tr><th>To</th><th>About</th><th>Status</th></tr></thead><tbody>${a.outbox.map(o=>`<tr><td>${esc(o.to)}<div class="muted">${esc(o.role)}</div></td><td>${esc(o.kind)}</td><td><span class="chip ${OB[o.status][0]}">${OB[o.status][1]}</span></td></tr>`).join("")}</tbody></table>`:`<div class="empty">Nothing queued.</div>`}
    <div style="margin-top:10px"><button class="btn small" id="deliverBtn"${pending?"":" disabled"}>Deliver ${pending} queued notification${pending===1?"":"s"}</button></div>`;
   const db=$("#deliverBtn");if(db)db.onclick=async()=>{const r=await api("/demo/api/deliver",{});toast(`Delivered ${r.data.sent} notification(s).`,"ok");refreshActivity();};
@@ -380,7 +468,7 @@ async function refreshDrivers(){const r=await api("/demo/api/drivers");if(r.ok){
 /* wiring */
 function setTab(t){state.tab=t;$("#tabCases").setAttribute("aria-selected",String(t==="cases"));$("#tabActivity").setAttribute("aria-selected",String(t==="activity"));t==="cases"?renderCases({cases:state.lastCases}):refreshActivity();}
 $("#tabCases").onclick=()=>setTab("cases");$("#tabActivity").onclick=()=>setTab("activity");
-$("#driverSel").onchange=e=>{state.driverId=e.target.value;renderDriverCard();refreshDriver();refreshBoard();};
+$("#driverSel").onchange=e=>{state.driverId=e.target.value;state.gps.driver=null;renderDriverCard();refreshDriver();refreshBoard();};
 $("#sendForm").onsubmit=e=>{e.preventDefault();send($("#msgInput").value);};
 $("#chips").onclick=e=>{const b=e.target.closest("button");if(b)send(b.dataset.text);};
 $("#langSeg").onclick=e=>{const b=e.target.closest("button");if(b){state.lang=b.dataset.lang;renderChips();}};
@@ -388,7 +476,7 @@ async function advance(seconds,sweep){const r=await api("/demo/api/clock",{secon
   refreshDriver();refreshBoard();refreshOps();}
 $("#adv1").onclick=()=>advance(60,false);$("#adv3").onclick=()=>advance(181,true);
 $("#resetBtn").onclick=()=>modal("Reset the demonstration",`<div>This restores the original schedule, clears every conversation and case, and sets the clock back to 09:35.</div>`,
-  [{label:"Cancel"},{label:"Reset",primary:true,run:async()=>{await api("/demo/api/reset",{});toast("Demonstration reset.","ok");await init(true);}}]);
+  [{label:"Cancel"},{label:"Reset",primary:true,run:async()=>{await api("/demo/api/reset",{});state.gps.driver=null;toast("Demonstration reset.","ok");await init(true);}}]);
 async function setModel(mode){const r=await api("/demo/api/model",{mode});if(r.ok){state.cfg.model_mode=mode;paintModel();toast(mode==="live"?"Live model on. Replies now come from the real model.":"Rule-based assistant on.");}else toast("No live model is configured in .env.","bad");}
 function paintModel(){$("#modelStub").setAttribute("aria-pressed",String(state.cfg.model_mode==="stub"));$("#modelLive").setAttribute("aria-pressed",String(state.cfg.model_mode==="live"));$("#modelLive").disabled=!state.cfg.live_available;}
 $("#modelStub").onclick=()=>setModel("stub");$("#modelLive").onclick=()=>setModel("live");
