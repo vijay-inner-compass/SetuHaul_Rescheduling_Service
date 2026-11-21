@@ -10,6 +10,8 @@ SQLite is the system of record for the prototype.
 
 ## Documentation
 
+* [Knowledge transfer](docs/knowledge-transfer.md): background to execution for a new engineer, in one document.
+* [Running and demonstrating](docs/running-and-demonstrating.md): setup, every demo scenario and the real API, with captured output.
 * [Code walkthrough](docs/code-walkthrough/README.md): the story behind each layer. Every source file also has line-by-line comments.
 * [Demonstration guide](docs/demonstration-guide.md): what to run, what to type and what you should see.
 * [Scenario catalogue](docs/scenario-catalogue.md): edge cases and failure scenarios, each with the test that proves it.
