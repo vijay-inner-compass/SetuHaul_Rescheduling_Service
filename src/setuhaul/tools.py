@@ -57,11 +57,15 @@ from setuhaul.clock import Clock
 # IST timezone and timestamp parsing.
 from setuhaul.db import IST, parse_operational_timestamp
 
+# Runtime settings (GPS thresholds).
+from setuhaul.config import load_settings
+
 # The hand-off request type.
 from setuhaul.escalation import HandoffRequest
 
-# ETA derivation.
+# ETA derivation, and the GPS travel-time lookup it can use.
 from setuhaul.eta import derive_eta, load_eta_records
+from setuhaul.gps import gps_travel_minutes_for
 
 # Slot search.
 from setuhaul.feasibility import build_context, search_feasible_slots
@@ -296,16 +300,25 @@ def _eta_for(ctx: ToolContext, shipment_id: str, report: ReportArgs | None) -> E
     gate_row = ctx.conn.execute("select gate_in_ts from facility_checkins where shipment_id=?", (shipment_id,)).fetchone()
     # Wrap the gate time (or None).
     gate = GateEvidence(gate_in_ts=parse_operational_timestamp(gate_row[0]) if gate_row and gate_row[0] else None)
-    # Apply the ETA rules.
-    return derive_eta(_report(ctx, report) if report else None, planned, current, gate, ctx.clock)
+    # Policy values (freshness window, mismatch threshold, speed) come from the settings, as in the API layer.
+    settings = load_settings()
+    # Remaining drive time from the latest fresh GPS ping, or None when there is none.
+    gps_minutes = gps_travel_minutes_for(ctx.conn, shipment_id, ctx.clock, settings)
+    # Apply the ETA rules, with GPS filling a missing travel time and cross-checking the driver's figure.
+    return derive_eta(_report(ctx, report) if report else None, planned, current, gate, ctx.clock,
+                      gps_travel_minutes=gps_minutes, gps_mismatch_minutes=settings.gps_mismatch_minutes)
 
 
 # Convert an ETA outcome to the dictionary the model sees.
 def _eta_payload(eta: EtaEvidence | ClarificationNeeded | EtaConflict) -> dict[str, Any]:
     # A usable ETA.
     if isinstance(eta, EtaEvidence):
-        return {"status": "ETA", "eta": f"{eta.eta.astimezone(IST):%Y-%m-%d %H:%M}", "source": eta.source,
-                "confidence": eta.confidence, "baseline": eta.baseline_type.value}
+        payload: dict[str, Any] = {"status": "ETA", "eta": f"{eta.eta.astimezone(IST):%Y-%m-%d %H:%M}", "source": eta.source,
+                                   "confidence": eta.confidence, "baseline": eta.baseline_type.value}
+        # Surface the GPS-vs-driver gap only when GPS actually disagreed, so other payloads keep their shape.
+        if eta.gps_discrepancy_minutes is not None:
+            payload["gps_discrepancy_minutes"] = eta.gps_discrepancy_minutes
+        return payload
     # A question the model must ask the driver.
     if isinstance(eta, ClarificationNeeded):
         return {"status": "NEEDS_INPUT", "code": eta.code, "missing": list(eta.missing), "ask_the_driver": eta.question}
