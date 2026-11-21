@@ -453,14 +453,14 @@ def _search_slot_options(ctx: ToolContext, a: SearchArgs) -> dict[str, Any]:
     # Text added to the hand-off summary and the GPS facts added to payloads, only when GPS disagreed with the driver.
     gps_note = ""
     gps_facts: dict[str, Any] = {}
+    # Set on every search (None when there is no gap), so an earlier search in this turn cannot leak its note into this menu.
+    ctx.turn.gps_discrepancy_minutes = eta.gps_discrepancy_minutes
     if eta.gps_discrepancy_minutes is not None:
         # The facts the coordinator and the model need: the gap, where the ETA came from, and how far it is trusted.
         gps_facts = {"gps_discrepancy_minutes": eta.gps_discrepancy_minutes, "eta_source": eta.source, "confidence": eta.confidence}
         summary.update(gps_facts)
         gps_note = (f" GPS disagrees with the driver's ETA by {eta.gps_discrepancy_minutes} min "
                     f"(eta source {eta.source}, confidence {eta.confidence}).")
-        # Remembered so the reply renderer can tell the driver in its own fixed wording.
-        ctx.turn.gps_discrepancy_minutes = eta.gps_discrepancy_minutes
     # No slot can be offered: map the result to a hand-off reason, raise it, and tell the model to promise nothing.
     if result.status != "OK":
         reason = {"NO_SLOT": "NO_SLOT", "REQUIRES_APPROVAL": "APPROVAL_REQUIRED",

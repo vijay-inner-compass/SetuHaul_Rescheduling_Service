@@ -91,3 +91,35 @@ def test_demo_far_ping_then_chat_shows_the_note(tmp_path: Path) -> None:
     # Planned 10:20 + 20 = 10:40; GPS ETA 09:35:20 + 234 min = 13:29:20; the gap is 169 min 20 s, reported as 169.
     assert "differs from your report by about 169 minutes" in reply
     # (The demo seeds a fresh fixture ping for every driver, so "no ping" is covered by the Chat tests above.)
+
+
+# The GPS note makes no claim about who else can see it: menu turns open no case, so nothing is visible to operations.
+def test_gps_note_makes_no_operations_claim_in_any_language() -> None:
+    from setuhaul.language import say
+
+    for lang in ("en", "hi", "hinglish"):
+        text = say("gps_note", lang, minutes="42")
+        assert "42" in text and text.rstrip()[-1] in ".।"
+        assert not any(w in text for w in ("Operations", "ऑपरेशंस", "can see", "dekh"))
+
+
+# Two searches in one turn: a gap found by the first must not be attached to the second search's menu.
+def test_discrepancy_does_not_leak_into_a_second_search_in_the_same_turn(chat: Chat) -> None:
+    _delhi_ping(chat)
+    seen: list[dict[str, Any]] = []
+
+    def second(msgs):  # type: ignore[no-untyped-def]
+        # After the first search, make GPS agree with the report (a ping 30 km out is about 59 min away, near the 10:25 ETA).
+        seen.append(tool_json(msgs, "search_slot_options"))
+        store_ping(chat.db, "SHP1006", GpsPing(lat=26.9124 + 30 / 111.2, lon=75.7873, recorded_at=chat.clock.now()), chat.clock, "TEST")
+        return tc("search_slot_options", call_id="t2", shipment_id="SHP1006", report={"kind": "late_by", "minutes": 5})
+
+    def finish(msgs):  # type: ignore[no-untyped-def]
+        seen.append(tool_json(msgs, "search_slot_options"))
+        return say_text("ok")
+
+    reply = chat.say("SHP1006 is running late", [tc("search_slot_options", shipment_id="SHP1006", report=LATE), second, finish])
+    # The first payload had the gap, the second did not.
+    assert seen[0]["gps_discrepancy_minutes"] == DELHI_GAP and "gps_discrepancy_minutes" not in seen[1]
+    # So the rendered menu carries no GPS note.
+    assert "GPS" not in reply.text
