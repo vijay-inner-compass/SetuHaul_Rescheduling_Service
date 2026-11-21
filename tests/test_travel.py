@@ -9,11 +9,11 @@ from pathlib import Path
 # pytest for approx and raises.
 import pytest
 
-# Settings supplies the estimator's speed and road factor.
-from setuhaul.config import Settings
-
 # The module (patched in one test), then the functions and class under test.
 from setuhaul import travel
+
+# Settings supplies the estimator's speed and road factor.
+from setuhaul.config import Settings
 from setuhaul.travel import StraightLineEstimator, estimate_travel_minutes, haversine_km
 
 

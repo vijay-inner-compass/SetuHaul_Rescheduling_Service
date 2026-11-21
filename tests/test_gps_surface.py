@@ -75,7 +75,7 @@ def test_without_a_ping_nothing_changes(chat: Chat) -> None:
     assert set(payload) == {"status", "option_set_id", "held", "options", "valid_until"}
     assert "GPS" not in reply.text
     # And the no-slot hand-off summary is today's plain sentence.
-    _, handoff = _search(chat, latest_time="09:40")
+    _search(chat, latest_time="09:40")
     req = chat.sink.requests[-1]
     assert "GPS" not in req.summary and "gps_discrepancy_minutes" not in req.context
 
