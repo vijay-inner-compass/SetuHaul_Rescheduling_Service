@@ -31,6 +31,9 @@ from setuhaul.schemas import (
     GateEvidence,
 )
 
+# The confidence scale, ordered from most to least trusted.
+_LEVELS = ("HIGH", "MEDIUM", "LOW")
+
 # The three possible outcomes of deriving an ETA: a usable ETA, a question to ask the driver, or a contradiction.
 EtaResult = EtaEvidence | ClarificationNeeded | EtaConflict
 
@@ -62,12 +65,50 @@ def load_eta_records(
     return planned, current
 
 
+def _lower(confidence: str) -> str:
+    """One level less trusted: HIGH -> MEDIUM -> LOW -> LOW."""
+    # Step one position down the scale, but never past the last entry (LOW).
+    return _LEVELS[min(_LEVELS.index(confidence) + 1, len(_LEVELS) - 1)]
+
+
+def _with_gps_check(
+    evidence: EtaEvidence,
+    clock: Clock,
+    gps_travel_minutes: int | None,
+    gps_mismatch_minutes: int,
+) -> EtaEvidence:
+    """Cross-check a driver-stated ETA against the GPS estimate; flag it when they disagree too much."""
+    # No GPS estimate available: nothing to compare against, keep the driver ETA untouched.
+    if gps_travel_minutes is None:
+        return evidence
+    # The GPS ETA is the time of the last ping-based drive: now + remaining travel time.
+    gps_eta = clock.now() + timedelta(minutes=gps_travel_minutes)
+    # Signed gap between the driver's claim and GPS; only its size matters.
+    gap = abs(evidence.eta - gps_eta)
+    # Strictly greater than the threshold is a discrepancy: exactly the threshold is tolerated.
+    if gap <= timedelta(minutes=gps_mismatch_minutes):
+        return evidence
+    # Keep the driver's ETA, but trust it one level less and record the gap in whole minutes
+    # (truncated, not rounded: 30m30s reports 30 yet is flagged because the exact gap is compared above).
+    return evidence.model_copy(
+        update={
+            "confidence": _lower(evidence.confidence),
+            "gps_discrepancy_minutes": int(gap.total_seconds() // 60),
+        }
+    )
+
+
 def derive_eta(
     report: DelayReport | None,
     planned: EtaRecord | None,
     current: EtaRecord | None,
     gate: GateEvidence | None,
     clock: Clock,
+    *,
+    # Remaining drive time from GPS, when a fresh ping exists; None means no GPS information.
+    gps_travel_minutes: int | None = None,
+    # How far (in minutes) the driver ETA may differ from the GPS ETA before it is flagged.
+    gps_mismatch_minutes: int = 30,
 ) -> EtaResult:
     # When the truck already checked in at the gate, that is a fact, not an estimate.
     gate_in = gate.gate_in_ts if gate else None
@@ -98,16 +139,32 @@ def derive_eta(
     if report.kind is DelayKind.EXPLICIT_ETA:
         # The report validator guarantees declared_eta is present for this kind; the assert documents that.
         assert report.declared_eta is not None
-        return EtaEvidence(
-            eta=report.declared_eta,
-            source="DRIVER_DECLARED",
-            confidence=report.confidence,
-            baseline_type=BaselineType.DRIVER_DECLARED,
+        return _with_gps_check(
+            EtaEvidence(
+                eta=report.declared_eta,
+                source="DRIVER_DECLARED",
+                confidence=report.confidence,
+                baseline_type=BaselineType.DRIVER_DECLARED,
+            ),
+            clock,
+            gps_travel_minutes,
+            gps_mismatch_minutes,
         )
 
     # A breakdown: the repair duration alone is not an arrival time, the drive afterwards matters too.
     if report.kind is DelayKind.REPAIR:
         assert report.repair_minutes is not None
+        # The driver gave no travel time but GPS knows the remaining drive: use it, at reduced confidence.
+        if report.travel_minutes is None and gps_travel_minutes is not None:
+            # Same start rule as below: when the repair began, else now.
+            gps_start = report.repair_started_at or clock.now()
+            return EtaEvidence(
+                eta=gps_start + timedelta(minutes=report.repair_minutes + gps_travel_minutes),
+                source="GPS_ASSISTED",
+                # Never better than MEDIUM: part of the figure is an estimate, not the driver's word.
+                confidence=report.confidence if report.confidence == "LOW" else "MEDIUM",
+                baseline_type=BaselineType.REPAIR_COMPLETION,
+            )
         # Without travel time we cannot compute an ETA, so ask for it. This is the "clarify before search" rule.
         if report.travel_minutes is None:
             return ClarificationNeeded(
@@ -147,10 +204,15 @@ def derive_eta(
             )
         base = planned
     # New ETA = baseline + delay. The baseline record id is kept so the result can be traced to its source row.
-    return EtaEvidence(
-        eta=base.eta + timedelta(minutes=report.delay_minutes),
-        source="DRIVER_DECLARED",
-        confidence=report.confidence,
-        baseline_type=report.baseline,
-        baseline_record_id=base.record_id,
+    return _with_gps_check(
+        EtaEvidence(
+            eta=base.eta + timedelta(minutes=report.delay_minutes),
+            source="DRIVER_DECLARED",
+            confidence=report.confidence,
+            baseline_type=report.baseline,
+            baseline_record_id=base.record_id,
+        ),
+        clock,
+        gps_travel_minutes,
+        gps_mismatch_minutes,
     )

@@ -204,3 +204,119 @@ def test_snapshot_late_reports_reproduce_declared_eta(
 def test_load_eta_records_unknown_shipment() -> None:
     with open_connection(readonly=True) as conn:
         assert load_eta_records(conn, "NOPE") == (None, None)
+
+
+# --- GPS-assisted ETA (Task 4) -----------------------------------------------------------
+def test_repair_without_travel_uses_gps_travel(clock: FakeClock) -> None:
+    report = DelayReport.repair(45, confidence="HIGH")
+    out = derive_eta(report, PLANNED, CURRENT, None, clock, gps_travel_minutes=30)
+    assert isinstance(out, EtaEvidence)
+    assert out.eta == NOW + timedelta(minutes=75)
+    assert out.source == "GPS_ASSISTED"
+    assert out.confidence == "MEDIUM"
+    assert out.baseline_type is BaselineType.REPAIR_COMPLETION
+
+
+def test_repair_without_travel_and_without_gps_still_asks(clock: FakeClock) -> None:
+    out = derive_eta(DelayReport.repair(45), PLANNED, CURRENT, None, clock)
+    assert isinstance(out, ClarificationNeeded)
+    assert out.code == "MISSING_TRAVEL_TIME"
+
+
+def test_repair_with_driver_travel_ignores_gps(clock: FakeClock) -> None:
+    report = DelayReport.repair(45, travel_minutes=20, confidence="HIGH")
+    out = derive_eta(report, PLANNED, CURRENT, None, clock, gps_travel_minutes=300)
+    assert isinstance(out, EtaEvidence)
+    assert out.eta == NOW + timedelta(minutes=65)
+    assert out.source == "DRIVER_DECLARED"
+    assert out.confidence == "HIGH"
+    assert out.gps_discrepancy_minutes is None
+
+
+def test_late_by_far_from_gps_flags_discrepancy(clock: FakeClock) -> None:
+    report = DelayReport.late_by(20, confidence="HIGH")
+    out = derive_eta(report, PLANNED, CURRENT, None, clock, gps_travel_minutes=240)
+    assert isinstance(out, EtaEvidence)
+    assert out.eta == PLANNED.eta + timedelta(minutes=20)
+    assert out.source == "DRIVER_DECLARED"
+    assert out.confidence == "MEDIUM"
+    gps_eta = NOW + timedelta(minutes=240)
+    assert out.gps_discrepancy_minutes == int((gps_eta - out.eta).total_seconds() // 60)
+
+
+@pytest.mark.parametrize(
+    ("extra_minutes", "flagged"), [(30, False), (31, True), (-30, False), (-31, True)]
+)
+def test_discrepancy_boundary(extra_minutes: int, flagged: bool, clock: FakeClock) -> None:
+    # Driver ETA sits exactly extra_minutes after the GPS ETA (NOW + 60).
+    driver_eta = NOW + timedelta(minutes=60 + extra_minutes)
+    out = derive_eta(
+        DelayReport.explicit(driver_eta, confidence="HIGH"),
+        PLANNED, CURRENT, None, clock, gps_travel_minutes=60,
+    )
+    assert isinstance(out, EtaEvidence)
+    assert out.eta == driver_eta
+    if flagged:
+        assert out.gps_discrepancy_minutes == abs(extra_minutes)
+        assert out.confidence == "MEDIUM"
+    else:
+        assert out.gps_discrepancy_minutes is None
+        assert out.confidence == "HIGH"
+
+
+def test_discrepancy_threshold_is_configurable(clock: FakeClock) -> None:
+    driver_eta = NOW + timedelta(minutes=70)
+    out = derive_eta(
+        DelayReport.explicit(driver_eta), PLANNED, CURRENT, None, clock,
+        gps_travel_minutes=60, gps_mismatch_minutes=5,
+    )
+    assert isinstance(out, EtaEvidence)
+    assert out.gps_discrepancy_minutes == 10
+
+
+def test_explicit_eta_gets_same_cross_check(clock: FakeClock) -> None:
+    driver_eta = NOW + timedelta(minutes=20)
+    out = derive_eta(
+        DelayReport.explicit(driver_eta, confidence="MEDIUM"),
+        PLANNED, CURRENT, None, clock, gps_travel_minutes=240,
+    )
+    assert isinstance(out, EtaEvidence)
+    assert out.eta == driver_eta
+    assert out.source == "DRIVER_DECLARED"
+    assert out.confidence == "LOW"
+    assert out.gps_discrepancy_minutes == 220
+
+
+def test_low_confidence_stays_low_when_flagged(clock: FakeClock) -> None:
+    out = derive_eta(
+        DelayReport.explicit(NOW + timedelta(minutes=20), confidence="LOW"),
+        PLANNED, CURRENT, None, clock, gps_travel_minutes=240,
+    )
+    assert isinstance(out, EtaEvidence)
+    assert out.confidence == "LOW"
+    assert out.gps_discrepancy_minutes == 220
+
+
+def test_no_gps_arguments_changes_nothing(clock: FakeClock) -> None:
+    late = derive_eta(DelayReport.late_by(20, confidence="HIGH"), PLANNED, CURRENT, None, clock)
+    assert late == EtaEvidence(
+        eta=PLANNED.eta + timedelta(minutes=20), source="DRIVER_DECLARED", confidence="HIGH",
+        baseline_type=BaselineType.PLANNED_ETA, baseline_record_id="SHP1006",
+    )
+    declared = NOW + timedelta(minutes=20)
+    explicit = derive_eta(DelayReport.explicit(declared), PLANNED, CURRENT, None, clock)
+    assert explicit == EtaEvidence(
+        eta=declared, source="DRIVER_DECLARED", confidence="MEDIUM",
+        baseline_type=BaselineType.DRIVER_DECLARED,
+    )
+
+
+def test_gate_checkin_wins_over_gps(clock: FakeClock) -> None:
+    gate_in = NOW - timedelta(minutes=5)
+    out = derive_eta(
+        None, PLANNED, CURRENT, GateEvidence(gate_in_ts=gate_in), clock, gps_travel_minutes=240
+    )
+    assert isinstance(out, EtaEvidence)
+    assert out.eta == gate_in
+    assert out.source == "GATE_CHECKIN"
+    assert out.gps_discrepancy_minutes is None
