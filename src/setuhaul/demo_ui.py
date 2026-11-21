@@ -63,6 +63,9 @@ from setuhaul.capacity import build_facility_state
 # A controllable clock.
 from setuhaul.clock import FakeClock
 
+# Settings loader (travel-time constants for the GPS readout).
+from setuhaul.config import load_settings
+
 # Database helpers.
 from setuhaul.db import (
     IST,
@@ -73,11 +76,10 @@ from setuhaul.db import (
 )
 
 # Case queue operations for the operations panel.
-from setuhaul.config import load_settings
-from setuhaul.gps import active_shipment_for_driver, gps_travel_minutes_for, store_ping
-from setuhaul.schemas import GpsPing
-from setuhaul.travel import StraightLineEstimator, haversine_km
 from setuhaul.escalation import claim_case, get_driver_case_status, list_open_cases, resolve_case
+
+# GPS ping storage and the active-shipment lookup.
+from setuhaul.gps import active_shipment_for_driver, gps_travel_minutes_for, store_ping
 
 # Maps phone numbers to drivers.
 from setuhaul.identity import provision_identities
@@ -87,6 +89,12 @@ from setuhaul.jobs.expire_holds import expire_due_holds
 
 # Delivers queued downstream notices when the button is pressed.
 from setuhaul.notifications import deliver_pending_notifications
+
+# The validated ping type stored by store_ping.
+from setuhaul.schemas import GpsPing
+
+# Straight-line travel estimate and distance for the GPS readout.
+from setuhaul.travel import StraightLineEstimator, haversine_km
 
 # The demo's starting moment: the snapshot is dated 4 Aug 2026.
 DEMO_START = "2026-08-04T09:35:00+05:30"
@@ -441,6 +449,7 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
                 with immediate(conn):
                     # In the demo the ping just sent is the truck's latest word, so drop any ping stamped later (for example the seeded
                     # one); otherwise a deliberately old test ping would be ignored in favour of it. The real API never does this.
+                    # Both timestamps are normalised to IST by store_ping, so this lexical comparison is chronological.
                     conn.execute("delete from gps_pings where shipment_id=? and recorded_at>?", (sid, recorded.astimezone(IST).isoformat()))
                     store_ping(conn, sid, GpsPing(lat=body.lat, lon=body.lon, recorded_at=recorded), demo.clock, "DEMO_CONSOLE")
                 return gps_readout(conn, sid)

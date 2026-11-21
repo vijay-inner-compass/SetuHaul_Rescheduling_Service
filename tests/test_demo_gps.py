@@ -183,7 +183,8 @@ def test_activity_feed_marks_a_stale_ping_as_unusable_and_lists_newest_first(dem
     send(client, did, 60, age=20)
     gps = client.get("/demo/api/activity").json()["gps"]
     assert "ping 20 min old" in gps[0]["text"] and "no GPS ETA" in gps[0]["text"]
-    assert "GPS ETA" in gps[1]["text"] or "ping 2 min old" in gps[1]["text"]
+    # The 2-minute ping was newer than the 20-minute one, so the demo dropped it; the next row is another driver's seeded fresh ping.
+    assert "Manoj Sharma" not in gps[1]["text"] and "ping 0 min old" in gps[1]["text"] and "-> GPS ETA" in gps[1]["text"]
 
 
 # --- scenarios through the real chat pipeline ----------------------------------------------------------------
