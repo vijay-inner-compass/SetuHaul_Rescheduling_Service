@@ -34,6 +34,35 @@ def _facts(system: str) -> dict[str, Any]:
     return json.loads(system.split(marker, 1)[1]) if marker in system else {}
 
 
+# Hours written as digits ("2 hours", "1.5 hrs", "2 ghante") or as words ("an hour", "one hour", "two hours", "half an hour").
+_HOURS = re.compile(r"(\d{1,2}(?:\.\d)?)\s*(?:hours?|hrs?|ghante|ghanta|h)\b")
+_WORD_HOURS = {"an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6}
+_HOUR_WORDS = re.compile(r"\b(an|one|two|three|four|five|six)\s+(?:hours?|hrs?)\b")
+
+
+def _delay_minutes(low: str) -> int:
+    # Total delay in minutes found in lower-case driver text, or 0 when none is stated.
+    total = 0.0
+    # Hours written as digits.
+    for h in _HOURS.finditer(low):
+        total += float(h.group(1)) * 60
+    # "half an hour" or "half hour" (checked first, because "an hour" inside it must not also count as a whole hour).
+    half = re.search(r"\bhalf (?:an )?hour\b", low)
+    # Hours written as words ("two hours"); skipped when a digit form matched or the phrase is "half an hour".
+    if not _HOURS.search(low) and not half:
+        w = _HOUR_WORDS.search(low)
+        if w:
+            total += _WORD_HOURS[w.group(1)] * 60
+    # Add the half hour.
+    if half:
+        total += 30
+    # Plus any explicit minutes ("1 hour 30 minutes").
+    m = _MIN.search(low)
+    if m:
+        total += int(m.group(1))
+    return int(total)
+
+
 class StubGateway:
     def complete(self, messages: Sequence[ModelMessage], tools: Sequence[dict[str, Any]], policy: ModelPolicy) -> ModelResponse:
         # What the system told the model: live hold, latest option set, active shipments.
@@ -74,10 +103,10 @@ class StubGateway:
             quote = "first" if "first" in low else "take"
             return ModelResponse(tool_calls=(ToolCall(id="s1", name="request_hold", arguments={
                 "option_set_id": facts["latest_option_set_id"], "rank": 1, "driver_quote": quote}),))
-        # "NN minutes late/delay": search for slots using that many minutes of delay.
-        m = _MIN.search(text)
-        if m and shipment and ("late" in low or "delay" in low):
+        # "NN minutes", "2 hours", "an hour", "half an hour" or "1 hour 30 minutes" with late/delay: search with that delay.
+        minutes = _delay_minutes(low)
+        if minutes and shipment and ("late" in low or "delay" in low):
             return ModelResponse(tool_calls=(ToolCall(id="s1", name="search_slot_options", arguments={
-                "shipment_id": shipment, "report": {"kind": "late_by", "minutes": int(m.group(1))}}),))
+                "shipment_id": shipment, "report": {"kind": "late_by", "minutes": minutes}}),))
         # Nothing recognised: ask the generic question.
         return ModelResponse(text="How late are you, and which shipment is it?")

@@ -112,3 +112,22 @@ def test_the_rule_based_assistant_understands_a_menu_number(env) -> None:  # typ
     assert "These slots are available" in post(client, msg("my truck is 60 minutes late", mid="N-1")).json()["reply"]
     r = post(client, msg("3", mid="N-2")).json()
     assert "holding" in r["reply"].lower() and r["status"] == "REPLIED"
+
+
+# --- delays written as hours --------------------------------------------------------------------------------
+@pytest.mark.parametrize(("text", "minutes"), [
+    ("book my slot after 2 hours as i am running late", 120), ("an hour late", 60), ("half an hour late", 30),
+    ("1 hour 30 minutes late", 90), ("1.5 hrs late", 90), ("2 ghante late", 120), ("60 minutes late", 60), ("hello", 0),
+])
+def test_the_rule_based_assistant_reads_delays_in_hours_and_minutes(text: str, minutes: int) -> None:
+    from setuhaul.stub_model import _delay_minutes
+
+    assert _delay_minutes(text.lower()) == minutes
+
+
+def test_a_delay_given_in_hours_gets_an_answer_not_the_generic_question(env) -> None:  # type: ignore[no-untyped-def]  # noqa: F811
+    # "book my slot after 2 hours as i am running late" used to get "How late are you...?" back.
+    _, client, *_ = env
+    body = post(client, msg("book my slot after 2 hours as i am running late", mid="H-1")).json()
+    assert body["reply"] != "How late are you, and which shipment is it?" and body["status"] in ("REPLIED", "HANDOFF")
+    assert "These slots are available" in body["reply"] or body["status"] == "HANDOFF"
