@@ -54,21 +54,21 @@ from setuhaul.capacity import build_facility_state
 # Injectable clock.
 from setuhaul.clock import Clock
 
-# IST timezone and timestamp parsing.
-from setuhaul.db import IST, parse_operational_timestamp
-
 # Runtime settings (GPS thresholds).
 from setuhaul.config import load_settings
+
+# IST timezone and timestamp parsing.
+from setuhaul.db import IST, parse_operational_timestamp
 
 # The hand-off request type.
 from setuhaul.escalation import HandoffRequest
 
 # ETA derivation, and the GPS travel-time lookup it can use.
 from setuhaul.eta import derive_eta, load_eta_records
-from setuhaul.gps import gps_travel_minutes_for
 
 # Slot search.
 from setuhaul.feasibility import build_context, search_feasible_slots
+from setuhaul.gps import gps_travel_minutes_for
 
 # Authorisation helpers; the driver's identity is trusted context, never a tool argument.
 from setuhaul.identity import AuthError, TrustedDriverContext, authorize_shipment

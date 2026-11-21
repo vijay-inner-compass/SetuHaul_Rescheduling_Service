@@ -96,6 +96,9 @@ from setuhaul.escalation import (
     resolve_case,
 )
 
+# GPS ping storage and the driver's active shipment.
+from setuhaul.gps import UnknownShipment, active_shipment_for_driver, store_ping
+
 # Phone-to-driver lookup and webhook signature check.
 from setuhaul.identity import AuthError, resolve_driver, verify_channel_request
 
@@ -117,14 +120,11 @@ from setuhaul.model_gateway import (
 # Span exporter type.
 from setuhaul.observability import InMemoryExporter
 
-# GPS ping storage and the driver's active shipment.
-from setuhaul.gps import UnknownShipment, active_shipment_for_driver, store_ping
+# Per-driver rate limiting.
+from setuhaul.rate_limit import RateLimits, check_rate_limit
 
 # The validated ping shape.
 from setuhaul.schemas import GpsPing
-
-# Per-driver rate limiting.
-from setuhaul.rate_limit import RateLimits, check_rate_limit
 
 # A message stuck in PROCESSING for this long is presumed abandoned and may be reclaimed.
 STALE_PROCESSING_SECONDS = 60
@@ -439,7 +439,7 @@ def create_app(deps: AppDeps) -> FastAPI:
     # ---- GPS pings --------------------------------------------------------------------------------------
     # Shared by both GPS routes: verify the signature, parse, then store in one committed write transaction.
     # `store` runs on a worker thread with the open connection and the parsed body; it returns a ping id or a rejection response.
-    async def ingest_ping(request: Request, model: type[BaseModel],
+    async def ingest_ping(request: Request, model: type[GpsPing],
                           store: Callable[[sqlite3.Connection, Any, str], int | JSONResponse]) -> JSONResponse:
         # This request's id.
         rid = request.state.request_id

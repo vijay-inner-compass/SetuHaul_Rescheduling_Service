@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -75,7 +75,7 @@ def test_same_timestamp_later_inserted_wins(db: sqlite3.Connection, clock: FakeC
 def test_mixed_offsets_order_chronologically(db: sqlite3.Connection, clock: FakeClock) -> None:
     # now is 09:35 IST. early is 09:30+05:30 (04:00Z); late is 04:04Z (09:34 IST) but its UTC text sorts earlier.
     early_ist = GpsPing(lat=1.0, lon=1.0, recorded_at=ts("2026-08-04T09:30:00+05:30"))
-    late_utc = GpsPing(lat=2.0, lon=2.0, recorded_at=datetime(2026, 8, 4, 4, 4, tzinfo=timezone.utc))
+    late_utc = GpsPing(lat=2.0, lon=2.0, recorded_at=datetime(2026, 8, 4, 4, 4, tzinfo=UTC))
     store_ping(db, "SHP1006", early_ist, clock, "TELEMATICS")
     store_ping(db, "SHP1006", late_utc, clock, "TELEMATICS")
     got = load_latest_ping(db, "SHP1006", clock, 15)

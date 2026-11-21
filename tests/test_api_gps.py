@@ -12,14 +12,14 @@ import sqlite3
 # timedelta builds the future offsets.
 from datetime import timedelta
 
-# Fixture, signing helper and the seeded driver phone are reused from the existing API tests.
-from tests.test_api import PHONE, env, sign  # noqa: F401 - env is a pytest fixture
-
 # A fresh connection proves rows are really committed.
 from setuhaul.db import open_connection
 
 # The fixture clock is 09:35; this time is a minute earlier.
 from tests.helpers import at
+
+# Fixture, signing helper and the seeded driver phone are reused from the existing API tests.
+from tests.test_api import PHONE, env, sign  # noqa: F401 - env is a pytest fixture
 
 # Where each route lives.
 PINGS = "/v1/gps/pings"
@@ -52,7 +52,7 @@ def stored(path) -> list[sqlite3.Row]:  # type: ignore[no-untyped-def]
         conn.close()
 
 
-def test_signed_ping_is_stored_and_persisted(env) -> None:  # type: ignore[no-untyped-def]
+def test_signed_ping_is_stored_and_persisted(env) -> None:  # type: ignore[no-untyped-def]  # noqa: F811
     _, client, _, _, path = env
     r = post_to(client, PINGS, ping_body())
     assert r.status_code == 200
@@ -63,7 +63,7 @@ def test_signed_ping_is_stored_and_persisted(env) -> None:  # type: ignore[no-un
     assert rows[0]["ping_id"] == body["ping_id"] and rows[0]["shipment_id"] == "SHP1006" and rows[0]["source"] == "TELEMATICS"
 
 
-def test_missing_and_wrong_signature_are_401_and_store_nothing(env) -> None:  # type: ignore[no-untyped-def]
+def test_missing_and_wrong_signature_are_401_and_store_nothing(env) -> None:  # type: ignore[no-untyped-def]  # noqa: F811
     _, client, _, _, path = env
     for sig in (None, "deadbeef"):
         r = post_to(client, PINGS, ping_body(), signature=sig)
@@ -71,14 +71,14 @@ def test_missing_and_wrong_signature_are_401_and_store_nothing(env) -> None:  # 
     assert stored(path) == []
 
 
-def test_signature_is_checked_before_parsing(env) -> None:  # type: ignore[no-untyped-def]
+def test_signature_is_checked_before_parsing(env) -> None:  # type: ignore[no-untyped-def]  # noqa: F811
     _, client, _, _, _ = env
     for path in (PINGS, LOCATION):
         r = post_to(client, path, b"{not json", signature="deadbeef")
         assert r.status_code == 401 and r.json()["reason_code"] == "INVALID_SIGNATURE"
 
 
-def test_invalid_bodies_are_422_without_echoing_values(env) -> None:  # type: ignore[no-untyped-def]
+def test_invalid_bodies_are_422_without_echoing_values(env) -> None:  # type: ignore[no-untyped-def]  # noqa: F811
     _, client, _, _, path = env
     bad = [ping_body(lat=91), ping_body(lon=-181), ping_body(recorded_at="2026-11-21T09:34:00"), ping_body(extra="x")]
     for body in bad:
@@ -91,22 +91,22 @@ def test_invalid_bodies_are_422_without_echoing_values(env) -> None:  # type: ig
     assert stored(path) == []
 
 
-def test_unknown_shipment_is_404(env) -> None:  # type: ignore[no-untyped-def]
+def test_unknown_shipment_is_404(env) -> None:  # type: ignore[no-untyped-def]  # noqa: F811
     _, client, _, _, path = env
     r = post_to(client, PINGS, ping_body(shipment_id="SHP9999"))
     assert r.status_code == 404 and r.json()["reason_code"] == "UNKNOWN_SHIPMENT"
     assert stored(path) == []
 
 
-def test_database_outage_is_503(env) -> None:  # type: ignore[no-untyped-def]
-    deps, client, _, _, path = env
+def test_database_outage_is_503(env) -> None:  # type: ignore[no-untyped-def]  # noqa: F811
+    _, client, _, _, path = env
     path.unlink()
     r = post_to(client, PINGS, ping_body())
     assert r.status_code == 503 and r.json()["reason_code"] == "DATABASE_UNAVAILABLE"
     assert set(r.json()) == {"status", "reason_code", "request_id"}
 
 
-def test_driver_location_stores_against_the_active_shipment(env) -> None:  # type: ignore[no-untyped-def]
+def test_driver_location_stores_against_the_active_shipment(env) -> None:  # type: ignore[no-untyped-def]  # noqa: F811
     _, client, _, _, path = env
     r = post_to(client, LOCATION, location_body())
     assert r.status_code == 200 and r.json()["status"] == "STORED"
@@ -114,7 +114,7 @@ def test_driver_location_stores_against_the_active_shipment(env) -> None:  # typ
     assert len(rows) == 1 and rows[0]["shipment_id"] == "SHP1006" and rows[0]["source"] == "DRIVER_SHARED"
 
 
-def test_driver_location_rejects_bad_signature_and_bad_body(env) -> None:  # type: ignore[no-untyped-def]
+def test_driver_location_rejects_bad_signature_and_bad_body(env) -> None:  # type: ignore[no-untyped-def]  # noqa: F811
     _, client, _, _, path = env
     r = post_to(client, LOCATION, location_body(), signature="deadbeef")
     assert r.status_code == 401 and r.json()["reason_code"] == "INVALID_SIGNATURE"
@@ -124,21 +124,21 @@ def test_driver_location_rejects_bad_signature_and_bad_body(env) -> None:  # typ
     assert stored(path) == []
 
 
-def test_driver_location_from_an_unknown_phone_is_403(env) -> None:  # type: ignore[no-untyped-def]
+def test_driver_location_from_an_unknown_phone_is_403(env) -> None:  # type: ignore[no-untyped-def]  # noqa: F811
     _, client, _, _, path = env
     r = post_to(client, LOCATION, location_body(**{"from": "+91 99999 99999"}))
     assert r.status_code == 403 and r.json()["reason_code"] == "UNKNOWN_PHONE"
     assert stored(path) == []
 
 
-def test_driver_location_with_a_malformed_phone_is_403_invalid_phone(env) -> None:  # type: ignore[no-untyped-def]
+def test_driver_location_with_a_malformed_phone_is_403_invalid_phone(env) -> None:  # type: ignore[no-untyped-def]  # noqa: F811
     _, client, _, _, path = env
     r = post_to(client, LOCATION, location_body(**{"from": "12345"}))
     assert r.status_code == 403 and r.json()["reason_code"] == "INVALID_PHONE"
     assert stored(path) == []
 
 
-def test_ping_up_to_five_minutes_ahead_is_stored_and_beyond_is_422(env) -> None:  # type: ignore[no-untyped-def]
+def test_ping_up_to_five_minutes_ahead_is_stored_and_beyond_is_422(env) -> None:  # type: ignore[no-untyped-def]  # noqa: F811
     _, client, _, clock, path = env
     now = clock.now()
     # Exactly 5 minutes and 4 minutes ahead are accepted, on both routes.
@@ -155,7 +155,7 @@ def test_ping_up_to_five_minutes_ahead_is_stored_and_beyond_is_422(env) -> None:
     assert post_to(client, PINGS, ping_body(recorded_at=(now - timedelta(days=2)).isoformat())).status_code == 200
 
 
-def test_driver_with_only_closed_shipments_gets_404_and_nothing_stored(env) -> None:  # type: ignore[no-untyped-def]
+def test_driver_with_only_closed_shipments_gets_404_and_nothing_stored(env) -> None:  # type: ignore[no-untyped-def]  # noqa: F811
     _, client, _, _, path = env
     conn = open_connection(path=path)
     conn.execute("update shipments set current_status='COMPLETED' where driver_id='DRV006'")

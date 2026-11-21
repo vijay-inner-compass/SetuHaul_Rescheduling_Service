@@ -45,8 +45,9 @@ def store_ping(conn: sqlite3.Connection, shipment_id: str, ping: GpsPing, clock:
         "INSERT INTO gps_pings (shipment_id, lat, lon, recorded_at, received_at, source) VALUES (?, ?, ?, ?, ?, ?)",
         (shipment_id, ping.lat, ping.lon, recorded, received, source),
     )
-    # lastrowid is the new ping_id.
-    return int(cur.lastrowid)
+    # lastrowid is the new ping_id (always set after an INSERT).
+    assert cur.lastrowid is not None
+    return cur.lastrowid
 
 
 def active_shipment_for_driver(conn: sqlite3.Connection, driver_id: str) -> str | None:
