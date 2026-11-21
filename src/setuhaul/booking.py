@@ -54,14 +54,20 @@ from setuhaul.events import append_appointment_event, enqueue_notification
 # Slot re-evaluation.
 from setuhaul.feasibility import evaluate_slot
 
+# The truck's GPS arrival floor.
+from setuhaul.gps import gps_arrival_floor
+
 # Authorisation error.
 from setuhaul.identity import AuthError
+
+# Driver-facing wording in three languages.
+from setuhaul.language import say
 
 # Downstream notices for confirmed changes.
 from setuhaul.notifications import enqueue_downstream
 
 # Stored menus and their comparison with live state.
-from setuhaul.option_history import OptionDiffItem, diff_option_set, get_option_set
+from setuhaul.option_history import OptionDiffItem, context_now, diff_option_set, get_option_set
 
 # The text queued to the driver when a hold lapses.
 HOLD_EXPIRED_MESSAGE = (
@@ -243,7 +249,9 @@ def acquire_hold(
                 return _fail("SHIPMENT_ALREADY_HELD", existing_appointment_id=existing["appointment_id"])
             # Re-check the chosen option against the facility as it is right now, inside the lock.
             state = build_facility_state(conn, opt.facility_id, now)
-            diff_item = next(i for i in diff_option_set(opt, now, state).items if i.rank == rank)
+            # Where the truck is now (latest fresh GPS ping): a slot it can no longer reach in time is refused.
+            floor = gps_arrival_floor(conn, shipment_id, clock, load_settings())
+            diff_item = next(i for i in diff_option_set(opt, now, state, floor).items if i.rank == rank)
             # Anything other than "still available" fails. A slot taken by someone else is a SLOT_CONFLICT;
             # any other change (blocked, no longer suitable) is OPTION_CHANGED.
             if diff_item.change not in ("UNCHANGED", "CHANGED_STILL_FEASIBLE"):
@@ -532,7 +540,9 @@ def confirm_reschedule(conn: sqlite3.Connection, cmd: ConfirmCommand, clock: Clo
             # Re-judge the held slot against the facility as it is right now, inside the lock.
             opt = get_option_set(conn, cmd.driver_id, cmd.thread_id, cmd.shipment_id, row["option_set_id"])
             state = build_facility_state(conn, opt.facility_id, now)
-            decision = evaluate_slot(opt.context.with_now(now), state.slots[row["slot_id"]], state)
+            # Judged from where the truck is now: if it moved so far away that it cannot reach the slot, the hold is released.
+            floor = gps_arrival_floor(conn, cmd.shipment_id, clock, load_settings())
+            decision = evaluate_slot(context_now(opt, now, floor), state.slots[row["slot_id"]], state)
             # No longer feasible (blocked, rules changed, needs approval ...): release the hold, keep the original.
             if decision.status != "FEASIBLE":
                 release_hold_in_txn(conn, cmd.hold_appointment_id, cmd.shipment_id, "SYSTEM", now,
@@ -637,3 +647,48 @@ def render_confirmation_text(conn: sqlite3.Connection, appointment_id: str) -> s
     f = confirmed_appointment_facts(conn, appointment_id)
     return (f"Your appointment is confirmed: dock {f['dock']}, {f['start']}-{f['end']} on "
             f"{f['date']}. Reference {f['ref']}.")
+
+
+# ---- the truck moved ----------------------------------------------------------------------------------------
+def reassess_hold_after_position_change(conn: sqlite3.Connection, shipment_id: str, clock: Clock) -> str | None:
+    """A new GPS ping has arrived. If the shipment's live hold is for a slot the truck can no longer reach in time from
+    where it is now, release the hold at once (the dock is freed for others) and tell the driver in the chat.
+
+    Returns the released hold's appointment id, or None when there is no hold, no fresh ping, or the slot is still reachable.
+    The original appointment is never touched.
+    """
+    now = clock.now()
+    # Where the truck is now; without a fresh ping there is nothing to reassess.
+    floor = gps_arrival_floor(conn, shipment_id, clock, load_settings())
+    if floor is None:
+        return None
+    with immediate(conn):
+        # The shipment's live hold, if any (an expired one is the sweep's job).
+        row = conn.execute(
+            "select a.appointment_id, a.slot_id, m.driver_id, m.thread_id, m.option_set_id, m.expires_epoch "
+            "from appointments a join appointment_hold_meta m using(appointment_id) "
+            "where a.shipment_id=? and a.appointment_status='HELD'", (shipment_id,)).fetchone()
+        if row is None or row["expires_epoch"] <= int(now.timestamp()):
+            return None
+        # Re-judge the held slot with the truck's new position.
+        opt = get_option_set(conn, row["driver_id"], row["thread_id"], shipment_id, row["option_set_id"])
+        state = build_facility_state(conn, opt.facility_id, now)
+        slot = state.slots.get(row["slot_id"])
+        if slot is None:
+            return None
+        decision = evaluate_slot(context_now(opt, now, floor), slot, state)
+        # Only one reason matters here: the truck cannot arrive before the slot starts.
+        if "RELEASE_AFTER_SLOT_START" not in decision.reasons:
+            return None
+        # Free the slot, recording that the system did it because the position changed.
+        release_hold_in_txn(conn, row["appointment_id"], shipment_id, "SYSTEM", now, "SYSTEM", None, "POSITION_CHANGED")
+        # Tell the driver in their chat and their language.
+        state_row = conn.execute("select state_json from conversation_state where driver_id=? and thread_id=?",
+                                 (row["driver_id"], row["thread_id"])).fetchone()
+        lang = (json.loads(state_row["state_json"]).get("language") if state_row else None) or "en"
+        dock = state.docks[slot.dock_id].code
+        text = say("position_released", lang, start=f"{slot.start:%H:%M}", end=f"{slot.end:%H:%M}", dock=dock)
+        conn.execute(
+            "insert into chat_messages (chat_message_id, thread_id, sender_type, message_text, message_ts) values (?,?, 'AGENT', ?, ?)",
+            ("MSG-" + uuid.uuid4().hex[:12].upper(), row["thread_id"], text, now.isoformat()))
+    return str(row["appointment_id"])

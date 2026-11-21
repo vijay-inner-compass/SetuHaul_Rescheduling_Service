@@ -183,3 +183,93 @@ def test_cancelling_with_nothing_booked_says_so(tmp_path: Path) -> None:
     did = next(d["id"] for d in client.get("/demo/api/drivers").json()["drivers"] if d["name"] == "Manoj Sharma")
     reply = client.post("/demo/api/chat", json={"driver_id": did, "text": "cancel my appointment"}).json()["reply"]
     assert "could not find an appointment" in reply.lower()
+
+
+# --- the truck's position changes -------------------------------------------------------------------------------
+def _gps_demo(tmp_path: Path):  # type: ignore[no-untyped-def]
+    from fastapi.testclient import TestClient
+
+    from setuhaul.demo_ui import build_demo_app
+
+    client = TestClient(build_demo_app(tmp_path / "gps", fresh=True)[0])
+    did = next(d["id"] for d in client.get("/demo/api/drivers").json()["drivers"] if d["name"] == "Manoj Sharma")
+    fac = client.get(f"/demo/api/driver/{did}/gps").json()["facility"]
+
+    def ping(km: float) -> None:
+        r = client.post("/demo/api/gps", json={"driver_id": did, "lat": fac["lat"] + km / 111.2, "lon": fac["lon"], "age_minutes": 0})
+        assert r.status_code == 200, r.text
+
+    def say(t: str) -> str:
+        return client.post("/demo/api/chat", json={"driver_id": did, "text": t}).json()["reply"]
+
+    def held() -> bool:
+        return any(s["status"] == "HELD" for d in client.get("/demo/api/board").json()["docks"] for s in d["slots"])
+
+    def chat() -> list[str]:
+        return [m["text"] for m in client.get(f"/demo/api/driver/{did}/state").json()["messages"]]
+
+    return client, ping, say, held, chat
+
+
+def test_a_new_ping_far_away_releases_the_hold_at_once_and_tells_the_driver(tmp_path: Path) -> None:
+    # The truck is 20 km away, gets a 12:00 hold, then a new ping puts it 300 km away: it cannot reach 12:00, so the dock is freed.
+    _, ping, say, held, chat = _gps_demo(tmp_path)
+    ping(20)
+    say("my truck is 60 minutes late")
+    assert "holding" in say("1").lower() and held()
+    ping(300)
+    assert not held()  # the slot is free for others straight away
+    assert any("position has changed" in t and "released the hold" in t for t in chat())  # and the driver was told
+
+
+def test_a_new_ping_that_is_still_close_keeps_the_hold(tmp_path: Path) -> None:
+    _, ping, say, held, chat = _gps_demo(tmp_path)
+    ping(20)
+    say("my truck is 60 minutes late")
+    say("1")
+    ping(40)  # a different location, still comfortably in time
+    assert held() and not any("position has changed" in t for t in chat())
+
+
+def test_a_ping_that_moves_the_truck_away_before_the_driver_picks_blocks_the_hold(tmp_path: Path) -> None:
+    # The menu was built while the truck was close; the driver replies "1" after it moved far away: no hold, system says why.
+    _, ping, say, held, _ = _gps_demo(tmp_path)
+    ping(20)
+    say("my truck is 60 minutes late")
+    ping(300)
+    reply = say("1")
+    assert "position has changed" in reply and "Nothing is held" in reply and not held()
+
+
+def test_a_ping_that_moves_the_truck_closer_changes_nothing(tmp_path: Path) -> None:
+    # Closer is never a reason to refuse: the floor only ever makes the arrival later, never earlier.
+    _, ping, say, held, _ = _gps_demo(tmp_path)
+    ping(150)
+    say("my truck is 60 minutes late")
+    ping(5)
+    assert "holding" in say("1").lower() and held()
+
+
+def test_confirming_after_a_far_ping_that_was_not_reassessed_still_refuses(chat: Chat) -> None:
+    # Belt and braces: even if a ping is stored without the immediate re-check, confirming judges the slot from the truck's position.
+    from datetime import timedelta
+
+    from setuhaul.gps import store_ping
+    from setuhaul.schemas import GpsPing
+
+    chat.say("SHP1006 is running 60 minutes late", [tc("search_slot_options", shipment_id="SHP1006", report=LATE_60), say_text("x")])
+    chat.say("take option 1", [
+        tc_dyn("request_hold", lambda m: {"option_set_id": facts_from(m)["latest_option_set_id"], "rank": 1, "driver_quote": "option 1"}),
+        say_text("ok")])
+    assert chat.held() == 1
+    fac = chat.rows("select f.lat, f.lon from shipments s join facilities f on f.facility_id = s.destination_facility_id "
+                    "where s.shipment_id='SHP1006'")[0]
+    chat.clock.advance(timedelta(seconds=20))
+    store_ping(chat.db, "SHP1006", GpsPing(lat=fac[0] + 300 / 111.2, lon=fac[1], recorded_at=chat.clock.now()), chat.clock, "TEST")
+    chat.db.commit()
+    r = chat.say("yes, confirm it", [
+        tc_dyn("confirm_reschedule", lambda m: {"hold_appointment_id": facts_from(m)["live_hold"]["appointment_id"], "driver_quote": "confirm it"}),
+        say_text("done")])
+    assert "position has changed" in r.text and not r.verified_confirmed
+    assert chat.held() == 0  # the hold was released
+    assert chat.rows("select appointment_status from appointments where appointment_id='APT1006'") == [("CONFIRMED",)]  # original stands

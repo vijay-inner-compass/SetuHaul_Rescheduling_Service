@@ -180,6 +180,24 @@ T: dict[str, dict[str, str]] = {
         "hi": "होल्ड करने के लिए नंबर ({choices}) बताइए। ये विकल्प {until} तक मान्य हैं।",
         "hinglish": "Hold karne ke liye number ({choices}) bataiye. Ye options {until} tak valid hain.",
     },
+    # The driver's request was refused because the truck's position changed and the slot can no longer be reached in time.
+    "position_changed": {
+        "en": "Your truck's position has changed, so that slot can no longer be reached in time. Nothing is held and your "
+              "original appointment is unchanged. Tell me if you would like me to search again.",
+        "hi": "आपके ट्रक की स्थिति बदल गई है, इसलिए उस स्लॉट तक समय पर नहीं पहुंचा जा सकता। कुछ भी होल्ड नहीं है और आपकी मूल "
+              "अपॉइंटमेंट वैसी ही है। चाहें तो मैं दोबारा खोज सकता हूँ।",
+        "hinglish": "Aapke truck ki position badal gayi hai, isliye us slot tak time par nahi pahunch sakte. Kuch bhi hold nahi hai "
+                    "aur aapki original appointment waisi hi hai. Chahein toh main dobara dhoondh sakta hoon.",
+    },
+    # Told to the driver when a new GPS ping showed the held slot is out of reach and the hold was released at once.
+    "position_released": {
+        "en": "Your truck's position has changed, so I have released the hold on {start}-{end} at dock {dock}: it can no longer be "
+              "reached in time. Your original appointment is unchanged. Tell me if you would like me to search again.",
+        "hi": "आपके ट्रक की स्थिति बदल गई है, इसलिए मैंने डॉक {dock} पर {start}-{end} का होल्ड हटा दिया है: वहां समय पर नहीं पहुंचा जा "
+              "सकता। आपकी मूल अपॉइंटमेंट वैसी ही है। चाहें तो मैं दोबारा खोज सकता हूँ।",
+        "hinglish": "Aapke truck ki position badal gayi hai, isliye maine dock {dock} par {start}-{end} ka hold hata diya hai: wahan "
+                    "time par nahi pahunch sakte. Aapki original appointment waisi hi hai. Chahein toh main dobara dhoondh sakta hoon.",
+    },
     # Added after a menu when the truck's GPS disagrees with the driver's report; the gap is absolute, so no direction is claimed.
     "gps_note": {
         "en": "Note: your truck's GPS suggests your arrival differs from your report by about {minutes} minutes.",

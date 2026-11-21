@@ -58,6 +58,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
 # The same facility snapshot the service uses, to draw the dock board.
+# Releases a hold when a new ping shows the truck can no longer reach it.
+from setuhaul.booking import reassess_hold_after_position_change
+
+# The capacity snapshot
 from setuhaul.capacity import build_facility_state
 
 # A controllable clock.
@@ -482,6 +486,8 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
                     # Both timestamps are normalised to IST by store_ping, so this lexical comparison is chronological.
                     conn.execute("delete from gps_pings where shipment_id=? and recorded_at>?", (sid, recorded.astimezone(IST).isoformat()))
                     store_ping(conn, sid, GpsPing(lat=body.lat, lon=body.lon, recorded_at=recorded), demo.clock, "DEMO_CONSOLE")
+                # The truck has a new position: release the load's live hold at once if it is now out of reach (same as the real API).
+                reassess_hold_after_position_change(conn, sid, demo.clock)
                 return gps_readout(conn, sid)
             finally:
                 conn.close()

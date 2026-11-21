@@ -199,6 +199,8 @@ class TurnState:
     options_valid_until: str = ""
     # Minutes by which the driver's ETA and the GPS ETA disagree, when a search found them far apart (else None).
     gps_discrepancy_minutes: int | None = None
+    # True when a hold or confirmation was refused because the truck can no longer reach the slot from its current position.
+    position_changed: bool = False
     committed: list[str] = field(default_factory=list)  # names of write tools that changed state
 
 
@@ -544,6 +546,9 @@ def _request_hold(ctx: ToolContext, a: HoldArgs) -> dict[str, Any]:
     _check_system(r.status, r.outcome)
     # Not held: say so and let the model offer to search again.
     if r.status != "HELD":
+        # Refused because the truck moved too far away to reach the slot in time: the reply says so in the system's own words.
+        if r.diff is not None and r.diff.change == "NEWLY_UNREACHABLE":
+            ctx.turn.position_changed = True
         return {"status": r.status, "change": r.diff.explanation if r.diff else None,
                 "note": "Nothing is held. Offer to search again."}
     mem = ctx.memory.load(ctx.driver_id, ctx.thread_id).state
@@ -578,6 +583,9 @@ def _confirm_reschedule(ctx: ToolContext, a: ConfirmArgs) -> dict[str, Any]:
         ctx.turn.confirmed_appointment_id = r.appointment_id
         ctx.turn.committed.append("confirm_reschedule")
         return {"status": "CONFIRMED", "note": "The system will word the confirmation itself."}
+    # The hold was released because the truck can no longer reach the slot from where it is now.
+    if "RELEASE_AFTER_SLOT_START" in r.reason_codes:
+        ctx.turn.position_changed = True
     # The consignee commitment needs a human: hand off.
     if r.status == "APPROVAL_REQUIRED":
         _handoff(ctx, "APPROVAL_REQUIRED", view.shipment_id, "Consignee commitment needs approval.", reasons=list(r.reason_codes))

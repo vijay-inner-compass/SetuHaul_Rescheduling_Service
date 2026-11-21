@@ -34,11 +34,17 @@ from setuhaul.capacity import FacilityState, build_facility_state
 # The injectable clock.
 from setuhaul.clock import Clock
 
+# Settings give the GPS limits.
+from setuhaul.config import load_settings
+
 # Timestamp parsing.
 from setuhaul.db import parse_operational_timestamp
 
 # Re-evaluating a slot uses the same rules as the original search.
 from setuhaul.feasibility import FeasibilityContext, FeasibilityDecision, evaluate_slot
+
+# The authorisation error type.
+from setuhaul.gps import gps_arrival_floor
 
 # The authorisation error type.
 from setuhaul.identity import AuthError
@@ -59,6 +65,7 @@ Change = Literal[
     "NEWLY_HELD",
     "NEWLY_OCCUPIED",
     "NEWLY_INCOMPATIBLE",
+    "NEWLY_UNREACHABLE",
     "NO_LONGER_FEASIBLE",
     "DATA_NOW_INCOMPLETE",
 ]
@@ -79,6 +86,7 @@ _TEXT: dict[Change, str] = {
     "NEWLY_HELD": "is now being held for another driver",
     "NEWLY_OCCUPIED": "was booked by someone else",
     "NEWLY_INCOMPATIBLE": "no longer suits this load",
+    "NEWLY_UNREACHABLE": "can no longer be reached in time from the truck's current position",
     "NO_LONGER_FEASIBLE": "can no longer be used",
     "DATA_NOW_INCOMPLETE": "cannot be confirmed right now",
 }
@@ -269,16 +277,29 @@ def _classify(item: OptionItem, cur: FeasibilityDecision) -> tuple[Change, tuple
         return "NEWLY_BLOCKED", codes
     if reasons & _INCOMPATIBLE:
         return "NEWLY_INCOMPATIBLE", codes
+    # The truck cannot get there before the slot starts (its position changed, or time passed).
+    if "RELEASE_AFTER_SLOT_START" in reasons:
+        return "NEWLY_UNREACHABLE", codes
     if cur.status == "INCOMPLETE_FEASIBILITY_DATA":
         return "DATA_NOW_INCOMPLETE", codes
     # Anything else that makes it infeasible now.
     return "NO_LONGER_FEASIBLE", codes
 
 
-def diff_option_set(option_set: OptionSet, now: datetime, state: FacilityState) -> OptionDiff:
-    """Pure core: compare what was shown with ``state`` as of ``now``."""
-    # Re-use the original context but evaluated at the current moment.
+def context_now(option_set: OptionSet, now: datetime, release_floor: datetime | None = None) -> FeasibilityContext:
+    """The stored context at ``now``. If the truck cannot arrive before ``release_floor`` (from its latest GPS position),
+    that later moment replaces the stored arrival time; an earlier floor never changes it."""
     ctx = option_set.context.with_now(now)
+    # Only ever later: the driver's own figure is never made more optimistic by GPS.
+    if release_floor is not None and release_floor > ctx.release_time:
+        ctx = ctx.model_copy(update={"release_time": release_floor})
+    return ctx
+
+
+def diff_option_set(option_set: OptionSet, now: datetime, state: FacilityState, release_floor: datetime | None = None) -> OptionDiff:
+    """Pure core: compare what was shown with ``state`` as of ``now`` (and, optionally, the truck's GPS arrival floor)."""
+    # Re-use the original context but evaluated at the current moment (and the truck's current position).
+    ctx = context_now(option_set, now, release_floor)
     items: list[OptionDiffItem] = []
     for it in option_set.items:
         slot = state.slots.get(it.slot_id)
@@ -304,7 +325,9 @@ def reconcile_option_set(conn: sqlite3.Connection, option_set: OptionSet, clock:
     now = clock.now()
     # A fresh snapshot of the facility right now.
     state = build_facility_state(conn, option_set.facility_id, now)
-    return diff_option_set(option_set, now, state)
+    # Where the truck is now: options it can no longer reach in time are reported as such.
+    floor = gps_arrival_floor(conn, option_set.shipment_id, clock, load_settings())
+    return diff_option_set(option_set, now, state, floor)
 
 
 # ---- retention -------------------------------------------------------------------------------

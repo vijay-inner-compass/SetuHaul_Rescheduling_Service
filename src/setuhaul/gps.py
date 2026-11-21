@@ -9,8 +9,8 @@ from __future__ import annotations
 # sqlite3 for the Connection type.
 import sqlite3
 
-# timedelta expresses the freshness window.
-from datetime import timedelta
+# datetime types the arrival floor; timedelta expresses the freshness window and travel time.
+from datetime import datetime, timedelta
 
 # The injectable clock supplies "now".
 from setuhaul.clock import Clock
@@ -100,3 +100,17 @@ def gps_travel_minutes_for(conn: sqlite3.Connection, shipment_id: str, clock: Cl
         return None
     # Straight-line estimate from the ping to the destination.
     return StraightLineEstimator(settings).estimate(ping.lat, ping.lon, dest["lat"], dest["lon"])
+
+
+def gps_arrival_floor(conn: sqlite3.Connection, shipment_id: str, clock: Clock, settings: Settings) -> datetime | None:
+    """The earliest the truck can reach the facility from its latest FRESH ping: now plus the straight-line drive.
+
+    None when there is no fresh ping or no coordinates. It is used only as a floor: a slot that starts before this moment
+    cannot be reached, whatever the driver said. It never makes an arrival earlier than the driver's own figure.
+    """
+    # Drive time from the latest fresh ping (None: nothing to go on).
+    minutes = gps_travel_minutes_for(conn, shipment_id, clock, settings)
+    if minutes is None:
+        return None
+    # The truck is somewhere right now, so the soonest it can arrive is now plus that drive.
+    return clock.now() + timedelta(minutes=minutes)

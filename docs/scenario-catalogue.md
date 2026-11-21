@@ -92,6 +92,11 @@ Legend: **Demo** = can be shown on the demo console; **Script** = shown by an ev
 | Penalty or exceptional customer | requires approval | `test_penalty_commitment_requires_approval`, `test_exceptional_commitment_requires_approval` |
 | Unknown customer commitment on cancel | escalates, not assumed harmless | `test_unknown_customer_commitment_is_not_assumed_harmless` |
 | Slot booked by another party after the menu was shown | explained | `test_option_taken_by_someone_else_is_explained` |
+| New GPS ping puts the truck too far from a held slot | hold released at once, dock freed, driver told | `test_a_new_ping_far_away_releases_the_hold_at_once_and_tells_the_driver` |
+| New ping moves the truck but it is still in time | hold kept, no message | `test_a_new_ping_that_is_still_close_keeps_the_hold` |
+| Truck moves far away after the menu, before the driver picks | no hold; the system says the position changed | `test_a_ping_that_moves_the_truck_away_before_the_driver_picks_blocks_the_hold` |
+| Truck moves closer | nothing is refused (GPS never makes arrival earlier) | `test_a_ping_that_moves_the_truck_closer_changes_nothing` |
+| Far ping stored without the immediate re-check, then confirm | confirm refuses and releases; original stands | `test_confirming_after_a_far_ping_that_was_not_reassessed_still_refuses` |
 | Dock breaks down after the menu was shown | option blocked | `test_dock_breakdown_after_showing_blocks_the_option` |
 | Slot removed from the schedule | disappears | `test_slot_removed_from_schedule_disappears` |
 | Facility rules changed | flagged | `test_changed_facility_rules_are_flagged` |

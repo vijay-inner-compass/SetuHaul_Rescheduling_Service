@@ -393,6 +393,9 @@ def _finalize(
         reason, status = req.reason_code, "HANDOFF"
         # The fixed hand-off wording with the case reference.
         parts.append(say("handoff", lang, case=case))
+    elif not parts and turn.position_changed:
+        # The truck moved too far away to reach the slot: said by the system, from the database result, not by the model.
+        parts.append(say("position_changed", lang))
     elif not parts and turn.shown_options:
         # a menu is a stored fact too: the numbered list comes from the saved option set, never from the model's wording,
         # so "option 1" in the driver's reply always means the line the driver saw

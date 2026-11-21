@@ -64,7 +64,7 @@ from redis import Redis
 from starlette.concurrency import run_in_threadpool
 
 # Live hold checker for conversation memory.
-from setuhaul.booking import make_hold_checker
+from setuhaul.booking import make_hold_checker, reassess_hold_after_position_change
 
 # Real or simulated clock.
 from setuhaul.clock import Clock, SystemClock
@@ -476,6 +476,14 @@ def create_app(deps: AppDeps) -> FastAPI:
                 # A rejection response from the store callback is passed straight through.
                 if isinstance(result, JSONResponse):
                     return result
+                # The truck has a new position: if the shipment's live hold is now out of reach, release it at once.
+                # The ping is already stored, so a failure here must not turn the ingest into an error.
+                try:
+                    row = conn.execute("select shipment_id from gps_pings where ping_id=?", (result,)).fetchone()
+                    if row is not None:
+                        reassess_hold_after_position_change(conn, row["shipment_id"], deps.clock)
+                except Exception:  # noqa: BLE001, S110 - the ping is stored; reassessment is best effort and retried on the next ping
+                    pass
                 # Success: report the new ping id.
                 return JSONResponse({"status": "STORED", "ping_id": result, "request_id": rid})
             except UnknownShipment:
