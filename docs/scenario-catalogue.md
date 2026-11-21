@@ -37,7 +37,7 @@ Legend: **Demo** = can be shown on the demo console; **Script** = shown by an ev
 | Option number never shown | `INVALID_OPTION` | `test_unknown_rank_is_rejected` |
 | Driver replies with just "3" | holds menu line 3 (a one-character quote counts only when it is the whole message) | `test_a_reply_of_just_a_number_holds_that_menu_line` |
 | "3" appears inside a longer, unrelated message | not approval | `test_a_one_character_quote_inside_a_longer_message_is_not_approval` |
-| Demo's rule-based assistant given a menu number | places the hold | `test_the_rule_based_assistant_understands_a_menu_number` |
+| Menu number sent to the (test-double) stand-in model | places the hold; the stand-in is used only by tests and load runs now | `test_the_rule_based_assistant_understands_a_menu_number` |
 | Quote with odd spacing or case | still authorises | `test_the_real_quote_does_authorise_it_even_with_odd_spacing_and_case` |
 | Driver's acceptable window reversed | invalid | `test_driver_constraints_window_must_be_ordered` |
 
@@ -206,7 +206,7 @@ Legend: **Demo** = can be shown on the demo console; **Script** = shown by an ev
 ## K. Gaps worth knowing
 
 * The rate limit's increment and rollback are not atomic across processes (documented in `rate_limit.py`).
-* The demo's rule-based assistant understands only simple English and Hinglish phrases; Hindi (Devanagari) needs a live model.
+* The demo console has no rule-based assistant: chat needs a configured model (the stand-in survives only as a test double and for load runs).
 * The model's explanatory sentences cannot be added to a menu (D65): the menu is system-worded by design.
 * No Hindi (Devanagari) live-model run has been recorded yet; Hindi and Hinglish wording needs native-speaker review.
 * Operational thresholds that depend on a real model, real traffic or a real labour feed are not demonstrated by scripted runs.

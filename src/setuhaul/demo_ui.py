@@ -130,9 +130,9 @@ class DemoState:
     reset: Callable[..., None]
     # True: the dock board starts empty (no existing appointments), so every slot can be allocated from scratch.
     fresh: bool = False
-    live_factory: Callable[[], Any] | None = None  # a real model gateway, if one is configured
-    # 'stub' (rule-based) or 'live' (a real model).
-    model_mode: str = "stub"
+    live_factory: Callable[[], Any] | None = None  # the configured model gateway; without one, chat is switched off
+    # The configured model's name, shown in the title bar (empty when none is configured).
+    model_name: str = ""
     # Names offered in the operations panel.
     coordinators: tuple[str, ...] = ("Asha Verma", "Ben Thomas")
     # Free-form scratch space.
@@ -167,13 +167,6 @@ class ResetIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     fresh: bool | None = None
-
-
-# A request to switch the model mode.
-class ModelIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    mode: str
 
 
 # A coordinator claiming a case.
@@ -322,7 +315,7 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
                 facilities = [{"id": r["facility_id"], "name": r["facility_name"]} for r in conn.execute("select * from facilities order by facility_name")]
             finally:
                 conn.close()
-            return {"clock": clock_info(), "model_mode": demo.model_mode, "live_available": demo.live_factory is not None,
+            return {"clock": clock_info(), "chat_enabled": demo.live_factory is not None, "model": demo.model_name,
                     "coordinators": list(demo.coordinators), "facilities": facilities, "message_advance_seconds": MESSAGE_ADVANCE_SECONDS, "fresh": demo.fresh}
 
         return local_only(request) or await run_in_threadpool(read)
@@ -364,6 +357,9 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
         denied = local_only(request)
         if denied:
             return denied
+        # No model configured: the driver chat is switched off (there is no stand-in assistant), and nothing is created.
+        if demo.live_factory is None:
+            return JSONResponse({"http_status": 409, "status": "REJECTED", "reason_code": "NO_MODEL_CONFIGURED"}, status_code=409)
 
         def go() -> dict[str, Any]:
             # Imported here to avoid a circular import.
@@ -618,19 +614,6 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
 
         return await run_in_threadpool(go)
 
-    # Switch between the rule-based and live model.
-    @app.post("/demo/api/model")
-    async def model(request: Request, body: ModelIn) -> Any:
-        denied = local_only(request)
-        if denied:
-            return denied
-        # 'live' is refused when no real model is configured.
-        if body.mode not in ("stub", "live") or (body.mode == "live" and demo.live_factory is None):
-            return JSONResponse({"status": "REJECTED", "reason_code": "MODEL_NOT_AVAILABLE"}, status_code=409)
-        # Switch.
-        demo.model_mode = body.mode
-        return {"model_mode": demo.model_mode}
-
     # Reset: new database, empty cache, clock back to the start.
     @app.post("/demo/api/reset")
     async def reset(request: Request, body: ResetIn | None = None) -> Any:
@@ -787,18 +770,15 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
 
 def build_demo_app(workdir: Path | None = None, live_factory: Callable[[], Any] | None = None, policy: Any = None,
                    fresh: bool = False) -> tuple[FastAPI, Any]:
-    """The service wired for the demo: fixed clock, in-process cache, a stub or live model, no real channel."""
+    """The service wired for the demo: fixed clock, in-process cache, the configured model (chat is off without one), no real channel."""
     # An in-process fake Redis, so no server is needed.
     import fakeredis
 
     # The real app factory.
-    from setuhaul.api import AppDeps, create_app
+    from setuhaul.api import AppDeps, UnconfiguredGateway, create_app
 
     # Model limits.
     from setuhaul.model_gateway import ModelPolicy
-
-    # The rule-based stand-in model.
-    from setuhaul.stub_model import StubGateway
 
     # A working folder: the one given, or a fresh temporary one.
     work = Path(workdir) if workdir else Path(tempfile.mkdtemp(prefix="setuhaul-demo-"))
@@ -813,7 +793,8 @@ def build_demo_app(workdir: Path | None = None, live_factory: Callable[[], Any] 
     # Build the first database.
     build_demo_db(db_path, fresh)
     # Shared state for the routes (its reset function is attached just below).
-    state = DemoState(clock=clock, db_path=db_path, reset=lambda **_: None, fresh=fresh, live_factory=live_factory)
+    state = DemoState(clock=clock, db_path=db_path, reset=lambda **_: None, fresh=fresh, live_factory=live_factory,
+                      model_name=getattr(policy, "model_id", "") if live_factory else "")
     # Counts resets, so each one gets its own database file.
     generation = {"n": 0}
 
@@ -838,11 +819,11 @@ def build_demo_app(workdir: Path | None = None, live_factory: Callable[[], Any] 
             _try_unlink(Path(str(old) + suffix))
 
     state.reset = reset
-    # Wire the real app: demo clock, fake cache, a throwaway webhook secret, and a gateway factory that follows the model mode.
+    # Wire the real app: demo clock, fake cache, a throwaway webhook secret, and the configured model (never a stand-in).
     deps = AppDeps(
         db_path=db_path, redis=redis, webhook_secret=os.urandom(16), coordinator_tokens={}, fallback_path=work / "fallback.jsonl",
-        policy=policy or ModelPolicy(provider="stub", model_id="stub"), clock=clock, demo=state,
-        gateway_factory=lambda: live_factory() if (state.model_mode == "live" and live_factory) else StubGateway())
+        policy=policy or ModelPolicy(provider="none", model_id=""), clock=clock, demo=state,
+        gateway_factory=live_factory if live_factory else UnconfiguredGateway)
     # Remove a stray folder if one exists (harmless if not).
     shutil.rmtree(work / "unused", ignore_errors=True)
     # Return the app and its dependencies.

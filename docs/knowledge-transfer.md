@@ -252,7 +252,7 @@ Design: [superpowers/specs/2026-11-21-gps-eta-design.md](superpowers/specs/2026-
 | Mode | How | Model |
 |---|---|---|
 | Tests | `python -m pytest -q` | scripted/mock only |
-| Demo console | `python scripts/run_demo.py` | rule-based stand-in; **Live model** only if provider/model/key are in `.env` |
+| Demo console | `python scripts/run_demo.py` | the model configured in `.env`; with none, the chat is switched off (no stand-in) |
 | Service | `python -m uvicorn --factory setuhaul.api:create_app_from_env --port 8000` | none configured means every turn takes the safe "cannot check" path and opens a case |
 | Load tests | `SETUHAUL_USE_STUB_MODEL=1`, `fakeredis://`, `SETUHAUL_FAKE_NOW` | stub (never in production) |
 

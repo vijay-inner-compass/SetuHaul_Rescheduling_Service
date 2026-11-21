@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from setuhaul.clock import FakeClock
+from setuhaul.stub_model import StubGateway  # a scripted stand-in model, for tests only
 from tests.conv_helpers import Chat, facts_from, say_text, tc, tc_dyn, tool_json
 from tests.helpers import seed_everything_known
 from tests.test_api import env, msg, post  # noqa: F401  (the API fixture and helpers)
@@ -143,7 +144,7 @@ def test_cancelling_a_confirmed_appointment_frees_its_slot_on_the_board(tmp_path
 
     from setuhaul.demo_ui import build_demo_app
 
-    client = TestClient(build_demo_app(tmp_path / "cx", fresh=True)[0])
+    client = TestClient(build_demo_app(tmp_path / "cx", fresh=True, live_factory=StubGateway)[0])
     did = next(d["id"] for d in client.get("/demo/api/drivers").json()["drivers"] if d["name"] == "Manoj Sharma")
 
     def say(t: str) -> str:
@@ -161,7 +162,7 @@ def test_keeping_the_original_slot_releases_the_hold_on_the_board(tmp_path: Path
 
     from setuhaul.demo_ui import build_demo_app
 
-    client = TestClient(build_demo_app(tmp_path / "rel", fresh=True)[0])
+    client = TestClient(build_demo_app(tmp_path / "rel", fresh=True, live_factory=StubGateway)[0])
     did = next(d["id"] for d in client.get("/demo/api/drivers").json()["drivers"] if d["name"] == "Manoj Sharma")
 
     def say(t: str) -> str:
@@ -179,7 +180,7 @@ def test_cancelling_with_nothing_booked_says_so(tmp_path: Path) -> None:
 
     from setuhaul.demo_ui import build_demo_app
 
-    client = TestClient(build_demo_app(tmp_path / "none", fresh=True)[0])
+    client = TestClient(build_demo_app(tmp_path / "none", fresh=True, live_factory=StubGateway)[0])
     did = next(d["id"] for d in client.get("/demo/api/drivers").json()["drivers"] if d["name"] == "Manoj Sharma")
     reply = client.post("/demo/api/chat", json={"driver_id": did, "text": "cancel my appointment"}).json()["reply"]
     assert "could not find an appointment" in reply.lower()
@@ -191,7 +192,7 @@ def _gps_demo(tmp_path: Path):  # type: ignore[no-untyped-def]
 
     from setuhaul.demo_ui import build_demo_app
 
-    client = TestClient(build_demo_app(tmp_path / "gps", fresh=True)[0])
+    client = TestClient(build_demo_app(tmp_path / "gps", fresh=True, live_factory=StubGateway)[0])
     did = next(d["id"] for d in client.get("/demo/api/drivers").json()["drivers"] if d["name"] == "Manoj Sharma")
     fac = client.get(f"/demo/api/driver/{did}/gps").json()["facility"]
 

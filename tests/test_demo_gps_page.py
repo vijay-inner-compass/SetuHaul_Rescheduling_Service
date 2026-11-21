@@ -8,12 +8,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from setuhaul.demo_ui import build_demo_app
+from setuhaul.stub_model import StubGateway  # a scripted stand-in model, for tests only
 
 
 # The served demo page as text.
 @pytest.fixture()
 def html(tmp_path: Path) -> str:
-    app, _ = build_demo_app(tmp_path / "demo")
+    app, _ = build_demo_app(tmp_path / "demo", live_factory=StubGateway)
     return TestClient(app).get("/demo").text
 
 

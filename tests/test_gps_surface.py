@@ -14,6 +14,7 @@ from setuhaul.clock import FakeClock
 from setuhaul.demo_ui import build_demo_app
 from setuhaul.gps import store_ping
 from setuhaul.schemas import GpsPing
+from setuhaul.stub_model import StubGateway  # a scripted stand-in model, for tests only
 from tests.conv_helpers import Chat, say_text, tc, tool_json
 from tests.helpers import seed_everything_known
 
@@ -82,7 +83,7 @@ def test_without_a_ping_nothing_changes(chat: Chat) -> None:
 
 def test_demo_far_ping_then_chat_shows_the_note(tmp_path: Path) -> None:
     # Through the demo routes: post a ping 120 km out, then tell the driver's 20 minute lie to the real pipeline.
-    client = TestClient(build_demo_app(tmp_path / "demo")[0])
+    client = TestClient(build_demo_app(tmp_path / "demo", live_factory=StubGateway)[0])
     did = next(d["id"] for d in client.get("/demo/api/drivers").json()["drivers"] if d["name"] == "Manoj Sharma")
     fac = client.get(f"/demo/api/driver/{did}/gps").json()["facility"]
     sent = client.post("/demo/api/gps", json={"driver_id": did, "lat": fac["lat"] + 120 / 111.2, "lon": fac["lon"], "age_minutes": 0})

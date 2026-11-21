@@ -90,17 +90,17 @@ def main() -> int:
             gateway = build_gateway(policy)
             # A factory returning it.
             live = lambda: gateway
-        # Not usable: stay on the rule-based assistant.
+        # Not usable: the chat stays switched off.
         except ModelUnavailable:
             live = None
-    # Build the demo app (fixed clock, fake cache, stub or live model).
+    # Build the demo app (fixed clock, fake cache, the configured model; chat is off without one).
     app, _deps = build_demo_app(live_factory=live, policy=policy if live else None, fresh=args.fresh)
     # Where the page will be.
     url = f"http://127.0.0.1:{args.port}/demo"
     # Tell the user where to go.
     print(f"SetuHaul demonstration console: {url}")
     # Which assistant is in use.
-    print(f"  assistant: rule-based{' (live model available: ' + policy.model_id + ')' if live else ' (no live model configured)'}")
+    print(f"  assistant model: {policy.model_id}" if live else "  NO MODEL CONFIGURED: the driver chat is switched off. Set SETUHAUL_MODEL_PROVIDER, SETUHAUL_MODEL_ID and SETUHAUL_MODEL_API_KEY in .env and restart.")
     # Whether tracing is on and why.
     print(f"  LangSmith tracing: {tracing_status().reason}")
     # How to stop it.

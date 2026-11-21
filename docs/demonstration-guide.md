@@ -11,9 +11,10 @@ snapshot with labelled `DEMO_FIXTURE` evidence. Nothing real is touched.
 python scripts/run_demo.py
 ```
 
-This opens `http://127.0.0.1:8800/demo`. If no model is configured in `.env`, the assistant is the **rule-based stand-in**
-(deterministic; it understands phrases such as "60 minutes late", "take the first", "confirm"). It is not a model and says
-nothing about model quality. For realistic wording, configure a provider in `.env` and switch to **Live model**.
+This opens `http://127.0.0.1:8800/demo`. The driver chat is answered by the **language model configured in `.env`**
+(`SETUHAUL_MODEL_PROVIDER`, `SETUHAUL_MODEL_ID`, `SETUHAUL_MODEL_API_KEY`); its name shows in the title bar. There is **no
+rule-based stand-in** any more. If no model is configured the page says so, the chat is switched off, and the dock board, planner
+bookings and operations panel still work. Use synthetic messages only.
 
 The page has three panels: **Driver console** (chat), **Dock board** (docks by hour) and **Operations** (cases, activity).
 The top bar has the simulated clock, the assistant switch, **+1 min**, **+3 min and sweep** and **Reset demo**.
@@ -62,9 +63,8 @@ slot is free again on the board.
 2. On the **Dock board**, click the cell for option 1 (Dock D2, 12:00) and book it as the planner. A message says whose load was booked.
 3. Back in the chat click **Take the first option**.
 
-You should see: no hold is placed. Activity shows only the planner's booking. With the rule-based assistant the wording is
-generic ("Thanks, noted."), because the stand-in does not write explanations; the **tool result** is `SLOT_CONFLICT`/`OPTION_CHANGED`
-and nothing is held. A live model explains it in words. The database enforced the result, not the model.
+You should see: no hold is placed. Activity shows only the planner's booking. The model explains it in its own words; the **tool result** underneath is `SLOT_CONFLICT`/`OPTION_CHANGED`
+and nothing is held. The database enforced the result, not the model.
 
 ### D. No slot fits: hand-off to a person
 
@@ -78,7 +78,7 @@ and nothing is held. A live model explains it in words. The database enforced th
 
 * Type or click Hinglish phrases that include "NN minute ... late" (for example "bhai meri gaadi 60 minute late hai"): the menu and
   hold wording are rendered in **Hinglish** from the same stored data.
-* The rule-based assistant does not understand Devanagari. For Hindi, use **Live model**, or run the scripted transcripts:
+* Hindi (Devanagari) works as far as the configured model handles it; the scripted transcripts show the expected flow:
   `python scripts/show_phase8.py` (Hinglish and Hindi sections).
 * Wording is a draft; a native speaker should review it (see the decision register).
 

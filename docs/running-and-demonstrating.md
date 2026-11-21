@@ -1,6 +1,12 @@
 # Running the program and demonstrating its functionality
 
 Companion to [Knowledge transfer](knowledge-transfer.md). This document says **what to run, what to type, and what you will see**.
+> **Update:** the demo console no longer has a rule-based assistant or the Rule-based / Live model switch. The driver chat uses the model
+> configured in `.env` (its name shows in the title bar); with no model the chat is switched off and the rest of the console works.
+> Wherever the captured output below mentions the "stand-in", "rule-based" assistant or the switch, read it as historical: those replies
+> came from the removed stand-in, and a real model words its own answers (the system-worded parts, such as the numbered menu, hold,
+> confirmation, cancellation and position notices, are unchanged).
+
 Every output below was captured by running the program on 2026-11-21 (Windows, Python 3.12, rule-based assistant, no real model), except
 where marked *not run*. Ids such as `APT-H-...` and `ESC-...` are random and differ on every run.
 
@@ -48,7 +54,7 @@ The page has three panels and a top bar:
 * **Driver console** (left): pick a driver, see their loads, a GPS panel, the chat, and quick-message buttons.
 * **Dock board** (middle): docks by hour for one facility; Available, Held (amber, 3 min), Booked, Blocked, and the selected driver's own cells.
 * **Operations** (right): **Cases** (the hand-off queue) and **Activity** (appointment history, notification outbox, GPS pings).
-* **Top bar:** assistant switch (Rule-based / Live model), the simulated clock, **+1 min**, **+3 min and sweep**, **Reset demo**.
+* **Top bar:** the model name, the simulated clock, **+1 min**, **+3 min and sweep**, **Reset demo**.
 
 **Reset demo** shows a confirmation dialog; click **Reset** in it. It rebuilds the schedule, clears chats and cases and rewinds the clock to 09:35.
 Do this between scenarios. Each chat message advances the clock 20 seconds, so a 180-second hold can be watched lapsing.

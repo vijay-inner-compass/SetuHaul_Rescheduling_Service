@@ -10,11 +10,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from setuhaul.demo_ui import build_demo_app
+from setuhaul.stub_model import StubGateway  # a scripted stand-in model, for tests only
 
 
 @pytest.fixture()
 def demo(tmp_path: Path):  # type: ignore[no-untyped-def]
-    app, deps = build_demo_app(tmp_path / "demo")
+    app, deps = build_demo_app(tmp_path / "demo", live_factory=StubGateway)
     return TestClient(app), deps
 
 
@@ -49,7 +50,7 @@ def test_the_page_escapes_everything_it_renders() -> None:
 
 
 def test_demo_routes_refuse_anyone_but_this_machine(tmp_path: Path) -> None:
-    app, _ = build_demo_app(tmp_path / "d")
+    app, _ = build_demo_app(tmp_path / "d", live_factory=StubGateway)
     outsider = TestClient(app, client=("203.0.113.9", 50000))
     for path in ("/demo", "/demo/api/drivers", "/demo/api/board", "/demo/api/cases", "/demo/api/config"):
         r = outsider.get(path)
@@ -173,20 +174,35 @@ def test_a_driver_who_cannot_be_served_becomes_a_case_a_coordinator_can_work(dem
 
 
 # --- model switch, reset, validation ----------------------------------------------------------------------------
-def test_live_model_cannot_be_selected_when_none_is_configured(demo) -> None:  # type: ignore[no-untyped-def]
+def test_without_a_configured_model_the_chat_is_off_and_there_is_no_stand_in(tmp_path: Path) -> None:
+    # No model configured: the page says so, chat is refused, nothing is created, and the rest of the console still works.
+    app, _ = build_demo_app(tmp_path / "nomodel")
+    client = TestClient(app)
+    cfg = client.get("/demo/api/config").json()
+    assert cfg["chat_enabled"] is False and cfg["model"] == "" and "model_mode" not in cfg
+    r = client.post("/demo/api/chat", json={"driver_id": driver_id(client, "Manoj Sharma"), "text": "my truck is 60 minutes late"})
+    assert r.status_code == 409 and r.json()["reason_code"] == "NO_MODEL_CONFIGURED"
+    assert client.get("/demo/api/cases").json()["cases"] == []  # no hand-off case was opened by the refusal
+    assert client.get("/demo/api/board").status_code == 200
+    assert client.post("/demo/api/reset").status_code == 200
+
+
+def test_the_page_has_no_rule_based_assistant_switch() -> None:
+    html = (Path(__file__).resolve().parents[1] / "src" / "setuhaul" / "demo" / "index.html").read_text(encoding="utf-8")
+    assert "Rule-based" not in html and "modelStub" not in html and "/demo/api/model" not in html
+
+
+def test_the_model_switch_endpoint_no_longer_exists(demo) -> None:  # type: ignore[no-untyped-def]
     client, _ = demo
-    assert client.get("/demo/api/config").json()["live_available"] is False
-    assert client.post("/demo/api/model", json={"mode": "live"}).status_code == 409
-    assert client.post("/demo/api/model", json={"mode": "stub"}).status_code == 200
-    assert client.post("/demo/api/model", json={"mode": "nonsense"}).status_code == 409
+    assert client.post("/demo/api/model", json={"mode": "stub"}).status_code in (404, 405)
 
 
-def test_live_mode_uses_the_configured_gateway(tmp_path: Path) -> None:
+def test_chat_uses_the_configured_gateway(tmp_path: Path) -> None:
     from setuhaul.model_gateway import ModelResponse, ScriptedGateway
 
     app, _deps = build_demo_app(tmp_path / "live", live_factory=lambda: ScriptedGateway([ModelResponse(text="Hello from the live model.")]))
     client = TestClient(app)
-    assert client.post("/demo/api/model", json={"mode": "live"}).status_code == 200
+    assert client.get("/demo/api/config").json()["chat_enabled"] is True
     r = client.post("/demo/api/chat", json={"driver_id": driver_id(client, "Manoj Sharma"), "text": "hello there"}).json()
     assert r["reply"] == "Hello from the live model."
 
@@ -218,7 +234,7 @@ def statuses(client: TestClient) -> set[str]:
 
 
 def test_an_empty_board_has_every_slot_free_and_loads_without_bookings(tmp_path: Path) -> None:
-    app, _ = build_demo_app(tmp_path / "fresh", fresh=True)
+    app, _ = build_demo_app(tmp_path / "fresh", fresh=True, live_factory=StubGateway)
     client = TestClient(app)
     assert client.get("/demo/api/config").json()["fresh"] is True
     assert "BOOKED" not in statuses(client) and "HELD" not in statuses(client)
@@ -227,7 +243,7 @@ def test_an_empty_board_has_every_slot_free_and_loads_without_bookings(tmp_path:
 
 def test_a_driver_can_book_from_an_empty_board(tmp_path: Path) -> None:
     # A load with no appointment at all still gets options, a hold and a confirmation on the empty board.
-    app, _ = build_demo_app(tmp_path / "fresh2", fresh=True)
+    app, _ = build_demo_app(tmp_path / "fresh2", fresh=True, live_factory=StubGateway)
     client = TestClient(app)
     manoj = driver_id(client, "Manoj Sharma")
     assert "These slots are available" in say(client, manoj, "my truck is 60 minutes late")["reply"]

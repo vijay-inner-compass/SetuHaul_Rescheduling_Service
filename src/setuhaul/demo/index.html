@@ -93,6 +93,8 @@ label.field{display:block;font-size:12px;color:var(--ink-2);margin:0 0 4px;font-
 .empty{padding:26px 10px;text-align:center;color:var(--ink-3)}
 .composer{border-top:1px solid var(--line);padding:10px 14px;background:var(--surface-2)}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.nomodel{margin:0 0 8px;padding:9px 11px;border:1px solid #e0b4b4;background:#fff6f6;color:#7a2020;border-radius:6px;font-size:12.5px;line-height:1.45}
+.chips button:disabled,#msgInput:disabled{opacity:.5;cursor:not-allowed}
 .chips button{border:1px solid var(--line-strong);background:#fff;border-radius:999px;padding:4px 10px;font-size:12px;cursor:pointer;color:var(--ink-2)}
 .chips button:hover{border-color:var(--brand-2);color:var(--brand)}
 .sendrow{display:flex;gap:8px}
@@ -162,10 +164,7 @@ table.t td{padding:7px 6px;border-bottom:1px solid var(--line);vertical-align:to
   </div>
   <span class="env" title="Fixed clock, in-process cache, no real messaging channel">Demonstration</span>
   <div class="spacer"></div>
-  <div class="seg" role="group" aria-label="Assistant model">
-    <button id="modelStub" aria-pressed="true" title="Rule-based stand-in: understands delay minutes, 'first' and 'confirm' in English">Rule-based</button>
-    <button id="modelLive" aria-pressed="false" title="Real language model (configured in .env)">Live model</button>
-  </div>
+  <span class="env" id="modelTag" title="The language model answering the driver"></span>
   <button class="bar-btn" id="adv1">+1 min</button>
   <button class="bar-btn" id="adv3" title="Move 3 minutes on and run the expiry job: any hold lapses">+3 min and sweep</button>
   <button class="bar-btn" id="resetBtn">Reset demo</button>
@@ -208,6 +207,7 @@ table.t td{padding:7px 6px;border-bottom:1px solid var(--line);vertical-align:to
         <button data-lang="hinglish" aria-pressed="false">Hinglish</button>
         <button data-lang="hi" aria-pressed="false">हिंदी</button>
       </div>
+      <div class="nomodel" id="noModel" role="alert" style="display:none">The driver chat is switched off because no language model is configured. Set <code>SETUHAUL_MODEL_PROVIDER</code>, <code>SETUHAUL_MODEL_ID</code> and <code>SETUHAUL_MODEL_API_KEY</code> in <code>.env</code> and restart. The dock board, planner bookings and operations panel still work.</div>
       <div class="chips" id="chips"></div>
       <form class="sendrow" id="sendForm" autocomplete="off">
         <label class="sr-only" for="msgInput">Message</label>
@@ -300,6 +300,8 @@ function renderDriverCard(){
 function renderChips(){
   $("#chips").innerHTML=(QUICK[state.lang]||[]).map(([label,text])=>`<button type="button" data-text="${esc(text)}">${esc(label)}</button>`).join("");
   $("#langSeg").querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.lang===state.lang)));
+  // New chip buttons start enabled: switch them off again when there is no model.
+  if(state.cfg&&!state.cfg.chat_enabled)document.querySelectorAll("#chips button").forEach(b=>{b.disabled=true;});
 }
 function renderThread(st){
   const t=$("#thread");const nearBottom=t.parentElement.scrollHeight-t.parentElement.scrollTop-t.parentElement.clientHeight<80;
@@ -320,7 +322,7 @@ async function refreshDriver(){
   refreshGps(false);
 }
 async function send(text){
-  if(!text.trim()||state.busy)return;
+  if(!text.trim()||state.busy||!state.cfg.chat_enabled)return;
   state.busy=true;$("#sendBtn").disabled=true;$("#msgInput").value="";
   const t=$("#thread");t.querySelector(".empty")?.remove();
   t.insertAdjacentHTML("beforeend",`<div class="msg driver">${esc(text)}<span class="meta">sending…</span></div><div class="typing">Assistant is working…</div>`);
@@ -492,9 +494,14 @@ $("#adv1").onclick=()=>advance(60,false);$("#adv3").onclick=()=>advance(181,true
 async function doReset(fresh){const r=await api("/demo/api/reset",fresh===null?{}:{fresh});if(!r.ok){toast("Reset failed. Try again.","bad");return;}state.gps.driver=null;gpsClear();toast(fresh?"Empty dock board ready.":"Demonstration reset.","ok");await init(true);}
 $("#resetBtn").onclick=()=>modal("Reset the demonstration",`<div>Clears every conversation and case and sets the clock back to 09:35. Choose the dock board you want: <b>the supplied schedule</b> (existing bookings) or <b>an empty board</b> (every slot free, so you allocate from scratch).</div>`,
   [{label:"Cancel"},{label:"Empty dock board",run:()=>{doReset(true);}},{label:"Supplied schedule",primary:true,run:()=>{doReset(false);}}]);
-async function setModel(mode){const r=await api("/demo/api/model",{mode});if(r.ok){state.cfg.model_mode=mode;paintModel();toast(mode==="live"?"Live model on. Replies now come from the real model.":"Rule-based assistant on.");}else toast("No live model is configured in .env.","bad");}
-function paintModel(){$("#modelStub").setAttribute("aria-pressed",String(state.cfg.model_mode==="stub"));$("#modelLive").setAttribute("aria-pressed",String(state.cfg.model_mode==="live"));$("#modelLive").disabled=!state.cfg.live_available;}
-$("#modelStub").onclick=()=>setModel("stub");$("#modelLive").onclick=()=>setModel("live");
+function paintModel(){
+  const on=!!state.cfg.chat_enabled;
+  $("#modelTag").textContent=on?"Model: "+state.cfg.model:"No model configured";
+  // Without a model the driver chat is off: say why, and disable what would send a message.
+  const nm=$("#noModel");if(nm)nm.style.display=on?"none":"block";
+  $("#msgInput").disabled=!on;$("#sendBtn").disabled=!on||state.busy;
+  document.querySelectorAll("#chips button").forEach(b=>{b.disabled=!on;});
+}
 
 function paintFacilities(){
   $("#facSeg").innerHTML=state.facilities.map(f=>`<button data-fac="${esc(f.id)}" aria-pressed="${f.id===state.facility}">${esc(f.name.replace("SetuHaul ",""))}</button>`).join("");
@@ -504,7 +511,7 @@ async function init(reset){
   const cfg=await api("/demo/api/config");if(!cfg.ok){toast("The demonstration service is not reachable.","bad");return;}
   state.cfg=cfg.data;state.facilities=cfg.data.facilities;state.coordinators=cfg.data.coordinators;
   state.facility=state.facility&&!reset?state.facility:(state.facilities.find(f=>f.name.includes("Jaipur"))||state.facilities[0]).id;
-  setClock(cfg.data.clock);paintModel();paintFacilities();renderChips();
+  setClock(cfg.data.clock);renderChips();paintModel();paintFacilities();
   await refreshDrivers();renderDrivers();await Promise.all([refreshDriver(),refreshBoard(),refreshOps()]);
 }
 gpsEnable(false); // Send stays off until a driver's readout has loaded
