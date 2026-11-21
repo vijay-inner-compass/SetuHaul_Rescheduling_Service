@@ -241,7 +241,9 @@ def test_late_by_far_from_gps_flags_discrepancy(clock: FakeClock) -> None:
     assert out.source == "DRIVER_DECLARED"
     assert out.confidence == "MEDIUM"
     gps_eta = NOW + timedelta(minutes=240)
-    assert out.gps_discrepancy_minutes == int((gps_eta - out.eta).total_seconds() // 60)
+    # Independent literal: driver ETA 10:20 + 20 = 10:40; GPS ETA 09:35 + 240 min = 13:35; the gap is 175 minutes.
+    assert out.gps_discrepancy_minutes == 175
+    assert gps_eta - out.eta == timedelta(minutes=175)
 
 
 @pytest.mark.parametrize(

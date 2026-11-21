@@ -12,7 +12,8 @@ import pytest
 # Settings supplies the estimator's speed and road factor.
 from setuhaul.config import Settings
 
-# The functions and class under test.
+# The module (patched in one test), then the functions and class under test.
+from setuhaul import travel
 from setuhaul.travel import StraightLineEstimator, estimate_travel_minutes, haversine_km
 
 
@@ -26,14 +27,16 @@ def test_zero_distance_is_zero_minutes() -> None:
     assert estimate_travel_minutes(12.9, 77.6, 12.9, 77.6, avg_speed_kmph=40.0, road_factor=1.3) == 0
 
 
-def test_estimate_rounds_up() -> None:
-    # 60 km straight * 1.3 / 40 kmph = 1.95 h = 117 min exactly; pick a point 60 km away along the equator.
-    lon = 60.0 / 111.19488  # degrees of longitude at the equator for 60 km
-    minutes = estimate_travel_minutes(0, 0, 0, lon, avg_speed_kmph=40.0, road_factor=1.3)
-    # ceil of ~117.0 is 117 (or 118 if float noise lands just above); allow only those via a tight range.
-    assert minutes in (117, 118)
-    # A clearly fractional case rounds up: 10 km * 1.0 / 40 kmph = 15 min; slightly more distance gives 16.
-    assert estimate_travel_minutes(0, 0, 0, 10.01 / 111.19492, avg_speed_kmph=40.0, road_factor=1.0) == 16
+def test_estimate_rounds_up(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Pin the straight-line distance so the arithmetic is exact: 10 km at 40 kmph, factor 1.0, is exactly 15.0 min.
+    monkeypatch.setattr(travel, "haversine_km", lambda *_a: 10.0)
+    assert estimate_travel_minutes(0, 0, 0, 0, avg_speed_kmph=40.0, road_factor=1.0) == 15
+    # A tiny excess over that boundary (15.00015 min) rounds up to 16.
+    monkeypatch.setattr(travel, "haversine_km", lambda *_a: 10.0001)
+    assert estimate_travel_minutes(0, 0, 0, 0, avg_speed_kmph=40.0, road_factor=1.0) == 16
+    # The road factor scales the distance first: 80 km * 1.5 = 120 km road, 120 / 40 kmph = 3 h = exactly 180 min.
+    monkeypatch.setattr(travel, "haversine_km", lambda *_a: 80.0)
+    assert estimate_travel_minutes(0, 0, 0, 0, avg_speed_kmph=40.0, road_factor=1.5) == 180
 
 
 def test_non_positive_speed_rejected() -> None:

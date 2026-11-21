@@ -56,6 +56,12 @@ def test_freshness_boundaries(db: sqlite3.Connection, clock: FakeClock) -> None:
     assert load_latest_ping(db, "SHP1006", clock, 15) is None
 
 
+def test_ping_exactly_at_max_age_is_still_fresh(db: sqlite3.Connection, clock: FakeClock) -> None:
+    # Age equal to the limit (15 min old, limit 15) is fresh: only strictly older pings are stale.
+    store_ping(db, "SHP1006", _ping(clock, 15), clock, "TELEMATICS")
+    assert load_latest_ping(db, "SHP1006", clock, 15) is not None
+
+
 def test_no_ping_returns_none(db: sqlite3.Connection, clock: FakeClock) -> None:
     assert load_latest_ping(db, "SHP1006", clock, 15) is None
 

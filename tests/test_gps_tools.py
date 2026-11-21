@@ -66,6 +66,12 @@ def test_far_ping_flags_discrepancy_on_late_by(chat: Chat) -> None:
     _ping(chat, 1, lat=28.6, lon=77.2)
     p = _compute_eta(chat, {"kind": "late_by", "minutes": 5})
     assert p["status"] == "ETA" and isinstance(p["gps_discrepancy_minutes"], int) and p["gps_discrepancy_minutes"] > 0
+    # Exact values, worked by hand. Delhi (28.6, 77.2) to the Jaipur dock (26.9124, 75.7873) is about 233.5 km straight,
+    # x1.3 road factor / 40 km/h = 455.4 min, rounded up to 456. GPS ETA = 09:35 + 456 min = 17:11.
+    # The driver's ETA is the planned 10:20 + 5 = 10:25, so the gap is 6 h 46 min = 406 minutes.
+    assert p["gps_discrepancy_minutes"] == 406
+    # The driver's own figure is kept (source) but trusted one level less (MEDIUM -> LOW).
+    assert p["source"] == "DRIVER_DECLARED" and p["confidence"] == "LOW"
 
 
 def test_no_ping_payload_unchanged(chat: Chat) -> None:
