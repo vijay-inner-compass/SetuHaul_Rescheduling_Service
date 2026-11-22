@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SetuHaul Rescheduling Service: Architecture</title>
+<style>
+  :root { color-scheme: light dark; --fg:#1f2937; --bg:#ffffff; --muted:#6b7280; --accent:#0f766e; --warn:#b45309; }
+  @media (prefers-color-scheme: dark) { :root { --fg:#e5e7eb; --bg:#111827; --muted:#9ca3af; --accent:#2dd4bf; --warn:#fbbf24; } }
+  body { margin:0; padding:2rem 1.25rem; background:var(--bg); color:var(--fg); font:16px/1.55 system-ui,-apple-system,Segoe UI,sans-serif; }
+  main { max-width:980px; margin:0 auto; }
+  h1 { font-size:1.6rem; margin:0 0 .25rem; }
+  p.lead { color:var(--muted); margin:0 0 1.5rem; }
+  figure { margin:0 0 2rem; }
+  svg { max-width:100%; height:auto; color:var(--fg); }
+  figcaption { color:var(--muted); font-size:.9rem; margin-top:.5rem; }
+  h2 { font-size:1.15rem; margin:2rem 0 .5rem; }
+  ul { padding-left:1.2rem; } li { margin:.3rem 0; }
+</style>
+</head>
+<body>
+<main>
+<h1>SetuHaul Rescheduling Service: architecture</h1>
+<p class="lead">A driver chat message goes in. The model interprets it. Deterministic code and the database decide, and the reply is built from committed rows.</p>
+
+<figure>
+<svg viewBox="0 0 940 760" role="img" aria-label="Layered architecture: driver message passes through the API, conversation workflow, model gateway and tool registry, then deterministic domain services, down to SQLite as system of record with Redis as cache; a notification outbox and a coordinator queue sit beside it.">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+    </marker>
+    <marker id="arrowA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0f766e"/>
+    </marker>
+  </defs>
+  <g font-family="system-ui,Segoe UI,sans-serif" font-size="13" fill="currentColor" stroke="currentColor" stroke-width="1.5">
+
+    <!-- Drivers -->
+    <rect x="20" y="20" width="200" height="50" rx="8" fill="none"/>
+    <text x="120" y="42" text-anchor="middle" stroke="none" font-weight="600">Driver</text>
+    <text x="120" y="59" text-anchor="middle" stroke="none" font-size="11">chat: English / Hindi / Hinglish</text>
+
+    <!-- Coordinator -->
+    <rect x="720" y="20" width="200" height="50" rx="8" fill="none"/>
+    <text x="820" y="42" text-anchor="middle" stroke="none" font-weight="600">Coordinator</text>
+    <text x="820" y="59" text-anchor="middle" stroke="none" font-size="11">works cases via API or CLI</text>
+
+    <!-- API -->
+    <rect x="20" y="110" width="660" height="64" rx="8" fill="none"/>
+    <text x="40" y="133" stroke="none" font-weight="600">api.py (FastAPI)</text>
+    <text x="40" y="153" stroke="none" font-size="11.5">POST /v1/driver/messages · /v1/gps/pings · /v1/driver/location · GET /v1/driver/status</text>
+    <text x="40" y="168" stroke="none" font-size="11.5">HMAC signature on raw bytes · duplicate message id · rate limit (Redis) · identity from phone, never from model</text>
+
+    <rect x="720" y="110" width="200" height="64" rx="8" fill="none"/>
+    <text x="820" y="133" text-anchor="middle" stroke="none" font-weight="600">/v1/coordinator/cases</text>
+    <text x="820" y="153" text-anchor="middle" stroke="none" font-size="11.5">list · claim · resolve · reopen</text>
+
+    <!-- Conversation -->
+    <rect x="20" y="214" width="660" height="52" rx="8" fill="none"/>
+    <text x="40" y="236" stroke="none" font-weight="600">conversation.py</text>
+    <text x="40" y="254" stroke="none" font-size="11.5">save text · detect language · build prompt · run model loop · replace unbacked claims with DB-rendered wording</text>
+
+    <!-- Model gateway -->
+    <rect x="20" y="306" width="320" height="86" rx="8" fill="none" stroke="#b45309"/>
+    <text x="36" y="328" stroke="none" font-weight="600" fill="#b45309" style="fill:#b45309">model_gateway.py (untrusted zone)</text>
+    <text x="36" y="347" stroke="none" font-size="11.5">LangGraph loop: max 6 rounds, 4 tools,</text>
+    <text x="36" y="362" stroke="none" font-size="11.5">30 s, cost cap · provider adapters</text>
+    <text x="36" y="377" stroke="none" font-size="11.5">stub_model.py for demos and load tests</text>
+
+    <!-- Tools -->
+    <rect x="360" y="306" width="320" height="86" rx="8" fill="none"/>
+    <text x="376" y="328" stroke="none" font-weight="600">tools.py (checkpoint)</text>
+    <text x="376" y="347" stroke="none" font-size="11.5">allowed now? args valid (extra=forbid)?</text>
+    <text x="376" y="362" stroke="none" font-size="11.5">driver quote in THIS message?</text>
+    <text x="376" y="377" stroke="none" font-size="11.5">one write per message</text>
+
+    <!-- Domain services -->
+    <rect x="20" y="432" width="660" height="150" rx="8" fill="none"/>
+    <text x="40" y="454" stroke="none" font-weight="600">Deterministic domain services (transactional)</text>
+    <g font-size="11.5" stroke="none">
+      <text x="40" y="478">eta.py / position.py / gps.py</text>
+      <text x="40" y="494" fill-opacity=".7" style="fill-opacity:.7">ETA from gate, report, repair, GPS</text>
+      <text x="250" y="478">feasibility.py / capacity.py</text>
+      <text x="250" y="494" style="fill-opacity:.7">slots, docks, labour, consignee</text>
+      <text x="460" y="478">option_history.py / allocation.py</text>
+      <text x="460" y="494" style="fill-opacity:.7">what was shown, ranking, contention</text>
+      <text x="40" y="530">booking.py</text>
+      <text x="40" y="546" style="fill-opacity:.7">hold 180 s, confirm</text>
+      <text x="250" y="530">cancellation.py</text>
+      <text x="250" y="546" style="fill-opacity:.7">cancel, reversal</text>
+      <text x="460" y="530">escalation.py</text>
+      <text x="460" y="546" style="fill-opacity:.7">hand-off cases, no SLA promised</text>
+      <text x="40" y="570" style="fill-opacity:.7">jobs/expire_holds.py releases lapsed holds</text>
+    </g>
+
+    <!-- Storage -->
+    <rect x="20" y="632" width="420" height="104" rx="8" fill="none" stroke="#0f766e" stroke-width="2"/>
+    <text x="40" y="654" stroke="none" font-weight="600" fill="#0f766e" style="fill:#0f766e">SQLite (WAL): system of record</text>
+    <text x="40" y="674" stroke="none" font-size="11.5">appointments incl. HELD rows under one unique index</text>
+    <text x="40" y="690" stroke="none" font-size="11.5">chat_messages · option sets · immutable history (triggers)</text>
+    <text x="40" y="706" stroke="none" font-size="11.5">identities / sessions · escalation cases · GPS pings</text>
+    <text x="40" y="722" stroke="none" font-size="11.5">idempotency keys · inbound messages · notification outbox</text>
+
+    <rect x="470" y="632" width="210" height="104" rx="8" fill="none" stroke-dasharray="6 4"/>
+    <text x="575" y="654" text-anchor="middle" stroke="none" font-weight="600">Redis: cache only</text>
+    <text x="575" y="676" text-anchor="middle" stroke="none" font-size="11.5">memory window per driver+thread</text>
+    <text x="575" y="692" text-anchor="middle" stroke="none" font-size="11.5">rate-limit counters</text>
+    <text x="575" y="708" text-anchor="middle" stroke="none" font-size="11.5">lose it: rebuild from SQL</text>
+
+    <!-- Notifications -->
+    <rect x="720" y="632" width="200" height="104" rx="8" fill="none"/>
+    <text x="820" y="654" text-anchor="middle" stroke="none" font-weight="600">notifications.py</text>
+    <text x="820" y="676" text-anchor="middle" stroke="none" font-size="11.5">outbox written in the booking</text>
+    <text x="820" y="692" text-anchor="middle" stroke="none" font-size="11.5">transaction, delivered outside it</text>
+    <text x="820" y="712" text-anchor="middle" stroke="none" font-size="11.5">planner · consignee · operations</text>
+
+    <!-- Arrows: driver to api -->
+    <line x1="120" y1="70" x2="120" y2="108" marker-end="url(#arrow)"/>
+    <text x="128" y="94" stroke="none" font-size="11">message</text>
+    <!-- api to conversation -->
+    <line x1="120" y1="174" x2="120" y2="212" marker-end="url(#arrow)"/>
+    <!-- conversation to gateway -->
+    <line x1="120" y1="266" x2="120" y2="304" marker-end="url(#arrow)"/>
+    <text x="128" y="290" stroke="none" font-size="11">prompt + history</text>
+    <!-- gateway <-> tools -->
+    <line x1="340" y1="349" x2="358" y2="349" marker-end="url(#arrow)"/>
+    <text x="350" y="302" text-anchor="middle" stroke="none" font-size="11">tool call</text>
+    <!-- tools to services -->
+    <line x1="520" y1="392" x2="520" y2="430" marker-end="url(#arrow)"/>
+    <text x="528" y="416" stroke="none" font-size="11">validated call</text>
+    <!-- services to db -->
+    <line x1="230" y1="582" x2="230" y2="630" stroke="#0f766e" stroke-width="2" marker-end="url(#arrowA)"/>
+    <text x="238" y="610" stroke="none" font-size="11" fill="#0f766e" style="fill:#0f766e">BEGIN IMMEDIATE</text>
+    <!-- conversation to redis -->
+    <path d="M680 240 H700 V600 H575 V630" fill="none" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+    <text x="706" y="420" stroke="none" font-size="11" transform="rotate(90 706 420)">load / save memory window</text>
+    <!-- db to outbox -->
+    <line x1="440" y1="684" x2="718" y2="684" stroke-opacity="0"/>
+    <!-- outbox to downstream -->
+    <line x1="820" y1="736" x2="820" y2="752" stroke-opacity="0"/>
+    <!-- coordinator -->
+    <line x1="820" y1="70" x2="820" y2="108" marker-end="url(#arrow)"/>
+    <path d="M820 174 V630" fill="none" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+    <text x="828" y="400" stroke="none" font-size="11" transform="rotate(90 828 400)">reads and updates escalation cases</text>
+    <!-- services reply -->
+    <path d="M680 520 H690 V250 H682" fill="none" stroke-opacity="0"/>
+  </g>
+</svg>
+<figcaption>Requests flow down through four gates before they can touch the database. Orange marks the one untrusted component, the model, which can only call a narrow, checked tool set. Teal marks the system of record. Dashed boxes and arrows are cache and coordinator side paths.</figcaption>
+</figure>
+
+<h2>What to take from it</h2>
+<ul>
+  <li><strong>The model never supplies identity.</strong> No tool takes a driver or thread id; identity comes from the verified phone or a server-made session.</li>
+  <li><strong>The database is the referee.</strong> A hold is an <code>appointments</code> row with status <code>HELD</code> under the same unique index as a booking, so two drivers collide on a constraint, not in application code.</li>
+  <li><strong>Facts come from committed rows.</strong> Hold, confirm, cancel and menu wording is rendered from stored state; unbacked model claims are replaced.</li>
+  <li><strong>Redis is only a cache.</strong> Every message is committed to SQL first, and the memory window can be rebuilt from it.</li>
+  <li><strong>Notifications are post-commit.</strong> The outbox row shares the booking transaction; delivery happens outside it.</li>
+</ul>
+<p style="color:var(--muted);font-size:.9rem">Built from <code>src/setuhaul/</code> module docstrings and <code>docs/knowledge-transfer.md</code>.</p>
+</main>
+</body>
+</html>

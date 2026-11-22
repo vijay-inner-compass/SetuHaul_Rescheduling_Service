@@ -19,7 +19,7 @@ bookings and operations panel still work. Use synthetic messages only.
 The page has three panels: **Driver console** (chat), **Dock board** (docks by hour) and **Operations** (cases, activity).
 The top bar has the simulated clock, the assistant switch, **+1 min**, **+3 min and sweep** and **Reset demo**.
 
-Press **Reset demo** between scenarios. The reset dialog offers **Supplied schedule** (the snapshot's existing bookings) or **Empty dock board** (every slot free, so you allocate from scratch). To start empty, run `python scripts/run_demo.py --fresh`.
+Press **Reset demo** between scenarios. The reset dialog offers **Supplied schedule** (the snapshot's existing bookings) or **Empty dock board** (every slot free, so you allocate from scratch). To start empty, run `python scripts/run_demo.py --fresh`. Scenarios A to F assume the supplied schedule; the empty-board walkthrough is scenario G.
 
 ## 1. Talk track (about 10 minutes)
 
@@ -85,6 +85,38 @@ and nothing is held. The database enforced the result, not the model.
 ### F. Reset
 
 Click **Reset demo**: schedule, clock and chats return to the start.
+
+### G. Fresh run: an empty dock board
+
+Use this when you want to show allocation from scratch instead of a board that already has bookings. Start it with
+`python scripts/run_demo.py --fresh`, or press **Reset demo** and choose **Empty dock board** (the choice sticks until you pick the other one).
+
+**What is different from the supplied schedule**
+
+* The supplied appointments are deleted, so every slot is Available (Jaipur: 69 Available, 10 Blocked, no Booked or Held) and no driver has an
+  appointment. The driver card shows each load with no booking.
+* Everything else is unchanged: the same drivers and loads, the same `DEMO_FIXTURE` labour and consignee evidence, the same 09:35 clock and GPS pings.
+* A driver's first booking is a plain new booking. There is no "original appointment ended" step, because there was no original.
+* The first menu is not the same as on the supplied schedule, because dock D1 is free: for Manoj Sharma it starts with D1 12:00, not D2.
+
+| Step | Do | You should see |
+|---|---|---|
+| 1 | Reset with **Empty dock board** | Toast "Empty dock board ready." Dock board: no amber or blue cells. Driver card: loads show no appointment. |
+| 2 | **Manoj Sharma**, click **Running 60 minutes late** | "These slots are available. Nothing is held yet:" with D1 12:00, D2 12:00, D4 12:00, then the closing line. Nothing is held. |
+| 3 | Click **Take the first option** | "I am holding 12:00-13:00 at dock D1 ... until 09:38." The D1 12:00 cell turns Held. |
+| 4 | Choose a second driver (for example **Arjun Das**), click **Running 60 minutes late** | Their menu does **not** include D1 12:00: D2 12:00, D4 12:00, D1 13:00. The held slot is already taken out of other drivers' offers. |
+| 5 | Back to Manoj, click **Confirm it** | "Your appointment is confirmed: dock D1, 12:00-13:00 ... Reference APT-H-...". The cell turns Booked. |
+| 6 | **Operations > Activity** | History has two lines, "held the 12:00 at dock D1 slot" and "appointment confirmed for 12:00 at dock D1". There is no "original ended" line. Three notices are queued (planner, consignee, operations). |
+| 7 | **Pradeep Jat**, click **Running 60 minutes late** | Still a hand-off with a case reference: the heavy load fits no slot even on an empty board. Free capacity does not override the load rules. |
+
+**What this proves:** allocation works with no existing schedule; capacity held by one driver is invisible to the next driver's search; and an empty
+board does not weaken the hard rules (Pradeep Jat still goes to a person).
+
+**Good for:** showing the first-come-first-served policy. Run steps 2 and 4 before either driver confirms and point out that each driver is offered only slots
+nobody else holds.
+
+The outputs above were captured on 2026-11-22 with the scripted test double as the assistant. A real model words its own explanations, but the numbered menu, hold,
+confirmation and hand-off wording are system-worded and read the same. Slot choices can differ if the board or the clock differs.
 
 ## 3. Showing the edge cases and failures
 

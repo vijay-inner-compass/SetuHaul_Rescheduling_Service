@@ -43,7 +43,13 @@ Observed: `647 passed in 29.35s`, `All checks passed!`, `Success: no issues foun
 ```powershell
 python scripts/run_demo.py            # opens http://127.0.0.1:8800/demo
 python scripts/run_demo.py --no-browser --port 8800   # headless
+python scripts/run_demo.py --fresh    # start with an empty dock board (no existing appointments)
 ```
+
+`--fresh` deletes the supplied appointments, so every slot is free and no load has a booking; drivers, loads, evidence and the clock are unchanged.
+You can also switch at any time: **Reset demo** offers **Supplied schedule** or **Empty dock board**. Scenarios A to F below use the supplied schedule;
+the empty-board walkthrough (observed output, two drivers competing, a hand-off that still happens) is scenario G in the
+[demonstration guide](demonstration-guide.md#g-fresh-run-an-empty-dock-board).
 
 If a `.env` with a provider, model id and key exists, a **Live model** switch becomes usable; otherwise the assistant is the **rule-based
 stand-in** (deterministic; it understands "N minutes late/delay", "first"/"take", "confirm" and a bare menu number such as "1"; it does **not** understand breakdown/repair wording, "keep my original slot" or "cancel"). It says nothing about model quality.
@@ -323,6 +329,7 @@ Always close with the limits: [client-readout.md](client-readout.md) lists what 
 | `[Errno 10048] ... only one usage of each socket address` | the port is taken by an earlier run; stop that process or pass another `--port` |
 | Demo says nothing useful to "breakdown, repair 45 minutes" | the stand-in does not parse repair wording; use the Live model or the direct `derive_eta` call |
 | Hold seems to last forever or lapse early | the clock is simulated; each message adds 20 s; use **+1 min** / **+3 min and sweep** |
+| The board has no bookings and "original appointment ended" never appears | you are on the empty board (`--fresh`, or **Empty dock board** in the reset dialog); choose **Supplied schedule** to get the existing bookings back |
 | Rows missing on the board | switch facility tab (Gurugram or Jaipur); demo drivers' loads are mostly Jaipur |
 | `docs/verification/scenario-run.md` shows as modified | `run_scenario.py` rewrote it; `git checkout docs/verification/scenario-run.md` |
 | Sandbox or CI differs from your machine | CI runs Windows and Ubuntu (`.github/workflows/ci.yml`); Ubuntu behaviour of later phases was not re-run here |
