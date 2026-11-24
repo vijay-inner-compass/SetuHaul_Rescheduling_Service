@@ -15,7 +15,7 @@ from setuhaul.auth.phone import normalise_e164
 from setuhaul.auth.users import User
 from setuhaul.clock import Clock
 from setuhaul.db import immediate
-from setuhaul.identity import AuthError
+from setuhaul.identity import ALLOWED_DRIVER_STATUSES, AuthError
 
 # Driver ids look like DRV001; the next one is the highest number plus one.
 _DRIVER_ID = re.compile(r"DRV(\d+)")
@@ -171,3 +171,15 @@ def licence_valid(conn: sqlite3.Connection, driver_id: str, today: date) -> bool
     if prof is None:
         return True
     return bool(prof["approval_status"] == "APPROVED" and date.fromisoformat(prof["licence_expiry"]) >= today)
+
+
+def driver_eligible(conn: sqlite3.Connection, driver_id: str, today: date) -> bool:
+    """True if the driver exists, may work, and (when onboarded through the app) is approved with a valid licence."""
+    row = conn.execute("select driver_status from drivers where driver_id=?", (driver_id,)).fetchone()
+    if row is None or row["driver_status"] not in ALLOWED_DRIVER_STATUSES:
+        return False
+    # A supplied driver with no profile predates onboarding; licence_valid treats that as valid, and approval applies only to profiles.
+    prof = conn.execute("select approval_status from driver_profiles where driver_id=?", (driver_id,)).fetchone()
+    if prof is None:
+        return True
+    return bool(prof["approval_status"] == "APPROVED" and licence_valid(conn, driver_id, today))

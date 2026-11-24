@@ -7,6 +7,7 @@ import json
 import sqlite3
 
 from setuhaul.auth import telegram
+from setuhaul.auth.onboarding import driver_eligible
 from setuhaul.clock import Clock
 from setuhaul.config import load_settings
 from setuhaul.notifications import DeliveryResult, _mark
@@ -33,7 +34,7 @@ def send_driver_notifications(conn: sqlite3.Connection, clock: Clock, client: te
     for r in rows:
         # A driver who is no longer eligible gets nothing; the notice stays queued, with no attempt used.
         chat_id = telegram.bound_chat(conn, r["recipient_ref"])
-        if chat_id is None or not telegram.driver_eligible(conn, r["recipient_ref"], today):
+        if chat_id is None or not driver_eligible(conn, r["recipient_ref"], today):
             continue
         attempts = r["attempts"] + 1
         try:
