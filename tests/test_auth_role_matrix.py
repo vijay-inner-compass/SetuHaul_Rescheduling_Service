@@ -27,6 +27,8 @@ ADMIN = frozenset({"ADMIN"})
 PUBLIC = {
     ("GET", "/health"), ("GET", "/ready"), ("GET", "/auth/login"), ("GET", "/auth/callback"), ("POST", "/auth/logout"),
     ("GET", "/auth/me"), ("POST", "/auth/local-admin"), ("GET", "/demo/login"),
+    # The sign-in landing page (it redirects signed-in users) and the whitelisted static assets (no secrets in them).
+    ("GET", "/"), ("GET", "/app/assets/{name}"),
 }
 # Machine channels: each has its own signature or secret check and must refuse an unauthenticated call.
 EXEMPT_OWN_AUTH = {
@@ -58,6 +60,11 @@ ROLE_GUARDED: dict[tuple[str, str], frozenset[str]] = {
     ("POST", "/v1/projects/{project_id}/allocate"): BOTH,
     ("POST", "/v1/projects/{project_id}/release"): BOTH,
 }
+# HTML screens: like ROLE_GUARDED, but a refusal is a page or a redirect, never JSON (anonymous -> 303 to "/").
+HTML_GUARDED: dict[tuple[str, str], frozenset[str]] = {
+    ("GET", "/admin"): ADMIN,
+    ("GET", "/warehouse"): BOTH,
+}
 # The whole demo console (page and API) is one guarded family, so a new demo route is covered the day it is added.
 DEMO_ROLES = BOTH
 
@@ -70,6 +77,8 @@ def classify(method: str, path: str) -> tuple[str, frozenset[str]]:
         return "EXEMPT", frozenset()
     if (method, path) in ROLE_GUARDED:
         return "GUARDED", ROLE_GUARDED[(method, path)]
+    if (method, path) in HTML_GUARDED:
+        return "HTML", HTML_GUARDED[(method, path)]
     if path == "/demo" or path.startswith("/demo/"):
         return "GUARDED", DEMO_ROLES
     return "UNCLASSIFIED", frozenset()
@@ -134,7 +143,7 @@ def test_every_route_is_classified(demo) -> None:  # type: ignore[no-untyped-def
 def test_the_table_has_no_stale_entries(demo) -> None:  # type: ignore[no-untyped-def]
     app, _, _ = demo
     served = set(routes_of(app))
-    listed = (set(PUBLIC) | set(EXEMPT_OWN_AUTH) | set(ROLE_GUARDED)) - served
+    listed = (set(PUBLIC) | set(EXEMPT_OWN_AUTH) | set(ROLE_GUARDED) | set(HTML_GUARDED)) - served
     assert listed == set(), f"matrix entries for routes that no longer exist: {listed}"
 
 
@@ -149,6 +158,25 @@ def _guarded_routes() -> list[tuple[str, str]]:
 
 GUARDED_ROUTES = _guarded_routes()
 EXEMPT_ROUTES = sorted(EXEMPT_OWN_AUTH)
+HTML_ROUTES = sorted(HTML_GUARDED)
+
+
+@pytest.mark.parametrize(("method", "path"), HTML_ROUTES)
+def test_html_route_enforces_its_roles(demo, method: str, path: str) -> None:  # type: ignore[no-untyped-def]
+    _, _, clients = demo
+    roles = HTML_GUARDED[(method, path)]
+    anonymous = TestClient(demo[0], base_url="http://localhost", follow_redirects=False)
+    # Anonymous: sent to the landing page, not a JSON 401.
+    r = anonymous.request(method, path)
+    assert r.status_code == 303 and r.headers["location"] == "/"
+    # A warehouse authority with no facility is refused; so is one with a facility where the page is admin-only.
+    assert clients["wh_none"].request(method, path).status_code == 403
+    if "WAREHOUSE_AUTHORITY" not in roles:
+        assert clients["wh"].request(method, path).status_code == 403
+    # Each allowed role gets the page.
+    for name, role in (("admin", "ADMIN"), ("wh", "WAREHOUSE_AUTHORITY")):
+        if role in roles:
+            assert clients[name].request(method, path).status_code == 200, (name, path)
 
 
 @pytest.mark.parametrize(("method", "path"), GUARDED_ROUTES)
@@ -189,6 +217,10 @@ def test_no_route_serves_board_data_without_web_role(demo) -> None:  # type: ign
     for method, path in GUARDED_ROUTES:
         r = client.request(method, concrete(path), content=body, headers=headers)
         assert r.status_code == 401, (method, path, r.status_code)
+    # The HTML screens send an unauthenticated caller to the landing page and show nothing.
+    for method, path in HTML_ROUTES:
+        r = client.request(method, path, headers=headers)
+        assert r.status_code == 303 and r.headers["location"] == "/"
     assert client.get("/demo/api/board", headers=headers).status_code == 401
     assert client.get("/demo", headers=headers).status_code == 401
 

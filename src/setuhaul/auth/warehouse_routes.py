@@ -80,6 +80,65 @@ def drivers_in_scope(conn: sqlite3.Connection, user: User, driver_id: str | None
         args).fetchall()
 
 
+def partner_requests_in_scope(conn: sqlite3.Connection, user: User, limit: int = 50) -> list[dict[str, Any]]:
+    """Partner slot requests for the user's facilities (an admin: all), most recent first."""
+    # Only the user's facilities (the scope is in the SQL), most recent first.
+    clause, params = facility_clause(user, "pr.facility_id")
+    rows = conn.execute(
+        "select pr.request_ref, pr.shipment_id, pr.facility_id, f.facility_name, pr.proposed_start, pr.proposed_end, pr.status,"
+        " pr.email_status, pr.created_at, pr.expires_at, pr.decided_at from partner_requests pr"
+        f" join facilities f on f.facility_id=pr.facility_id where {clause} order by pr.created_at desc, pr.request_ref desc limit ?",
+        (*params, clamp(limit, 50, MAX_LIMIT)))
+    return [dict(r) for r in rows]
+
+
+def driver_chats_in_scope(conn: sqlite3.Connection, user: User, limit: int = 50, messages: int = 20) -> list[dict[str, Any]]:
+    """Recent messages of the drivers the user may see: project drivers for a warehouse authority, every chatting driver for an admin."""
+    # A warehouse authority sees only the drivers on their own projects (filtered in SQL); an admin every driver that has a chat.
+    if user.role == "ADMIN":
+        scope, args = "1=1", tuple[str, ...]()
+    else:
+        visible = sorted(projects.visible_driver_ids(conn, user))
+        # No visible drivers means nothing at all, never "no filter".
+        if not visible:
+            return []
+        scope, args = f"t.driver_id in ({','.join('?' * len(visible))})", tuple(visible)
+    out: list[dict[str, Any]] = []
+    per_driver = clamp(messages, 20, MAX_MESSAGES)
+    # Most recently active drivers first, capped.
+    active = conn.execute(
+        "select t.driver_id, max(m.message_ts) as last_ts from chat_messages m join chat_threads t on t.thread_id=m.thread_id"
+        f" where m.is_duplicate=0 and {scope} group by t.driver_id order by last_ts desc, t.driver_id limit ?",
+        (*args, clamp(limit, 50, MAX_LIMIT))).fetchall()
+    for row in active:
+        name = conn.execute("select driver_name from drivers where driver_id=?", (row["driver_id"],)).fetchone()
+        recent = conn.execute(
+            "select m.sender_type, m.message_text, m.message_ts from chat_messages m join chat_threads t on t.thread_id=m.thread_id"
+            " where t.driver_id=? and m.is_duplicate=0 order by m.message_ts desc, m.chat_message_id desc limit ?",
+            (row["driver_id"], per_driver)).fetchall()
+        # Oldest first, so the list reads as a conversation.
+        out.append({"driver_id": row["driver_id"], "driver_name": name["driver_name"] if name else None,
+                    "messages": [{"role": m["sender_type"], "text": m["message_text"], "timestamp": m["message_ts"]}
+                                 for m in reversed(recent)]})
+    return out
+
+
+def driver_list(conn: sqlite3.Connection, user: User, today: date) -> list[dict[str, Any]]:
+    """The drivers the user may see, phone masked and licence number never included."""
+    # Same rule as onboarding.licence_valid, from the columns already fetched (no profile means supplied, so valid).
+    out = []
+    for r in drivers_in_scope(conn, user):
+        # Never-bound, bound, or cut off.
+        tg = "UNBOUND" if r["bound_id"] is None else ("REVOKED" if r["revoked_at"] else "BOUND")
+        # Licence numbers are never returned; the phone only in masked form.
+        out.append({"driver_id": r["driver_id"], "driver_name": r["driver_name"], "phone": mask_phone(r["phone"]),
+                    "carrier_id": r["carrier_id"], "vehicle_id": r["vehicle_id"],
+                    "approval_status": r["approval_status"] or "SUPPLIED", "licence_expiry": r["licence_expiry"],
+                    "licence_valid": r["approval_status"] is None or (
+                        r["approval_status"] == "APPROVED" and date.fromisoformat(r["licence_expiry"]) >= today), "telegram_status": tg})
+    return out
+
+
 def register_warehouse_routes(app: FastAPI, deps: AppDeps) -> None:
     # Run a function on a fresh connection; database trouble becomes 503.
     def with_conn(rid: str, fn: Any, readonly: bool = True) -> Response:
@@ -102,14 +161,7 @@ def register_warehouse_routes(app: FastAPI, deps: AppDeps) -> None:
         rid = request.state.request_id
 
         def read(conn: sqlite3.Connection) -> Response:
-            # Only the user's facilities (the scope is in the SQL), most recent first.
-            clause, params = facility_clause(user, "pr.facility_id")
-            rows = conn.execute(
-                "select pr.request_ref, pr.shipment_id, pr.facility_id, f.facility_name, pr.proposed_start, pr.proposed_end, pr.status,"
-                " pr.email_status, pr.created_at, pr.expires_at, pr.decided_at from partner_requests pr"
-                f" join facilities f on f.facility_id=pr.facility_id where {clause} order by pr.created_at desc, pr.request_ref desc limit ?",
-                (*params, clamp(limit, 50, MAX_LIMIT)))
-            return JSONResponse({"requests": [dict(r) for r in rows], "request_id": rid})
+            return JSONResponse({"requests": partner_requests_in_scope(conn, user, limit), "request_id": rid})
 
         return await run_in_threadpool(with_conn, rid, read)
 
@@ -119,33 +171,7 @@ def register_warehouse_routes(app: FastAPI, deps: AppDeps) -> None:
         rid = request.state.request_id
 
         def read(conn: sqlite3.Connection) -> Response:
-            # A warehouse authority sees only the drivers on their own projects (filtered in SQL); an admin every driver that has a chat.
-            if user.role == "ADMIN":
-                scope, args = "1=1", tuple[str, ...]()
-            else:
-                visible = sorted(projects.visible_driver_ids(conn, user))
-                # No visible drivers means nothing at all, never "no filter".
-                if not visible:
-                    return JSONResponse({"drivers": [], "request_id": rid})
-                scope, args = f"t.driver_id in ({','.join('?' * len(visible))})", tuple(visible)
-            out: list[dict[str, Any]] = []
-            per_driver = clamp(messages, 20, MAX_MESSAGES)
-            # Most recently active drivers first, capped.
-            active = conn.execute(
-                "select t.driver_id, max(m.message_ts) as last_ts from chat_messages m join chat_threads t on t.thread_id=m.thread_id"
-                f" where m.is_duplicate=0 and {scope} group by t.driver_id order by last_ts desc, t.driver_id limit ?",
-                (*args, clamp(limit, 50, MAX_LIMIT))).fetchall()
-            for row in active:
-                name = conn.execute("select driver_name from drivers where driver_id=?", (row["driver_id"],)).fetchone()
-                recent = conn.execute(
-                    "select m.sender_type, m.message_text, m.message_ts from chat_messages m join chat_threads t on t.thread_id=m.thread_id"
-                    " where t.driver_id=? and m.is_duplicate=0 order by m.message_ts desc, m.chat_message_id desc limit ?",
-                    (row["driver_id"], per_driver)).fetchall()
-                # Oldest first, so the list reads as a conversation.
-                out.append({"driver_id": row["driver_id"], "driver_name": name["driver_name"] if name else None,
-                            "messages": [{"role": m["sender_type"], "text": m["message_text"], "timestamp": m["message_ts"]}
-                                         for m in reversed(recent)]})
-            return JSONResponse({"drivers": out, "request_id": rid})
+            return JSONResponse({"drivers": driver_chats_in_scope(conn, user, limit, messages), "request_id": rid})
 
         return await run_in_threadpool(with_conn, rid, read)
 
@@ -172,19 +198,7 @@ def register_warehouse_routes(app: FastAPI, deps: AppDeps) -> None:
         rid = request.state.request_id
 
         def read(conn: sqlite3.Connection) -> Response:
-            # Same rule as onboarding.licence_valid, from the columns already fetched (no profile means supplied, so valid).
-            today = deps.clock.now().date()
-            out = []
-            for r in drivers_in_scope(conn, user):
-                # Never-bound, bound, or cut off.
-                tg = "UNBOUND" if r["bound_id"] is None else ("REVOKED" if r["revoked_at"] else "BOUND")
-                # Licence numbers are never returned; the phone only in masked form.
-                out.append({"driver_id": r["driver_id"], "driver_name": r["driver_name"], "phone": mask_phone(r["phone"]),
-                            "carrier_id": r["carrier_id"], "vehicle_id": r["vehicle_id"],
-                            "approval_status": r["approval_status"] or "SUPPLIED", "licence_expiry": r["licence_expiry"],
-                            "licence_valid": r["approval_status"] is None or (
-                                r["approval_status"] == "APPROVED" and date.fromisoformat(r["licence_expiry"]) >= today), "telegram_status": tg})
-            return JSONResponse({"drivers": out, "request_id": rid})
+            return JSONResponse({"drivers": driver_list(conn, user, deps.clock.now().date()), "request_id": rid})
 
         return await run_in_threadpool(with_conn, rid, read)
 
