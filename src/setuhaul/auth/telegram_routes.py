@@ -86,8 +86,8 @@ def register_telegram_routes(app: FastAPI, deps: AppDeps, pipeline: Pipeline) ->
                 return
             try:
                 trusted = telegram.trusted_context(conn, driver_id)
-                # The update id is the message id, so Telegram's retry of the same update is deduplicated.
-                payload = MessageIn(sender=trusted.phone_e164, message_id=str(update_id), text=text)  # type: ignore[call-arg]
+                # The update id (prefixed, so it cannot collide with the HMAC channel's ids) is the message id, so Telegram's retry of the same update is deduplicated.
+                payload = MessageIn(sender=trusted.phone_e164, message_id=f"tg:{update_id}", text=text)  # type: ignore[call-arg]
             except (AuthError, ValidationError):
                 send(chat_id, telegram.NEUTRAL_REFUSAL)
                 return

@@ -713,6 +713,30 @@ def create_app(deps: AppDeps) -> FastAPI:
     return app
 
 
+# A shorter Telegram webhook secret is too easy to guess.
+MIN_TELEGRAM_SECRET_LEN = 16
+
+
+def telegram_from_env() -> tuple[bytes, TelegramClient | None]:
+    """The Telegram webhook secret and reply client from the environment; (b"", None) leaves the route off."""
+    import logging
+
+    secret = os.environ.get("SETUHAUL_TELEGRAM_WEBHOOK_SECRET", "")
+    token = os.environ.get("SETUHAUL_TELEGRAM_BOT_TOKEN", "")
+    if not (secret and token):
+        return b"", None
+    if len(secret) < MIN_TELEGRAM_SECRET_LEN:
+        # The values themselves are never logged.
+        logging.getLogger(__name__).warning(
+            "Telegram disabled: SETUHAUL_TELEGRAM_WEBHOOK_SECRET must be at least %d characters", MIN_TELEGRAM_SECRET_LEN)
+        return b"", None
+    import httpx
+
+    from setuhaul.auth.telegram import RealTelegramClient
+
+    return secret.encode(), RealTelegramClient(token, httpx.Client(timeout=10.0))
+
+
 def create_app_from_env() -> FastAPI:
     """``uvicorn --factory setuhaul.api:create_app_from_env``. Secrets come from the environment only."""
     # Central settings.
@@ -770,18 +794,11 @@ def create_app_from_env() -> FastAPI:
             users.bootstrap_admin(boot, os.environ["SETUHAUL_BOOTSTRAP_ADMIN_EMAIL"], clock)
         finally:
             boot.close()
-    # Telegram is configured only when both the bot token and the webhook secret are present.
-    tg_client: TelegramClient | None = None
-    tg_secret = os.environ.get("SETUHAUL_TELEGRAM_WEBHOOK_SECRET", "").encode()
-    if os.environ.get("SETUHAUL_TELEGRAM_BOT_TOKEN") and tg_secret:
-        import httpx
-
-        from setuhaul.auth.telegram import RealTelegramClient
-
-        tg_client = RealTelegramClient(os.environ["SETUHAUL_TELEGRAM_BOT_TOKEN"], httpx.Client(timeout=10.0))
+    # Telegram: the webhook secret and, when both are usable, the client that sends replies.
+    tg_secret, tg_client = telegram_from_env()
     # Assemble the dependencies and build the app.
     return create_app(AppDeps(
-        telegram_secret=tg_secret if tg_client is not None else b"", telegram=tg_client,
+        telegram_secret=tg_secret, telegram=tg_client,
         google=google, session_secret=os.environ.get("SETUHAUL_SESSION_SECRET", "").encode(),
         local_admin_enabled=os.environ.get("SETUHAUL_LOCAL_ADMIN") == "1",
         db_path=s.db_path, redis=redis,

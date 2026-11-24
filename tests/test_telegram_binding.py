@@ -211,3 +211,29 @@ def test_bind_and_refusals_audited(tmp_path: Path, clock: FakeClock) -> None:
     assert len(revoked) == 1 and revoked[0]["actor_user_id"] == wh.user_id and revoked[0]["target_id"] == DRV6
     # No phone number is written to the audit detail.
     assert "9000010006" not in "".join(r["detail_json"] or "" for r in conn.execute("select detail_json from audit_log"))
+
+
+def _active_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return list(conn.execute("select * from telegram_identities where revoked_at is null"))
+
+
+def test_same_account_rebinds_same_driver_after_revoke(tmp_path: Path, clock: FakeClock) -> None:
+    conn, _, wh = _env(tmp_path, clock)
+    assert _bind(conn, clock, user_id=111) == telegram.BindResult.BOUND
+    telegram.revoke(conn, actor=wh, driver_id=DRV6, clock=clock)
+    # The very same Telegram account links the very same driver again.
+    assert _bind(conn, clock, user_id=111) == telegram.BindResult.BOUND
+    assert telegram.resolve_driver(conn, 111, clock.now().date()) == DRV6
+    rows = _active_rows(conn)
+    assert len(rows) == 1 and rows[0]["telegram_user_id"] == "111" and rows[0]["driver_id"] == DRV6
+    assert len(conn.execute("select * from telegram_identities").fetchall()) == 1
+
+
+def test_different_account_rebinds_after_revoke_and_old_one_stops_resolving(tmp_path: Path, clock: FakeClock) -> None:
+    conn, _, wh = _env(tmp_path, clock)
+    assert _bind(conn, clock, user_id=111) == telegram.BindResult.BOUND
+    telegram.revoke(conn, actor=wh, driver_id=DRV6, clock=clock)
+    assert _bind(conn, clock, user_id=222) == telegram.BindResult.BOUND
+    assert telegram.resolve_driver(conn, 222, clock.now().date()) == DRV6
+    assert telegram.resolve_driver(conn, 111, clock.now().date()) is None
+    assert len(_active_rows(conn)) == 1

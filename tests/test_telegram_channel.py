@@ -86,8 +86,8 @@ def test_unconfigured_secret_never_accepts(env) -> None:  # type: ignore[no-unty
     deps, client, calls, fake, *_ = env
     deps.telegram_secret = b""
     # An empty configured secret must not match an empty header.
-    assert post(client, text_update("hi"), headers={"X-Telegram-Bot-Api-Secret-Token": ""}).status_code in (404, 503)
-    assert post(client, text_update("hi")).status_code in (404, 503)
+    assert post(client, text_update("hi"), headers={"X-Telegram-Bot-Api-Secret-Token": ""}).status_code == 503
+    assert post(client, text_update("hi")).status_code == 503
     assert calls.n == 0 and fake.sent == []
 
 
@@ -135,7 +135,7 @@ def test_bound_driver_message_reaches_engine_with_bound_driver_id(env) -> None: 
     conn = open_connection(path=path)
     # The message was recorded against the bound driver and nobody else, keyed by the update id.
     rows = conn.execute("select driver_id, message_id from inbound_messages").fetchall()
-    assert [(x["driver_id"], x["message_id"]) for x in rows] == [("DRV006", "777")]
+    assert [(x["driver_id"], x["message_id"]) for x in rows] == [("DRV006", "tg:777")]
 
 
 def test_driver_reply_is_sent_to_bound_chat(env) -> None:  # type: ignore[no-untyped-def]
@@ -145,7 +145,7 @@ def test_driver_reply_is_sent_to_bound_chat(env) -> None:  # type: ignore[no-unt
     post(client, text_update("hello", update_id=801))
     assert len(fake.sent) == 1
     chat_id, text, button = fake.sent[0]
-    stored = open_connection(path=path).execute("select reply_json from inbound_messages where message_id='801'").fetchone()
+    stored = open_connection(path=path).execute("select reply_json from inbound_messages where message_id='tg:801'").fetchone()
     assert chat_id == 111 and button is False and text == json.loads(stored[0])["reply"] and text
 
 
@@ -232,17 +232,46 @@ def test_revoked_sender_gets_neutral_refusal(env) -> None:  # type: ignore[no-un
     assert calls.n == 0 and fake.sent == [(111, telegram.NEUTRAL_REFUSAL, False)]
 
 
-def test_send_failure_still_answers_200_and_hides_token(tmp_path: Path, env, caplog: pytest.LogCaptureFixture) -> None:  # type: ignore[no-untyped-def]
-    deps, _, *_ = env
+def test_send_failure_still_answers_200_and_hides_token(env, caplog: pytest.LogCaptureFixture) -> None:  # type: ignore[no-untyped-def]
+    deps, _, _, _, _, path = env
+    token = "123456:SECRET-TOKEN"
 
-    class Boom:
-        def send(self, chat_id: int, text: str, request_contact_button: bool = False) -> None:
-            raise telegram.TelegramSendError("sendMessage failed")
+    def failing(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError(f"cannot reach {request.url}")
 
-    deps.telegram = Boom()
+    deps.telegram = telegram.RealTelegramClient(token, httpx.Client(transport=httpx.MockTransport(failing)))
     client = TestClient(create_app(deps))
+    with caplog.at_level(logging.INFO):
+        r = post(client, text_update("hi"))
+    assert r.status_code == 200 and token not in r.text
+    for rec in caplog.records:
+        assert token not in rec.getMessage() and token not in str(rec.args) and token not in (rec.exc_text or "")
+    audit = open_connection(path=path).execute("select group_concat(coalesce(detail_json,'') || coalesce(target_id,'')) from audit_log").fetchone()[0]
+    assert token not in (audit or "")
+
+
+def test_real_client_requests_are_not_logged_with_the_token(caplog: pytest.LogCaptureFixture) -> None:
+    token = "123456:SECRET-TOKEN"
+    client = telegram.RealTelegramClient(token, httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={"ok": True}))))
+    with caplog.at_level(logging.DEBUG):
+        client.send(42, "hello")
+    for rec in caplog.records:
+        assert token not in rec.getMessage() and token not in str(rec.args) and token not in (rec.exc_text or "")
+    assert token not in repr(client) and token not in str(client)
+
+
+def test_short_webhook_secret_keeps_the_route_off(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    from setuhaul.api import telegram_from_env
+
+    monkeypatch.setenv("SETUHAUL_TELEGRAM_BOT_TOKEN", "123456:SECRET-TOKEN")
+    monkeypatch.setenv("SETUHAUL_TELEGRAM_WEBHOOK_SECRET", "short-secret")
     with caplog.at_level(logging.WARNING):
-        assert post(client, text_update("hi")).status_code == 200
+        secret, client = telegram_from_env()
+    assert secret == b"" and client is None
+    assert "short-secret" not in caplog.text and "SECRET-TOKEN" not in caplog.text and caplog.text
+    monkeypatch.setenv("SETUHAUL_TELEGRAM_WEBHOOK_SECRET", "a-long-enough-secret")
+    secret, client = telegram_from_env()
+    assert secret == b"a-long-enough-secret" and client is not None
 
 
 def test_real_client_posts_to_bot_api_and_scrubs_token() -> None:

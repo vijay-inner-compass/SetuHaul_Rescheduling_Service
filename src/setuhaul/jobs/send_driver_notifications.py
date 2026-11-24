@@ -23,17 +23,28 @@ def render_notice(payload: dict[str, object]) -> str:
 def send_driver_notifications(conn: sqlite3.Connection, clock: Clock, client: telegram.TelegramClient, limit: int = 100) -> DeliveryResult:
     """One pass over PENDING/FAILED driver notices. A driver with no active Telegram binding keeps theirs queued."""
     max_attempts = load_settings().notification_max_attempts
-    rows = conn.execute("select * from notification_outbox where recipient_type='DRIVER' and status in ('PENDING','FAILED')"
-                        " and attempts < ? order by outbox_id limit ?", (max_attempts, limit)).fetchall()
+    # Only drivers with an active binding are selected, so a backlog for unbound drivers cannot starve the batch.
+    rows = conn.execute(
+        "select o.* from notification_outbox o join telegram_identities t on t.driver_id=o.recipient_ref and t.revoked_at is null"
+        " where o.recipient_type='DRIVER' and o.status in ('PENDING','FAILED') and o.attempts < ? order by o.outbox_id limit ?",
+        (max_attempts, limit)).fetchall()
+    today = clock.now().date()
     sent = failed = permanent = 0
     for r in rows:
+        # A driver who is no longer eligible gets nothing; the notice stays queued, with no attempt used.
         chat_id = telegram.bound_chat(conn, r["recipient_ref"])
-        # Not bound (yet): leave it queued, with no attempt used.
-        if chat_id is None:
+        if chat_id is None or not telegram.driver_eligible(conn, r["recipient_ref"], today):
             continue
         attempts = r["attempts"] + 1
         try:
-            client.send(chat_id, render_notice(json.loads(r["payload_json"])))
+            payload = json.loads(r["payload_json"])
+        except ValueError:
+            # A notice that can never be rendered is parked, not retried, and does not stop the batch.
+            _mark(conn, r["outbox_id"], "PERMANENT_FAILURE", attempts, "MALFORMED_PAYLOAD", clock.now())
+            permanent += 1
+            continue
+        try:
+            client.send(chat_id, render_notice(payload if isinstance(payload, dict) else {}))
         except telegram.TelegramSendError as exc:
             # Retried until the attempts run out, like the other notification senders.
             status = "PERMANENT_FAILURE" if attempts >= max_attempts else "FAILED"

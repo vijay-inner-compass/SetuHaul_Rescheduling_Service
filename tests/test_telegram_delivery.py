@@ -57,3 +57,43 @@ def test_unbound_driver_notice_waits_and_failures_retry(tmp_path: Path, clock: F
     assert row["status"] == "FAILED" and row["attempts"] == 1 and "sendMessage failed" in row["last_error"]
     # The retry succeeds.
     assert send_driver_notifications(conn, clock, fake).sent == 1
+
+
+def _bind(conn, clock, uid: int, phone: str) -> None:  # type: ignore[no-untyped-def]
+    telegram.bind_from_contact(conn, telegram_user_id=uid, chat_id=uid + 1000, contact_user_id=uid, contact_phone=phone, clock=clock)
+
+
+def test_unbound_backlog_does_not_starve_a_bound_driver(tmp_path: Path, clock: FakeClock) -> None:
+    conn = open_connection(path=make_working_db(tmp_path / "n3.sqlite3"))
+    for i in range(150):
+        _queue(conn, "DRV007", f"u{i}")
+    oid = _queue(conn, "DRV006", "bound")
+    _bind(conn, clock, 111, "9000010006")
+    fake = telegram.FakeTelegramClient()
+    assert send_driver_notifications(conn, clock, fake, limit=100).sent == 1
+    assert conn.execute("select status from notification_outbox where outbox_id=?", (oid,)).fetchone()[0] == "SENT"
+
+
+def test_ineligible_driver_notice_stays_queued(tmp_path: Path, clock: FakeClock) -> None:
+    conn = open_connection(path=make_working_db(tmp_path / "n4.sqlite3"))
+    oid = _queue(conn, "DRV006", "k1")
+    _bind(conn, clock, 111, "9000010006")
+    conn.execute("update drivers set driver_status='SUSPENDED' where driver_id='DRV006'")
+    conn.commit()
+    fake = telegram.FakeTelegramClient()
+    assert send_driver_notifications(conn, clock, fake).sent == 0 and fake.sent == []
+    assert conn.execute("select status, attempts from notification_outbox where outbox_id=?", (oid,)).fetchone()[:] == ("PENDING", 0)
+
+
+def test_malformed_notice_does_not_crash_the_batch(tmp_path: Path, clock: FakeClock) -> None:
+    conn = open_connection(path=make_working_db(tmp_path / "n5.sqlite3"))
+    bad = _queue(conn, "DRV006", "bad")
+    good = _queue(conn, "DRV006", "good")
+    conn.execute("update notification_outbox set payload_json='{not json' where outbox_id=?", (bad,))
+    conn.commit()
+    _bind(conn, clock, 111, "9000010006")
+    fake = telegram.FakeTelegramClient()
+    res = send_driver_notifications(conn, clock, fake)
+    assert res.sent == 1 and res.permanent_failures == 1
+    status = {r["outbox_id"]: r["status"] for r in conn.execute("select outbox_id, status from notification_outbox")}
+    assert status[bad] == "PERMANENT_FAILURE" and status[good] == "SENT"

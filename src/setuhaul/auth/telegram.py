@@ -60,8 +60,15 @@ class RealTelegramClient:
     """Posts to the Telegram Bot API. The token lives only in this object and never reaches a log, audit row or error text."""
 
     def __init__(self, token: str, http: httpx.Client) -> None:
+        # httpx logs every request URL at INFO, and the URL carries the token: keep those loggers quiet.
+        for name in ("httpx", "httpcore"):
+            logging.getLogger(name).setLevel(logging.WARNING)
         self._token = token
         self._http = http
+
+    def __repr__(self) -> str:
+        # Never show the token.
+        return "RealTelegramClient()"
 
     def send(self, chat_id: int, text: str, request_contact_button: bool = False) -> None:
         body: dict[str, Any] = {"chat_id": chat_id, "text": text}
@@ -134,8 +141,10 @@ def bind_from_contact(conn: sqlite3.Connection, *, telegram_user_id: int, chat_i
         if existing is not None and existing["revoked_at"] is None:
             return refuse("DRIVER_ALREADY_BOUND", driver_id)
         now = clock.now().isoformat()
-        # This account's own revoked row (for any driver) would collide on the primary key: drop it, the audit log keeps the history.
-        conn.execute("delete from telegram_identities where telegram_user_id=? and revoked_at is not null", (uid,))
+        # This account's revoked row for ANOTHER driver would collide on the primary key: drop it, the audit log keeps the history.
+        # (Its revoked row for this same driver is the one updated below, so it must stay.)
+        conn.execute("delete from telegram_identities where telegram_user_id=? and revoked_at is not null and driver_id<>?",
+                     (uid, driver_id))
         if existing is not None:
             # UNIQUE(driver_id): re-bind by replacing the revoked row's account.
             conn.execute("update telegram_identities set telegram_user_id=?, chat_id=?, bound_at=?, revoked_at=null where driver_id=?",
@@ -143,6 +152,11 @@ def bind_from_contact(conn: sqlite3.Connection, *, telegram_user_id: int, chat_i
         else:
             conn.execute("insert into telegram_identities(telegram_user_id, chat_id, driver_id, bound_at) values (?,?,?,?)",
                          (uid, str(chat_id), driver_id, now))
+        # Never report success unless the binding really exists now; raising rolls the transaction back.
+        final = conn.execute("select 1 from telegram_identities where telegram_user_id=? and driver_id=? and revoked_at is null",
+                             (uid, driver_id)).fetchone()
+        if final is None:
+            raise AuthError("BIND_FAILED")
         _audit(conn, clock, "TELEGRAM_BIND_OK", "OK", driver_id, {"telegram_user_id": uid})
     return BindResult.BOUND
 
