@@ -981,6 +981,7 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
 DEMO_USER_EMAIL = "demo@localhost.test"
 # The only client addresses /demo/login accepts: strictly loopback (not the wider LOCAL_HOSTS the page itself tolerates).
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+LOOPBACK_NAMES = LOOPBACK_HOSTS
 
 
 def seed_demo_user(conn: sqlite3.Connection, clock: FakeClock) -> None:
@@ -1087,7 +1088,8 @@ def build_demo_app(workdir: Path | None = None, live_factory: Callable[[], Any] 
     async def demo_login(request: Request) -> Any:
         host = request.client.host if request.client else ""
         # Anyone else is refused and given nothing.
-        if host not in LOOPBACK_HOSTS:
+        # Both the peer and the name the page was reached under must be loopback (a rebinding page arrives under another name).
+        if host not in LOOPBACK_HOSTS or (request.url.hostname or "") not in LOOPBACK_NAMES:
             return JSONResponse({"status": "REJECTED", "reason_code": "DEMO_IS_LOCAL_ONLY"}, status_code=403)
 
         def go() -> Any:
@@ -1097,7 +1099,8 @@ def build_demo_app(workdir: Path | None = None, live_factory: Callable[[], Any] 
                 if user is None:
                     seed_demo_user(conn, clock)
                     user = users.find_by_email(conn, DEMO_USER_EMAIL)
-                assert user is not None
+                if user is None:
+                    return None
                 token = sessions.create(conn, user, "GOOGLE", clock)
             finally:
                 conn.close()
@@ -1106,7 +1109,9 @@ def build_demo_app(workdir: Path | None = None, live_factory: Callable[[], Any] 
             resp.set_cookie(sessions.COOKIE_NAME, token, max_age=8 * 3600, **sessions.cookie_kwargs(False))  # type: ignore[arg-type]
             return resp
 
-        return await run_in_threadpool(go)
+        resp = await run_in_threadpool(go)
+        # No demo user could be found or made: refuse rather than hand out nothing.
+        return resp or JSONResponse({"status": "REJECTED", "reason_code": "DEMO_USER_UNAVAILABLE"}, status_code=503)
 
     # Return the app and its dependencies.
     return app, deps

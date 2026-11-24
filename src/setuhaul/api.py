@@ -234,6 +234,20 @@ class ResolveIn(BaseModel):
     note: str = Field(max_length=500)
 
 
+# Claims made from a web session are stored as this prefix plus the user's (unique) e-mail.
+WEB_PREFIX = "web:"
+
+
+# A human label for a stored claim identity: a web user's display name, a bearer coordinator's own name.
+def claim_label(conn: sqlite3.Connection, claimed_by: str | None) -> str | None:
+    if claimed_by is None or not claimed_by.startswith(WEB_PREFIX):
+        return claimed_by
+    from setuhaul.auth import users as web_users
+
+    found = web_users.find_by_email(conn, claimed_by[len(WEB_PREFIX):])
+    return (found.display_name or found.email) if found else claimed_by[len(WEB_PREFIX):]
+
+
 # A structured error body: status, reason code and request id. No stack trace, SQL or path ever appears.
 def _reject(request_id: str, status: int, reason: str, **extra: Any) -> JSONResponse:
     # Rate-limit rejections tell the client when to retry.
@@ -264,6 +278,11 @@ def create_app(deps: AppDeps) -> FastAPI:
         finally:
             if runner is not None:
                 await run_in_threadpool(runner.stop)
+
+    # A bearer name that looks like a web identity would let that token act as a signed-in user's claims.
+    for token_name in deps.coordinator_tokens.values():
+        if token_name.startswith(WEB_PREFIX):
+            raise ValueError(f"coordinator token names may not start with {WEB_PREFIX!r}")
 
     # Interactive docs and the schema endpoint are switched off so the surface is exactly the routes below.
     app = FastAPI(title="SetuHaul rescheduling service", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
@@ -655,7 +674,8 @@ def create_app(deps: AppDeps) -> FastAPI:
             raise AuthzError(401, "UNAUTHORIZED")
         # A session must carry a warehouse role with a facility (or be an admin); refusals are 401/403/503.
         user = require_role("WAREHOUSE_AUTHORITY", "ADMIN")(request)
-        return user.display_name or user.email, user
+        # The stored identity is the unique e-mail under a prefix no bearer name may use, so it can never equal anyone else's.
+        return WEB_PREFIX + user.email, user
 
     # A case that is not in the session user's scope looks like it does not exist.
     def not_found(rid: str, case_id: str) -> JSONResponse:
@@ -685,7 +705,8 @@ def create_app(deps: AppDeps) -> FastAPI:
             else:
                 # Same order and cap as the unscoped list, but only cases bound for the user's facilities.
                 found = [x for x in (get_case(c, i) for i in case_ids_in_scope(c, user, statuses, min(limit, 200))) if x is not None]
-            return JSONResponse({"cases": [x.model_dump(mode="json") for x in found], "request_id": rid})
+            return JSONResponse({"cases": [{**x.model_dump(mode="json"), "claimed_by_label": claim_label(c, x.claimed_by)} for x in found],
+                                 "request_id": rid})
 
         return await run_in_threadpool(with_conn, rid, read)
 
@@ -702,7 +723,8 @@ def create_app(deps: AppDeps) -> FastAPI:
                 return _reject(rid, 404, "NOT_FOUND")
             from setuhaul.escalation import case_events
 
-            return JSONResponse({"case": case.model_dump(mode="json"), "events": case_events(c, case_id), "request_id": rid})
+            return JSONResponse({"case": {**case.model_dump(mode="json"), "claimed_by_label": claim_label(c, case.claimed_by)},
+                                 "events": case_events(c, case_id), "request_id": rid})
 
         return await run_in_threadpool(with_conn, rid, read)
 

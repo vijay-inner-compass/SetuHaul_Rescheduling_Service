@@ -27,7 +27,6 @@ ADMIN = frozenset({"ADMIN"})
 PUBLIC = {
     ("GET", "/health"), ("GET", "/ready"), ("GET", "/auth/login"), ("GET", "/auth/callback"), ("POST", "/auth/logout"),
     ("GET", "/auth/me"), ("POST", "/auth/local-admin"), ("GET", "/demo/login"),
-    ("GET", "/openapi.json"), ("GET", "/docs"), ("GET", "/redoc"), ("GET", "/docs/oauth2-redirect"),
 }
 # Machine channels: each has its own signature or secret check and must refuse an unauthenticated call.
 EXEMPT_OWN_AUTH = {
@@ -128,11 +127,20 @@ def test_every_route_is_classified(demo) -> None:  # type: ignore[no-untyped-def
 def test_the_table_has_no_stale_entries(demo) -> None:  # type: ignore[no-untyped-def]
     app, _, _ = demo
     served = set(routes_of(app))
-    listed = (set(EXEMPT_OWN_AUTH) | set(ROLE_GUARDED)) - served
+    listed = (set(PUBLIC) | set(EXEMPT_OWN_AUTH) | set(ROLE_GUARDED)) - served
     assert listed == set(), f"matrix entries for routes that no longer exist: {listed}"
 
 
-GUARDED_ROUTES = [r for r in routes_of(build_demo_app(Path(tempfile.mkdtemp()))[0]) if classify(*r)[0] == "GUARDED"]
+def _guarded_routes() -> list[tuple[str, str]]:
+    # Discovered from a throwaway demo app built under pytest's own temp area (cleaned up with it), at collection time.
+    base = Path(tempfile.gettempdir())
+    with tempfile.TemporaryDirectory(dir=base, ignore_cleanup_errors=True) as work:
+        app, _ = build_demo_app(Path(work))
+        found = [r for r in routes_of(app) if classify(*r)[0] == "GUARDED"]
+    return found
+
+
+GUARDED_ROUTES = _guarded_routes()
 EXEMPT_ROUTES = sorted(EXEMPT_OWN_AUTH)
 
 
@@ -167,12 +175,11 @@ def test_no_route_serves_board_data_without_web_role(demo) -> None:  # type: ign
     client = TestClient(app, base_url="http://localhost", follow_redirects=False)
     body = b"{}"
     # A Telegram secret and a valid HMAC channel signature are NOT web roles.
+    # (A wrong bearer token is sent too: the legacy fallback only unlocks with a configured token.)
     headers = {"x-telegram-bot-api-secret-token": deps.telegram_secret.decode(),
                "x-signature": hmac.new(deps.webhook_secret, body, hashlib.sha256).hexdigest(),
-               "authorization": "Bearer tok-asha"}
+               "authorization": "Bearer not-a-token"}
     for method, path in GUARDED_ROUTES:
-        if path.startswith("/v1/coordinator"):
-            continue  # the bearer fallback is exercised on its own in test_api.py
         r = client.request(method, concrete(path), content=body, headers=headers)
         assert r.status_code == 401, (method, path, r.status_code)
     assert client.get("/demo/api/board", headers=headers).status_code == 401
@@ -264,14 +271,14 @@ def test_warehouse_cannot_read_other_facility_cases(world: World) -> None:
     conn.close()
 
 
-def test_session_user_claims_and_resolves_under_their_name(world: World) -> None:
+def test_session_user_claims_and_resolves_under_their_web_identity(world: World) -> None:
     a = world.client("wh_a")
     cid = world.cases[JAIPUR]
     assert a.post(f"/v1/coordinator/cases/{cid}/claim").json()["status"] == "CLAIMED"
     r = a.post(f"/v1/coordinator/cases/{cid}/resolve", json={"resolution_code": "ADVISED_DRIVER", "note": "called"})
     assert r.status_code == 200 and r.json()["status"] == "RESOLVED"
     conn = open_connection(path=world.path, readonly=True)
-    assert conn.execute("select claimed_by from escalation_cases where case_id=?", (cid,)).fetchone()[0] == "Wha"
+    assert conn.execute("select claimed_by from escalation_cases where case_id=?", (cid,)).fetchone()[0] == "web:wha@x.com"
     conn.close()
 
 
@@ -285,3 +292,78 @@ def test_legacy_bearer_token_still_works_and_unauthenticated_is_401(world: World
     conn = open_connection(path=world.path, readonly=True)
     assert conn.execute("select claimed_by from escalation_cases where case_id=?", (world.cases[GURUGRAM],)).fetchone()[0] == "Asha Verma"
     conn.close()
+
+
+# ---- review fixes -----------------------------------------------------------------------------------------
+def _second_user(world: World, email: str, display: str, facility: str = JAIPUR) -> None:
+    conn = open_connection(path=world.path)
+    world.users[email] = add_user(conn, world.clock, email, "WAREHOUSE_AUTHORITY", (facility,))
+    conn.execute("update users set display_name=? where email=?", (display, email))
+    conn.commit()
+    world.users[email] = world.users[email].model_copy(update={"display_name": display})
+    conn.close()
+
+
+def test_same_display_name_cannot_take_over_a_claim(world: World) -> None:
+    _second_user(world, "twin@x.com", "Wha")
+    cid = world.cases[JAIPUR]
+    a, twin = world.client("wh_a"), world.client("twin@x.com")
+    assert a.post(f"/v1/coordinator/cases/{cid}/claim").status_code == 200
+    r = twin.post(f"/v1/coordinator/cases/{cid}/resolve", json={"resolution_code": "ADVISED_DRIVER", "note": "x"})
+    assert r.status_code == 403 and r.json()["reason_code"] == "NOT_YOUR_CASE"
+    assert twin.post(f"/v1/coordinator/cases/{cid}/reopen").status_code in (403, 409)
+    assert a.post(f"/v1/coordinator/cases/{cid}/resolve", json={"resolution_code": "ADVISED_DRIVER", "note": "x"}).status_code == 200
+
+
+def test_session_user_cannot_resolve_a_bearer_coordinators_case(world: World) -> None:
+    _second_user(world, "asha@x.com", "Asha Verma")
+    cid = world.cases[JAIPUR]
+    bearer = {"authorization": "Bearer tok-asha"}
+    assert world.client().post(f"/v1/coordinator/cases/{cid}/claim", headers=bearer).json()["status"] == "CLAIMED"
+    r = world.client("asha@x.com").post(f"/v1/coordinator/cases/{cid}/resolve", json={"resolution_code": "ADVISED_DRIVER", "note": "x"})
+    assert r.status_code == 403 and r.json()["reason_code"] == "NOT_YOUR_CASE"
+    # The legacy flow is unchanged: the bearer coordinator resolves their own claim.
+    assert world.client().post(f"/v1/coordinator/cases/{cid}/resolve", headers=bearer,
+                               json={"resolution_code": "ADVISED_DRIVER", "note": "x"}).status_code == 200
+
+
+def test_claims_are_stored_as_web_identity_and_labelled_for_people(world: World) -> None:
+    cid = world.cases[JAIPUR]
+    a = world.client("wh_a")
+    a.post(f"/v1/coordinator/cases/{cid}/claim")
+    conn = open_connection(path=world.path, readonly=True)
+    assert conn.execute("select claimed_by from escalation_cases where case_id=?", (cid,)).fetchone()[0] == "web:wha@x.com"
+    conn.close()
+    case = a.get(f"/v1/coordinator/cases/{cid}").json()["case"]
+    assert case["claimed_by"] == "web:wha@x.com" and case["claimed_by_label"] == "Wha"
+    listed = {c["case_id"]: c for c in a.get("/v1/coordinator/cases").json()["cases"]}
+    assert listed[cid]["claimed_by_label"] == "Wha"
+    # A bearer name is its own label.
+    other = world.cases[GURUGRAM]
+    world.client().post(f"/v1/coordinator/cases/{other}/claim", headers={"authorization": "Bearer tok-asha"})
+    got = world.client("admin").get(f"/v1/coordinator/cases/{other}").json()["case"]
+    assert got["claimed_by"] == "Asha Verma" and got["claimed_by_label"] == "Asha Verma"
+
+
+def test_a_bearer_name_that_looks_like_a_web_identity_is_refused_at_start_up(tmp_path: Path) -> None:
+    import fakeredis
+
+    with pytest.raises(ValueError, match="web:"):
+        create_app(AppDeps(db_path=tmp_path / "x.sqlite3", redis=fakeredis.FakeRedis(), webhook_secret=b"w",
+                           coordinator_tokens={"tok": "web:boss@x.com"}, fallback_path=tmp_path / "f.jsonl"))
+
+
+def test_demo_login_refuses_a_foreign_host_header_from_a_loopback_client(tmp_path: Path) -> None:
+    app, _ = build_demo_app(tmp_path / "d")
+    local = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1", follow_redirects=False)
+    # DNS rebinding: the connection is local but the page was reached under another name.
+    r = local.get("/demo/login", headers={"host": "evil.example"})
+    assert r.status_code == 403 and sessions.COOKIE_NAME not in r.cookies
+    assert local.get("/demo/login", headers={"host": "localhost:8800"}).status_code == 302
+
+
+def test_warehouse_with_no_project_drivers_sees_no_chats_at_all(world: World) -> None:
+    # A facility-bound user whose projects hold no drivers: the empty visible set means nothing, never everything.
+    _second_user(world, "idle@x.com", "Idle")
+    got = world.client("idle@x.com").get("/v1/warehouse/driver-chats")
+    assert got.status_code == 200 and got.json()["drivers"] == []

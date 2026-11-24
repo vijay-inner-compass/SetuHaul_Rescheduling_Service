@@ -84,22 +84,23 @@ def register_warehouse_routes(app: FastAPI, deps: AppDeps) -> None:
         rid = request.state.request_id
 
         def read(conn: sqlite3.Connection) -> Response:
-            # A warehouse authority sees the drivers on their own projects; an admin every driver that has a chat.
+            # A warehouse authority sees only the drivers on their own projects (filtered in SQL); an admin every driver that has a chat.
             if user.role == "ADMIN":
-                allowed = {r["driver_id"] for r in conn.execute("select distinct driver_id from chat_threads")}
+                scope, args = "1=1", tuple[str, ...]()
             else:
-                allowed = projects.visible_driver_ids(conn, user)
+                visible = sorted(projects.visible_driver_ids(conn, user))
+                # No visible drivers means nothing at all, never "no filter".
+                if not visible:
+                    return JSONResponse({"drivers": [], "request_id": rid})
+                scope, args = f"t.driver_id in ({','.join('?' * len(visible))})", tuple(visible)
             out: list[dict[str, Any]] = []
-            # Most recently active drivers first; the per-driver query is bounded by the message limit.
+            per_driver = clamp(messages, 20, MAX_MESSAGES)
+            # Most recently active drivers first, capped.
             active = conn.execute(
                 "select t.driver_id, max(m.message_ts) as last_ts from chat_messages m join chat_threads t on t.thread_id=m.thread_id"
-                " where m.is_duplicate=0 group by t.driver_id order by last_ts desc, t.driver_id")
-            per_driver = clamp(messages, 20, MAX_MESSAGES)
+                f" where m.is_duplicate=0 and {scope} group by t.driver_id order by last_ts desc, t.driver_id limit ?",
+                (*args, clamp(limit, 50, MAX_LIMIT))).fetchall()
             for row in active:
-                if row["driver_id"] not in allowed:
-                    continue
-                if len(out) >= clamp(limit, 50, MAX_LIMIT):
-                    break
                 name = conn.execute("select driver_name from drivers where driver_id=?", (row["driver_id"],)).fetchone()
                 recent = conn.execute(
                     "select m.sender_type, m.message_text, m.message_ts from chat_messages m join chat_threads t on t.thread_id=m.thread_id"

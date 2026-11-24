@@ -109,7 +109,8 @@ def main() -> int:
     if not args.no_browser:
         threading.Timer(1.2, lambda: webbrowser.open(url)).start()
     # Serve on 127.0.0.1 only: the demo is not reachable from other machines.
-    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
+    # proxy_headers off and no trusted forwarders: X-Forwarded-For can never make a remote client look like loopback.
+    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning", proxy_headers=False, forwarded_allow_ips="")
     # Clean exit.
     return 0
 
