@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 # sqlite3 for database trouble; Callable for the dependency type.
+import re
 import sqlite3
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -16,6 +17,17 @@ from setuhaul.db import open_connection
 
 if TYPE_CHECKING:
     from setuhaul.api import AppDeps
+
+
+# A column reference: letters, digits, underscore, at most one dot; it can never carry SQL.
+_COLUMN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?")
+# Longest request path kept in an audit row.
+_MAX_PATH = 256
+
+
+def _safe_path(path: str) -> str:
+    # Bounded and printable: control characters become "?" and the length is capped.
+    return "".join("?" if ord(c) < 32 or ord(c) == 127 else c for c in path[:_MAX_PATH])
 
 
 # A refusal with a stable code; the handler registered with the auth routes turns it into the API's error shape.
@@ -44,12 +56,19 @@ def require_role(*roles: Role) -> Callable[[Request], User]:
             user = sessions.resolve(conn, token, deps.clock)
             if user is None:
                 raise AuthzError(401, "UNAUTHENTICATED")
-            if user.role not in roles:
-                # Audit the refusal: the path and who asked, never the token or any request content.
+            # A warehouse authority bound to no facility can do nothing safely, so is refused too.
+            no_facilities = user.role == "WAREHOUSE_AUTHORITY" and not user.facilities
+            if user.role not in roles or no_facilities:
+                # Prefer the route template over the attacker-shaped raw path.
+                route = request.scope.get("route")
+                target = getattr(route, "path", None) or _safe_path(request.url.path)
+                detail: dict[str, object] = {"role": user.role}
+                if no_facilities:
+                    detail["reason"] = "NO_FACILITIES"
+                # Audit the refusal: the target and who asked, never the token or any request content.
                 audit.record(conn, actor_user_id=user.user_id, actor_email=user.email, action="ACCESS_DENIED",
-                             target_type="path", target_id=request.url.path, outcome="FORBIDDEN",
-                             ip=request.client.host if request.client else None, detail={"role": user.role},
-                             clock=deps.clock)
+                             target_type="path", target_id=target, outcome="FORBIDDEN",
+                             ip=request.client.host if request.client else None, detail=detail, clock=deps.clock)
                 conn.commit()
                 raise AuthzError(403, "FORBIDDEN")
             return user
@@ -71,3 +90,17 @@ def assert_facility(user: User, facility_id: str) -> None:
     scope = facility_ids(user)
     if scope is not None and facility_id not in scope:
         raise AuthzError(403, "FORBIDDEN")
+
+
+def facility_clause(user: User, column: str) -> tuple[str, tuple[str, ...]]:
+    # The column is interpolated into SQL, so it must be a plain identifier.
+    if _COLUMN.fullmatch(column) is None:
+        raise ValueError("unsafe column name")
+    scope = facility_ids(user)
+    # Admins: no restriction.
+    if scope is None:
+        return "1=1", ()
+    # No facilities: match nothing (never the same as "all").
+    if not scope:
+        return "1=0", ()
+    return f"{column} in ({','.join('?' * len(scope))})", scope

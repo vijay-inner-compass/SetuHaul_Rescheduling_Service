@@ -45,6 +45,10 @@ def _make(tmp_path: Path, clock: FakeClock):  # type: ignore[no-untyped-def]
     def either(user: Annotated[User, Depends(authz.require_role("ADMIN", "WAREHOUSE_AUTHORITY"))]) -> dict[str, object]:
         return {"scope": authz.facility_ids(user)}
 
+    @app.get("/t/adm/{item}")
+    def adm_item(item: str, user: Annotated[User, Depends(authz.require_role("ADMIN"))]) -> dict[str, str]:
+        return {"item": item}
+
     @app.get("/t/fac/{facility_id}")
     def fac(facility_id: str, user: Annotated[User, Depends(authz.require_role("ADMIN", "WAREHOUSE_AUTHORITY"))]) -> dict[str, str]:
         authz.assert_facility(user, facility_id)
@@ -153,3 +157,65 @@ def test_assert_facility_unit() -> None:
     with pytest.raises(authz.AuthzError) as exc:
         authz.assert_facility(wh, "B")
     assert exc.value.status == 403 and exc.value.code == "FORBIDDEN"
+
+
+def test_facility_less_warehouse_user_is_403_and_audited(tmp_path: Path, clock: FakeClock) -> None:
+    path, client, tokens, _ = _make(tmp_path, clock)
+    conn = open_connection(path=path)
+    conn.execute("delete from user_facilities")
+    conn.commit()
+    conn.close()
+    _as(client, tokens["wh"])
+    r = client.get("/t/wh")
+    assert r.status_code == 403 and r.json()["reason_code"] == "FORBIDDEN"
+    conn = open_connection(path=path, readonly=True)
+    rows = audit.query(conn, action="ACCESS_DENIED")
+    conn.close()
+    assert len(rows) == 1 and "NO_FACILITIES" in rows[0]["detail_json"]
+
+
+def _user(role: str, facs: tuple[str, ...]) -> User:
+    return User(user_id="u", email="e", role=role, status="ACTIVE", display_name=None, facilities=facs)  # type: ignore[arg-type]
+
+
+def test_facility_clause_shapes_and_results(tmp_path: Path) -> None:
+    conn = open_connection(path=make_working_db(tmp_path / "c.sqlite3"))
+    all_ids = sorted(r[0] for r in conn.execute("select facility_id from facilities"))
+    assert len(all_ids) >= 2
+
+    def run(user: User) -> list[str]:
+        sql, params = authz.facility_clause(user, "facility_id")
+        return sorted(r[0] for r in conn.execute(f"select facility_id from facilities where {sql}", params))
+
+    assert authz.facility_clause(_user("ADMIN", ()), "facility_id") == ("1=1", ())
+    assert authz.facility_clause(_user("WAREHOUSE_AUTHORITY", (all_ids[0],)), "f.facility_id") == (
+        "f.facility_id in (?)", (all_ids[0],))
+    assert authz.facility_clause(_user("WAREHOUSE_AUTHORITY", tuple(all_ids[:2])), "facility_id") == (
+        "facility_id in (?,?)", tuple(all_ids[:2]))
+    assert authz.facility_clause(_user("WAREHOUSE_AUTHORITY", ()), "facility_id") == ("1=0", ())
+    assert run(_user("ADMIN", ())) == all_ids
+    assert run(_user("WAREHOUSE_AUTHORITY", (all_ids[0],))) == [all_ids[0]]
+    assert run(_user("WAREHOUSE_AUTHORITY", tuple(all_ids[:2]))) == all_ids[:2]
+    assert run(_user("WAREHOUSE_AUTHORITY", ())) == []
+    conn.close()
+
+
+@pytest.mark.parametrize("bad", ["x; drop table users", "a.b.c", "", "a b", "1=1 --", "a.", ".a"])
+def test_facility_clause_rejects_unsafe_column(bad: str) -> None:
+    with pytest.raises(ValueError):
+        authz.facility_clause(_user("ADMIN", ()), bad)
+
+
+def test_audit_target_is_route_template_not_raw_path(tmp_path: Path, clock: FakeClock) -> None:
+    path, client, tokens, _ = _make(tmp_path, clock)
+    _as(client, tokens["wh"])
+    assert client.get("/t/adm/" + "a%0A" * 1700).status_code == 403
+    conn = open_connection(path=path, readonly=True)
+    target = audit.query(conn, action="ACCESS_DENIED")[0]["target_id"]
+    conn.close()
+    assert target == "/t/adm/{item}"
+
+
+def test_safe_path_truncates_and_strips_controls() -> None:
+    out = authz._safe_path("/x" + chr(10) + chr(13) + chr(0) + "y" * 5000)
+    assert len(out) == 256 and out.startswith("/x???y") and chr(10) not in out
