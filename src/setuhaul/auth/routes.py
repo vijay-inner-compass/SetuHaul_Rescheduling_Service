@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from setuhaul.auth import audit, local_admin, sessions, users
+from setuhaul.auth.authz import AuthzError
 from setuhaul.db import open_connection
 from setuhaul.identity import AuthError
 
@@ -75,6 +76,14 @@ def _reject(rid: str, status: int, code: str) -> JSONResponse:
 
 
 def register_auth_routes(app: FastAPI, deps: AppDeps) -> None:
+    # The role guard reads the db path and clock from here.
+    app.state.deps = deps
+
+    # A guard refusal (401, 403, 503) in the API's error shape.
+    @app.exception_handler(AuthzError)
+    async def authz_refused(request: Request, exc: AuthzError) -> Response:
+        return _reject(getattr(request.state, "request_id", ""), exc.status, exc.code)
+
     # Run a function on a fresh connection; database trouble becomes 503.
     def with_conn(rid: str, fn: Any) -> Response:
         try:
