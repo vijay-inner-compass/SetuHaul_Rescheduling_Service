@@ -82,3 +82,21 @@ def show_options(db, clock, thread: str = "THR001", shipment: str = "SHP1006", e
     state = build_facility_state(db, ctx.facility_id, clock.now())
     options = rank_options(search_feasible_slots(ctx, state).feasible, limit=limit)
     return record_option_set(db, ctx, thread, options, state, clock)
+
+
+def seed_partner_facility(conn: sqlite3.Connection, shipment_id: str = "SHP1006",
+                          contact_email: str = "partner.desk@partner.example") -> str:
+    """A partner facility (TEST_FIXTURE) with one dock and one active contact; points the shipment at it."""
+    conn.execute(
+        "insert into facilities (facility_id, facility_name, city, state, timezone, open_time, close_time, "
+        "checkin_grace_min, default_unload_min, active_flag, is_partner) values "
+        "('FAC-PARTNER-01','TEST_FIXTURE Partner Warehouse','Jaipur','Rajasthan','Asia/Kolkata','06:00','22:00',30,60,1,1)")
+    conn.execute(
+        "insert into docks (dock_id, facility_id, dock_code, dock_type, supports_refrigerated, max_vehicle_weight_kg, "
+        "dock_status) values ('DOCK-PARTNER-D1','FAC-PARTNER-01','D1','STANDARD',0,20000,'ACTIVE')")
+    conn.execute(
+        "insert into facility_contacts (contact_id, facility_id, contact_role, contact_name, email, phone, active_flag) "
+        "values ('CON-PARTNER-1','FAC-PARTNER-01','WAREHOUSE_COORDINATOR','Partner Desk',?,'+91-000',1)", (contact_email,))
+    conn.execute("update shipments set destination_facility_id='FAC-PARTNER-01' where shipment_id=?", (shipment_id,))
+    conn.commit()
+    return "FAC-PARTNER-01"
