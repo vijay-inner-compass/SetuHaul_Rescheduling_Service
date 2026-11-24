@@ -34,7 +34,8 @@ class FakeSMTP:
     instances: ClassVar[list[FakeSMTP]] = []
     fail_login = False
 
-    def __init__(self, host: str, port: int, timeout: float = 0) -> None:
+    def __init__(self, host: str, port: int, timeout: float = 0, context: object = None) -> None:
+        self.context = context
         self.kind = type(self).__name__
         self.host, self.port, self.timeout, self.starttls_called, self.sent = host, port, timeout, False, []
         FakeSMTP.instances.append(self)
@@ -45,8 +46,9 @@ class FakeSMTP:
     def __exit__(self, *a: object) -> None:
         return None
 
-    def starttls(self) -> None:
+    def starttls(self, context: object = None) -> None:
         self.starttls_called = True
+        self.context = context
 
     def login(self, user: str, password: str) -> None:
         if FakeSMTP.fail_login:
@@ -95,13 +97,18 @@ RAW = (b"From: Partner Desk <partner.desk@partner.example>\r\nTo: desk@test\r\nS
 HTML_ONLY = (b"From: a@b\r\nSubject: s\r\nMessage-ID: <h@x>\r\nContent-Type: text/html\r\n\r\n<p>APPROVE</p>\r\n")
 
 
+BOGUS = (b"From: a@b\r\nSubject: SetuHaul slot request [PR-AAAAAAAA]\r\nMessage-ID: <bogus@x>\r\n"
+         b"Content-Type: text/plain; charset=x-no-such-charset\r\nContent-Transfer-Encoding: 8bit\r\n\r\n\xff\xfe APPROVE\r\n")
+
+
 class FakeIMAP:
-    def __init__(self, host: str, port: int) -> None:
+    last: FakeIMAP
+    mails: ClassVar[dict[str, bytes]] = {"1": RAW, "2": HTML_ONLY, "3": BOGUS}
+
+    def __init__(self, host: str, port: int, ssl_context: object = None) -> None:
+        self.ssl_context = ssl_context
         self.calls: list[tuple[str, tuple]] = []
         FakeIMAP.last = self
-
-    last: FakeIMAP
-    mails: ClassVar[dict[str, bytes]] = {"1": RAW, "2": HTML_ONLY}
 
     def login(self, user: str, password: str) -> tuple[str, list]:
         self.calls.append(("login", (user,)))
@@ -109,18 +116,14 @@ class FakeIMAP:
 
     def select(self, folder: str) -> tuple[str, list]:
         self.calls.append(("select", (folder,)))
-        return "OK", [b"2"]
+        return "OK", [b"3"]
 
-    def search(self, charset: None, criterion: str) -> tuple[str, list]:
-        self.calls.append(("search", (criterion,)))
-        return "OK", [b"1 2"]
-
-    def fetch(self, num: str, spec: str) -> tuple[str, list]:
-        self.calls.append(("fetch", (num, spec)))
-        return "OK", [(b"hdr", self.mails[num])]
-
-    def store(self, num: str, op: str, flag: str) -> tuple[str, list]:
-        self.calls.append(("store", (num, op, flag)))
+    def uid(self, command: str, *args: object) -> tuple[str, list]:
+        self.calls.append((command, args))
+        if command == "SEARCH":
+            return "OK", [b"1 2 3"]
+        if command == "FETCH":
+            return "OK", [(b"hdr", self.mails[str(args[0])])]
         return "OK", []
 
     def logout(self) -> tuple[str, list]:
@@ -130,25 +133,46 @@ class FakeIMAP:
 
 def test_imap_reader_parses_plain_text_headers_and_html_only_gives_empty_body(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(mail_transport.imaplib, "IMAP4_SSL", FakeIMAP)
-    reader = ImapReader(_settings())
-    first, second = reader.fetch_unseen()
+    first, second, _ = ImapReader(_settings()).fetch_unseen()
     assert (first.message_id, first.from_addr, first.in_reply_to) == ("<reply1@partner>", "partner.desk@partner.example", "<m@setuhaul>")
     assert first.subject.endswith("[PR-AAAAAAAA]") and first.body.strip() == "APPROVE"
     assert "spf=pass" in (first.authentication_results or "")
     assert second.body == ""
 
 
-def test_imap_fetch_uses_peek_so_message_stays_unseen_until_marked(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_one_mail_with_a_bad_charset_does_not_stop_the_others(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mail_transport.imaplib, "IMAP4_SSL", FakeIMAP)
+    mails = ImapReader(_settings()).fetch_unseen()
+    assert [m.message_id for m in mails] == ["<reply1@partner>", "<h@x>", "<bogus@x>"]
+    assert mails[2].body == ""  # unreadable text reads as an unclear reply, never an approval
+
+
+def test_imap_uses_uids_peek_and_only_our_subjects(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(mail_transport.imaplib, "IMAP4_SSL", FakeIMAP)
     reader = ImapReader(_settings())
     reader.fetch_unseen()
     calls = FakeIMAP.last.calls
-    assert all(spec == "(BODY.PEEK[])" for name, (_, spec) in [c for c in calls if c[0] == "fetch"])
-    assert not any(c[0] == "store" for c in calls)
+    search = next(args for name, args in calls if name == "SEARCH")
+    assert "SUBJECT" in search and "SINCE" in search and "UNSEEN" not in search  # not at the mercy of the Seen flag
+    assert all(args[1] == "(BODY.PEEK[])" for name, args in calls if name == "FETCH")
+    assert not any(name == "STORE" for name, _ in calls)
     reader.mark_seen("<reply1@partner>")
-    assert ("store", ("1", "+FLAGS", "\\Seen")) in FakeIMAP.last.calls
+    assert ("STORE", ("1", "+FLAGS", r"\Seen")) in FakeIMAP.last.calls
     reader.close()
     assert FakeIMAP.last.calls[-1][0] == "logout"
+
+
+def test_tls_contexts_verify_certificate_and_hostname(monkeypatch: pytest.MonkeyPatch) -> None:
+    import ssl
+
+    monkeypatch.setattr(mail_transport.imaplib, "IMAP4_SSL", FakeIMAP)
+    SmtpSender(_settings(smtp_port=465)).send(_mail())
+    SmtpSender(_settings(smtp_port=587)).send(_mail())
+    ImapReader(_settings()).fetch_unseen()
+    contexts = [i.context for i in FakeSMTP.instances] + [FakeIMAP.last.ssl_context]
+    assert len(contexts) == 3
+    for ctx in contexts:
+        assert isinstance(ctx, ssl.SSLContext) and ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname
 
 
 def test_in_memory_mailbox_round_trip() -> None:

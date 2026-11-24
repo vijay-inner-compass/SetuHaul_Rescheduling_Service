@@ -35,6 +35,8 @@ class MailSettings:
     imap_folder: str
     # How long a partner has to answer before the request expires.
     request_ttl_min: int
+    # The receiving server's name in Authentication-Results; live replies must be vouched for by it.
+    auth_serv_id: str = "mx.google.com"
 
 
 def _load_env_file() -> None:
@@ -74,6 +76,7 @@ def load_mail_settings() -> MailSettings:
         imap_password=env.get("SETUHAUL_IMAP_PASSWORD", ""),
         imap_folder=env.get("SETUHAUL_IMAP_FOLDER", "INBOX"),
         request_ttl_min=int(env.get("SETUHAUL_PARTNER_REQUEST_TTL_MIN", "120")),
+        auth_serv_id=env.get("SETUHAUL_AUTH_SERV_ID", "mx.google.com"),
     )
     if mode == "live":
         # Name the missing variable, never its value.
