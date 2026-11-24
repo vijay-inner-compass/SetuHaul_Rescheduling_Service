@@ -10,11 +10,13 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 
-from setuhaul.auth import projects
-from setuhaul.auth.authz import facility_clause, require_role
+from setuhaul.auth import onboarding, projects, telegram
+from setuhaul.auth.authz import AuthzError, assert_facility, facility_clause, require_role
 from setuhaul.auth.http import reject as _reject
 from setuhaul.auth.users import User
+from setuhaul.board import build_board
 from setuhaul.db import open_connection
+from setuhaul.identity import AuthError
 
 if TYPE_CHECKING:
     from setuhaul.api import AppDeps
@@ -23,6 +25,10 @@ if TYPE_CHECKING:
 MAX_LIMIT = 200
 # Messages returned per driver, at most.
 MAX_MESSAGES = 100
+
+
+# Refusal code -> HTTP status for the writes below.
+_STATUS = {"FORBIDDEN": 403, "DRIVER_NOT_FOUND": 404, "NOT_BOUND": 404}
 
 
 def clamp(value: int, default: int, ceiling: int) -> int:
@@ -47,15 +53,43 @@ def case_ids_in_scope(conn: sqlite3.Connection, user: User, statuses: tuple[str,
     return [r["case_id"] for r in rows]
 
 
+def mask_phone(phone: str) -> str:
+    # Only the last four digits survive; the country code stays so the number still reads as a phone.
+    digits = "".join(c for c in phone if c.isdigit())
+    country = digits[:-10] if len(digits) > 10 else ""
+    return (f"+{country}" if country else "") + "\u2022" * 6 + digits[-4:]
+
+
+def drivers_in_scope(conn: sqlite3.Connection, user: User, driver_id: str | None = None) -> list[sqlite3.Row]:
+    """Drivers the user may see: an admin every driver; a warehouse authority those they added plus their project drivers."""
+    where, args = ["1=1"], []
+    if user.role != "ADMIN":
+        visible = sorted(projects.visible_driver_ids(conn, user))
+        # No visible project drivers leaves only the drivers they added, never "no filter".
+        marks = f" or d.driver_id in ({','.join('?' * len(visible))})" if visible else ""
+        where = [f"(p.created_by_user_id=?{marks})"]
+        args = [user.user_id, *visible]
+    if driver_id is not None:
+        where.append("d.driver_id=?")
+        args.append(driver_id)
+    return conn.execute(
+        "select d.driver_id, d.driver_name, d.phone, d.carrier_id, p.vehicle_id, p.approval_status, p.licence_expiry,"
+        " t.driver_id as bound_id, t.revoked_at from drivers d left join driver_profiles p on p.driver_id=d.driver_id"
+        f" left join telegram_identities t on t.driver_id=d.driver_id where {' and '.join(where)} order by d.driver_id",
+        args).fetchall()
+
+
 def register_warehouse_routes(app: FastAPI, deps: AppDeps) -> None:
     # Run a function on a fresh connection; database trouble becomes 503.
-    def with_conn(rid: str, fn: Any) -> Response:
+    def with_conn(rid: str, fn: Any, readonly: bool = True) -> Response:
         try:
-            conn = open_connection(path=deps.db_path, readonly=True)
+            conn = open_connection(path=deps.db_path, readonly=readonly)
         except (sqlite3.Error, FileNotFoundError):
             return _reject(rid, 503, "DATABASE_UNAVAILABLE")
         try:
             return fn(conn)  # type: ignore[no-any-return]
+        except AuthError as exc:
+            return _reject(rid, _STATUS.get(exc.code, 422), exc.code)
         except sqlite3.Error:
             return _reject(rid, 503, "DATABASE_UNAVAILABLE")
         finally:
@@ -113,3 +147,54 @@ def register_warehouse_routes(app: FastAPI, deps: AppDeps) -> None:
             return JSONResponse({"drivers": out, "request_id": rid})
 
         return await run_in_threadpool(with_conn, rid, read)
+
+    @app.get("/v1/warehouse/board")
+    async def board(request: Request, user: Annotated[User, Depends(require_role("WAREHOUSE_AUTHORITY", "ADMIN"))],
+                    facility_id: str) -> Response:
+        rid = request.state.request_id
+
+        def read(conn: sqlite3.Connection) -> Response:
+            # A facility outside the user's scope looks exactly like one that does not exist.
+            try:
+                assert_facility(user, facility_id)
+            except AuthzError:
+                return _reject(rid, 404, "FACILITY_NOT_FOUND")
+            built = build_board(conn, facility_id, deps.clock.now())
+            if built is None:
+                return _reject(rid, 404, "FACILITY_NOT_FOUND")
+            return JSONResponse({**built, "request_id": rid})
+
+        return await run_in_threadpool(with_conn, rid, read)
+
+    @app.get("/v1/warehouse/drivers")
+    async def drivers(request: Request, user: Annotated[User, Depends(require_role("WAREHOUSE_AUTHORITY", "ADMIN"))]) -> Response:
+        rid = request.state.request_id
+
+        def read(conn: sqlite3.Connection) -> Response:
+            today = deps.clock.now().date()
+            out = []
+            for r in drivers_in_scope(conn, user):
+                # Never-bound, bound, or cut off.
+                tg = "UNBOUND" if r["bound_id"] is None else ("REVOKED" if r["revoked_at"] else "BOUND")
+                # Licence numbers are never returned; the phone only in masked form.
+                out.append({"driver_id": r["driver_id"], "driver_name": r["driver_name"], "phone": mask_phone(r["phone"]),
+                            "carrier_id": r["carrier_id"], "vehicle_id": r["vehicle_id"],
+                            "approval_status": r["approval_status"] or "SUPPLIED", "licence_expiry": r["licence_expiry"],
+                            "licence_valid": onboarding.licence_valid(conn, r["driver_id"], today), "telegram_status": tg})
+            return JSONResponse({"drivers": out, "request_id": rid})
+
+        return await run_in_threadpool(with_conn, rid, read)
+
+    @app.post("/v1/warehouse/drivers/{driver_id}/telegram/revoke")
+    async def revoke_telegram(request: Request, driver_id: str,
+                              user: Annotated[User, Depends(require_role("WAREHOUSE_AUTHORITY", "ADMIN"))]) -> Response:
+        rid = request.state.request_id
+
+        def write(conn: sqlite3.Connection) -> Response:
+            # A driver outside the caller's scope looks exactly like one that does not exist.
+            if not drivers_in_scope(conn, user, driver_id):
+                raise AuthError("DRIVER_NOT_FOUND")
+            telegram.revoke(conn, actor=user, driver_id=driver_id, clock=deps.clock)
+            return JSONResponse({"status": "OK", "driver_id": driver_id, "telegram_status": "REVOKED", "request_id": rid})
+
+        return await run_in_threadpool(with_conn, rid, write, False)
