@@ -16,7 +16,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from starlette.concurrency import run_in_threadpool
 
-from setuhaul.auth import audit, sessions, users
+from setuhaul.auth import audit, local_admin, sessions, users
 from setuhaul.db import open_connection
 from setuhaul.identity import AuthError
 
@@ -169,6 +169,35 @@ def register_auth_routes(app: FastAPI, deps: AppDeps) -> None:
             return resp
 
         return await run_in_threadpool(with_conn, rid, finish)
+
+    @app.post("/auth/local-admin")
+    async def local_admin_login(request: Request) -> Response:
+        rid = request.state.request_id
+        # The feature is invisible unless switched on.
+        if not deps.local_admin_enabled:
+            return _reject(rid, 404, "NOT_FOUND")
+        # A malformed body is just bad credentials; it must not reveal anything.
+        try:
+            body = await request.json()
+            email, password = str(body["email"]), str(body["password"])
+        except (ValueError, KeyError, TypeError):
+            return _reject(rid, 401, "BAD_CREDENTIALS")
+        ip = request.client.host if request.client else None
+
+        def attempt(conn: sqlite3.Connection) -> Response:
+            # verify audits every outcome itself; scrypt makes this blocking, so it runs in the threadpool.
+            try:
+                user = local_admin.verify(conn, email, password, deps.clock, ip)
+            except AuthError as exc:
+                return _reject(rid, 429 if exc.code == "LOCKED" else 401, exc.code)
+            # One-hour session, cookie max-age to match.
+            token = sessions.create(conn, user, "LOCAL_ADMIN", deps.clock)
+            conn.commit()
+            resp = JSONResponse({"status": "OK", "email": user.email, "request_id": rid})
+            resp.set_cookie(sessions.COOKIE_NAME, token, max_age=3600, **sessions.cookie_kwargs(_is_secure(request)))  # type: ignore[arg-type]
+            return resp
+
+        return await run_in_threadpool(with_conn, rid, attempt)
 
     @app.post("/auth/logout")
     async def logout(request: Request) -> Response:

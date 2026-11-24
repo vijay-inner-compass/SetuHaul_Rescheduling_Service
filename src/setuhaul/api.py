@@ -180,6 +180,8 @@ class AppDeps:
     google: GoogleVerifier | None = None
     # Key for the signed OAuth state cookie.
     session_secret: bytes = b""
+    # The break-glass admin password route exists only when this is on (SETUHAUL_LOCAL_ADMIN=1).
+    local_admin_enabled: bool = False
 
 
 # The inbound webhook body. Unknown fields are rejected (extra='forbid').
@@ -746,6 +748,7 @@ def create_app_from_env() -> FastAPI:
     # Assemble the dependencies and build the app.
     return create_app(AppDeps(
         google=google, session_secret=os.environ.get("SETUHAUL_SESSION_SECRET", "").encode(),
+        local_admin_enabled=os.environ.get("SETUHAUL_LOCAL_ADMIN") == "1",
         db_path=s.db_path, redis=redis,
         webhook_secret=os.environ.get("SETUHAUL_WEBHOOK_SECRET", "").encode(), coordinator_tokens=tokens,
         fallback_path=Path(os.environ.get("SETUHAUL_FALLBACK_ESCALATIONS", "escalations-fallback.jsonl")), policy=policy,
