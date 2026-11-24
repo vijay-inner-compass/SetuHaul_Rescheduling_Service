@@ -42,9 +42,10 @@ def _check(password: str, stored: str) -> bool:
         if scheme != "scrypt":
             return False
         candidate = _hash(password, bytes.fromhex(salt_hex), int(n), int(r), int(p))
-    except ValueError:
+        # A tampered digest (absurd cost, non-ASCII text) fails closed instead of raising.
+        return hmac.compare_digest(candidate, digest)
+    except (ValueError, TypeError, OverflowError):
         return False
-    return hmac.compare_digest(candidate, digest)
 
 
 def set_password(conn: sqlite3.Connection, user_id: str, password: str, clock: Clock | None = None) -> None:
@@ -89,8 +90,10 @@ def verify(conn: sqlite3.Connection, email: str, password: str, clock: Clock, ip
         cred = conn.execute(
             "select password_hash, locked_until from admin_credentials where user_id=?", (user.user_id,)
         ).fetchone()
-    # Cheap early exit: a locked account refuses even the right password, and does no hashing.
+    # Early exit: a locked account refuses even the right password.
     if cred is not None and _is_locked(cred["locked_until"], clock.now()):
+        # The same dummy scrypt as the unknown-address path, so locked and unknown take comparable time.
+        _hash("x" * 12, _DUMMY_SALT)
         _audit(conn, email, user, "LOCAL_ADMIN_LOCKED", None, ip, clock)
         conn.commit()
         raise AuthError("LOCKED")

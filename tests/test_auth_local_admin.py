@@ -291,3 +291,37 @@ def test_set_password_is_audited_without_secrets(tmp_path: Path, clock: FakeCloc
     conn.close()
     assert len(rows) == 1 and rows[0]["target_id"] == a.user_id
     assert PASSWORD not in dump and stored not in dump
+
+
+# ---- hardening sweep (11c group B) ----
+
+@pytest.mark.parametrize("stored", [
+    # An absurd cost factor: scrypt rejects it (ValueError) or cannot convert it (OverflowError).
+    f"scrypt${2**200}$8$1${'ab' * 8}${'0' * 128}",
+    f"scrypt${2**40}$8$1${'ab' * 8}${'0' * 128}",
+    # A non-ASCII digest: compare_digest on str would raise TypeError.
+    f"scrypt$16384$8$1${'ab' * 8}$h\u00e9llo",
+])
+def test_tampered_stored_hash_fails_closed(stored: str) -> None:
+    assert local_admin._check("whatever password", stored) is False
+
+
+def test_locked_path_runs_the_dummy_hash(tmp_path: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch) -> None:
+    path, _ = _make(tmp_path, clock)
+    conn = open_connection(path=path)
+    for _ in range(5):
+        with pytest.raises(AuthError):
+            local_admin.verify(conn, "boss@x.com", "wrong password!!", clock)
+    calls: list[bytes] = []
+    real = local_admin._hash
+
+    def spy(password: str, salt: bytes, *a: int) -> str:
+        calls.append(salt)
+        return real(password, salt, *a)
+
+    monkeypatch.setattr(local_admin, "_hash", spy)
+    # Locked: refused with LOCKED, and the dummy scrypt still ran, like the unknown-address path.
+    with pytest.raises(AuthError) as e:
+        local_admin.verify(conn, "boss@x.com", PASSWORD, clock)
+    assert e.value.code == "LOCKED" and calls == [local_admin._DUMMY_SALT]
+    conn.close()
