@@ -180,6 +180,9 @@ def register_auth_routes(app: FastAPI, deps: AppDeps) -> None:
         try:
             body = await request.json()
             email, password = str(body["email"]), str(body["password"])
+            # Refuse over-long input before any hashing work.
+            if len(password) > local_admin.MAX_LENGTH:
+                return _reject(rid, 401, "BAD_CREDENTIALS")
         except (ValueError, KeyError, TypeError):
             return _reject(rid, 401, "BAD_CREDENTIALS")
         ip = request.client.host if request.client else None
@@ -188,8 +191,9 @@ def register_auth_routes(app: FastAPI, deps: AppDeps) -> None:
             # verify audits every outcome itself; scrypt makes this blocking, so it runs in the threadpool.
             try:
                 user = local_admin.verify(conn, email, password, deps.clock, ip)
-            except AuthError as exc:
-                return _reject(rid, 429 if exc.code == "LOCKED" else 401, exc.code)
+            except AuthError:
+                # A locked account looks exactly like a wrong password, so callers cannot enumerate admins.
+                return _reject(rid, 401, "BAD_CREDENTIALS")
             # One-hour session, cookie max-age to match.
             token = sessions.create(conn, user, "LOCAL_ADMIN", deps.clock)
             conn.commit()

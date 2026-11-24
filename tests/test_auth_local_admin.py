@@ -3,6 +3,8 @@
 # Lazy annotations, like the rest of the codebase.
 from __future__ import annotations
 
+import re
+import threading
 from datetime import timedelta
 from pathlib import Path
 
@@ -72,10 +74,11 @@ def test_five_failures_lock_for_15_minutes_then_unlock(tmp_path: Path, clock: Fa
         r = _login(client, password="wrong password!!")
         assert r.status_code == 401 and r.json()["reason_code"] == "BAD_CREDENTIALS"
     # Locked now, even with the right password.
+    # The route answers a locked account exactly like a wrong password (no enumeration).
     r = _login(client)
-    assert r.status_code == 429 and r.json()["reason_code"] == "LOCKED"
+    assert r.status_code == 401 and r.json()["reason_code"] == "BAD_CREDENTIALS"
     clock.advance(timedelta(minutes=14))
-    assert _login(client).status_code == 429
+    assert _login(client).status_code == 401
     clock.advance(timedelta(minutes=2))
     assert _login(client).status_code == 200
 
@@ -163,3 +166,128 @@ def test_verify_raises_stable_codes(tmp_path: Path, clock: FakeClock) -> None:
         local_admin.verify(conn, "boss@x.com", "nope nope nope nope", clock)
     assert exc.value.code == "BAD_CREDENTIALS"
     conn.close()
+
+
+def _strip(r):  # type: ignore[no-untyped-def]
+    # Status, content type and body without the per-request id.
+    body = {k: v for k, v in r.json().items() if k != "request_id"}
+    return r.status_code, r.headers["content-type"], body
+
+
+def test_locked_admin_and_unknown_email_look_identical(tmp_path: Path, clock: FakeClock) -> None:
+    _, client = _make(tmp_path, clock)
+    for _ in range(5):
+        _login(client, password="wrong password!!")
+    locked = _login(client)
+    unknown = _login(client, email="nobody@x.com")
+    assert _strip(locked) == _strip(unknown)
+
+
+def test_concurrent_wrong_guesses_cannot_beat_the_lock(tmp_path: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch) -> None:
+    path, _ = _make(tmp_path, clock)
+    # All five wrong guesses finish hashing (and so have read the counter) before any of them writes.
+    barrier = threading.Barrier(5)
+    real = local_admin._hash
+
+    def slow(password: str, salt: bytes, *rest: int) -> str:
+        out = real(password, salt, *rest)
+        if password.startswith("wrong"):
+            barrier.wait(timeout=20)
+        return out
+
+    monkeypatch.setattr(local_admin, "_hash", slow)
+    codes: list[str] = []
+
+    def guess() -> None:
+        c = open_connection(path=path)
+        try:
+            local_admin.verify(c, "boss@x.com", "wrong password!!", clock)
+        except AuthError as exc:
+            codes.append(exc.code)
+        finally:
+            c.close()
+
+    threads = [threading.Thread(target=guess) for _ in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    conn = open_connection(path=path)
+    row = conn.execute("select failed_attempts, locked_until from admin_credentials c join users u using(user_id) "
+                       "where u.email='boss@x.com'").fetchone()
+    # Five total wrong guesses lock the account; none was lost to a race.
+    assert row["failed_attempts"] == 5 and row["locked_until"] is not None
+    with pytest.raises(AuthError) as exc:
+        local_admin.verify(conn, "boss@x.com", PASSWORD, clock)
+    assert exc.value.code == "LOCKED"
+    conn.close()
+
+
+def test_correct_password_cannot_succeed_after_lock_lands(tmp_path: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch) -> None:
+    path, _ = _make(tmp_path, clock)
+    # The correct attempt passes the lock check and hashes, then waits while the lock is written.
+    hashed, proceed = threading.Event(), threading.Event()
+    real = local_admin._hash
+
+    def hooked(password: str, salt: bytes, *rest: int) -> str:
+        out = real(password, salt, *rest)
+        if password == PASSWORD:
+            hashed.set()
+            proceed.wait(timeout=20)
+        return out
+
+    monkeypatch.setattr(local_admin, "_hash", hooked)
+    result: list[object] = []
+
+    def right() -> None:
+        c = open_connection(path=path)
+        try:
+            result.append(local_admin.verify(c, "boss@x.com", PASSWORD, clock))
+        except AuthError as exc:
+            result.append(exc.code)
+        finally:
+            c.close()
+
+    t = threading.Thread(target=right)
+    t.start()
+    assert hashed.wait(timeout=20)
+    conn = open_connection(path=path)
+    for _ in range(5):
+        with pytest.raises(AuthError):
+            local_admin.verify(conn, "boss@x.com", "wrong password!!", clock)
+    conn.close()
+    proceed.set()
+    t.join()
+    assert result == ["LOCKED"]
+
+
+def test_overlong_password_refused_without_hashing(tmp_path: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch) -> None:
+    path, client = _make(tmp_path, clock)
+    r = _login(client, password="x" * 1025)
+    assert r.status_code == 401 and r.json()["reason_code"] == "BAD_CREDENTIALS"
+    conn = open_connection(path=path)
+    with pytest.raises(AuthError) as exc:
+        local_admin.verify(conn, "boss@x.com", "x" * 1025, clock)
+    assert exc.value.code == "BAD_CREDENTIALS"
+    conn.close()
+
+
+def test_hash_is_self_describing(tmp_path: Path, clock: FakeClock) -> None:
+    path, _ = _make(tmp_path, clock)
+    conn = open_connection(path=path, readonly=True)
+    stored = conn.execute("select password_hash from admin_credentials").fetchone()[0]
+    conn.close()
+    assert re.fullmatch(r"scrypt\$\d+\$\d+\$\d+\$[0-9a-f]+\$[0-9a-f]+", stored)
+
+
+def test_set_password_is_audited_without_secrets(tmp_path: Path, clock: FakeClock) -> None:
+    path = make_working_db(tmp_path / "p.sqlite3")
+    conn = open_connection(path=path)
+    a = users.bootstrap_admin(conn, "a@x.com", clock)
+    local_admin.set_password(conn, a.user_id, PASSWORD)
+    rows = audit.query(conn, outcome="LOCAL_ADMIN_PASSWORD_SET")
+    dump = " ".join(str(dict(r)) for r in conn.execute("select * from audit_log").fetchall())
+    stored = conn.execute("select password_hash from admin_credentials").fetchone()[0]
+    conn.close()
+    assert len(rows) == 1 and rows[0]["target_id"] == a.user_id
+    assert PASSWORD not in dump and stored not in dump
