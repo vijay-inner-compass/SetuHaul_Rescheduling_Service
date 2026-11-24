@@ -46,16 +46,20 @@ from pathlib import Path
 from typing import Any, Literal
 
 # Web framework types.
-from fastapi import FastAPI, Request
+from fastapi import APIRouter, Depends, FastAPI, Request
 
 # HTML and JSON responses.
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 # Request body models.
 from pydantic import BaseModel, ConfigDict, Field
 
 # Runs blocking database code in a worker thread.
 from starlette.concurrency import run_in_threadpool
+
+# Web sign-in: the role guard, sessions and the seeded demo user.
+from setuhaul.auth import sessions, users
+from setuhaul.auth.authz import require_role
 
 # The same facility snapshot the service uses, to draw the dock board.
 # Releases or re-offers slots when a new ping arrives (same handling as the real API).
@@ -344,6 +348,8 @@ def _hhmmss(dt: datetime) -> str:
 def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONResponse]) -> None:
     # The demo state.
     demo: DemoState = deps.demo
+    # Every demo route hangs off this router, so the sign-in requirement is stated once and a new route cannot miss it.
+    router = APIRouter(dependencies=[Depends(require_role("WAREHOUSE_AUTHORITY", "ADMIN"))])
     # The page is a single HTML file shipped with the package.
     html = (Path(__file__).parent / "demo" / "index.html").read_text(encoding="utf-8")
 
@@ -373,12 +379,12 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
         return {"iso": now.isoformat(), "text": f"{now.astimezone(IST):%a %d %b %Y, %H:%M:%S} IST"}
 
     # The demo page.
-    @app.get("/demo", response_class=HTMLResponse)
+    @router.get("/demo", response_class=HTMLResponse)
     async def page(request: Request) -> Any:
         return local_only(request) or HTMLResponse(html)
 
     # Static configuration for the page: clock, model mode, coordinators, facilities.
-    @app.get("/demo/api/config")
+    @router.get("/demo/api/config")
     async def config(request: Request) -> Any:
         def read() -> dict[str, Any]:
             conn = db(True)
@@ -392,7 +398,7 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
         return local_only(request) or await run_in_threadpool(read)
 
     # The driver picker: each driver with their active loads, customers and appointments.
-    @app.get("/demo/api/drivers")
+    @router.get("/demo/api/drivers")
     async def drivers(request: Request) -> Any:
         def read() -> dict[str, Any]:
             conn = db(True)
@@ -423,7 +429,7 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
         return local_only(request) or await run_in_threadpool(read)
 
     # A chat message from the driver console.
-    @app.post("/demo/api/chat")
+    @router.post("/demo/api/chat")
     async def chat(request: Request, body: ChatIn) -> Any:
         denied = local_only(request)
         if denied:
@@ -468,7 +474,7 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
         return await run_in_threadpool(go)
 
     # Everything the driver console shows: chat, live hold with seconds left, and case banner.
-    @app.get("/demo/api/driver/{driver_id}/state")
+    @router.get("/demo/api/driver/{driver_id}/state")
     async def driver_state(request: Request, driver_id: str) -> Any:
         def read() -> dict[str, Any]:
             conn = db(True)
@@ -539,7 +545,7 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
         return out
 
     # Send a GPS position as the driver's phone would (without the signature step) and read back what the service makes of it.
-    @app.post("/demo/api/gps")
+    @router.post("/demo/api/gps")
     async def gps_send(request: Request, body: GpsIn) -> Any:
         denied = local_only(request)
         if denied:
@@ -576,7 +582,7 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
         return await run_in_threadpool(go)
 
     # The GPS readout for a driver's active load.
-    @app.get("/demo/api/driver/{driver_id}/gps")
+    @router.get("/demo/api/driver/{driver_id}/gps")
     async def driver_gps(request: Request, driver_id: str) -> Any:
         def read() -> Any:
             conn = db(True)
@@ -593,7 +599,7 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
         return local_only(request) or await run_in_threadpool(read)
 
     # The dock-by-hour board for one facility.
-    @app.get("/demo/api/board")
+    @router.get("/demo/api/board")
     async def board(request: Request, facility_id: str = "FAC-JAI-01") -> Any:
         def read() -> Any:
             conn = db(True)
@@ -649,7 +655,7 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
         return local_only(request) or await run_in_threadpool(read)
 
     # Book a slot as the warehouse planner, to create a conflict with a driver's hold.
-    @app.post("/demo/api/planner-booking")
+    @router.post("/demo/api/planner-booking")
     async def planner_booking(request: Request, body: SlotIn) -> Any:
         denied = local_only(request)
         if denied:
@@ -685,7 +691,7 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
         return await run_in_threadpool(go)
 
     # Move simulated time forward, optionally running the hold-expiry sweep.
-    @app.post("/demo/api/clock")
+    @router.post("/demo/api/clock")
     async def clock(request: Request, body: ClockIn) -> Any:
         denied = local_only(request)
         if denied:
@@ -718,7 +724,7 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
         return demo.notes["mail"]  # type: ignore[no-any-return]
 
     # Ask the partner warehouse for a slot, and send the email.
-    @app.post("/demo/api/partner-request")
+    @router.post("/demo/api/partner-request")
     async def partner_request(request: Request, body: PartnerAskIn) -> Any:
         denied = local_only(request)
         if denied:
@@ -741,7 +747,7 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
         return await run_in_threadpool(go)
 
     # What the mailbox holds: requests, the emails sent for them, and replies received.
-    @app.get("/demo/api/partner-mailbox")
+    @router.get("/demo/api/partner-mailbox")
     async def partner_mailbox(request: Request) -> Any:
         def read() -> dict[str, Any]:
             _, _, settings = mail()
@@ -768,7 +774,7 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
         return local_only(request) or await run_in_threadpool(read)
 
     # Simulated mode only: play the partner's reply by injecting the email they would send, then read the inbox as the job would.
-    @app.post("/demo/api/partner-reply")
+    @router.post("/demo/api/partner-reply")
     async def partner_reply(request: Request, body: PartnerReplyIn) -> Any:
         denied = local_only(request)
         if denied:
@@ -796,7 +802,7 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
         return await run_in_threadpool(go)
 
     # The "Check mailbox" button: send anything queued, read replies, expire what is overdue.
-    @app.post("/demo/api/partner-sync")
+    @router.post("/demo/api/partner-sync")
     async def partner_sync(request: Request) -> Any:
         denied = local_only(request)
         if denied:
@@ -815,7 +821,7 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
         return await run_in_threadpool(go)
 
     # Reset: new database, empty cache, clock back to the start.
-    @app.post("/demo/api/reset")
+    @router.post("/demo/api/reset")
     async def reset(request: Request, body: ResetIn | None = None) -> Any:
         denied = local_only(request)
         if denied:
@@ -825,7 +831,7 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
         return {"status": "RESET", "fresh": demo.fresh, "clock": clock_info()}
 
     # The hand-off queue for the operations panel.
-    @app.get("/demo/api/cases")
+    @router.get("/demo/api/cases")
     async def cases(request: Request) -> Any:
         def read() -> dict[str, Any]:
             conn = db(True)
@@ -853,7 +859,7 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
         return local_only(request) or await run_in_threadpool(read)
 
     # A coordinator claims a case.
-    @app.post("/demo/api/cases/{case_id}/claim")
+    @router.post("/demo/api/cases/{case_id}/claim")
     async def claim(request: Request, case_id: str, body: ClaimIn) -> Any:
         denied = local_only(request)
         if denied:
@@ -871,7 +877,7 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
         return await run_in_threadpool(go)
 
     # A coordinator resolves a case with a code and note.
-    @app.post("/demo/api/cases/{case_id}/resolve")
+    @router.post("/demo/api/cases/{case_id}/resolve")
     async def resolve(request: Request, case_id: str, body: ResolveIn) -> Any:
         denied = local_only(request)
         if denied:
@@ -889,7 +895,7 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
         return await run_in_threadpool(go)
 
     # Appointment history and the notification outbox.
-    @app.get("/demo/api/activity")
+    @router.get("/demo/api/activity")
     async def activity(request: Request) -> Any:
         def read() -> dict[str, Any]:
             conn = db(True)
@@ -950,7 +956,7 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
         return local_only(request) or await run_in_threadpool(read)
 
     # Deliver queued downstream notices now.
-    @app.post("/demo/api/deliver")
+    @router.post("/demo/api/deliver")
     async def deliver(request: Request) -> Any:
         denied = local_only(request)
         if denied:
@@ -966,6 +972,41 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
                 conn.close()
 
         return await run_in_threadpool(go)
+
+    # Mount the guarded routes.
+    app.include_router(router)
+
+
+# The seeded sign-in of the demonstration console (local tooling only; never created by the production factories).
+DEMO_USER_EMAIL = "demo@localhost.test"
+# The only client addresses /demo/login accepts: strictly loopback (not the wider LOCAL_HOSTS the page itself tolerates).
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def seed_demo_user(conn: sqlite3.Connection, clock: FakeClock) -> None:
+    """The demo warehouse authority, bound to every facility in the database (idempotent)."""
+    uid = "USR-DEMO-LOCAL"
+    conn.execute("insert or ignore into users(user_id, email, role, status, display_name, invited_by, created_at) "
+                 "values (?,?,'WAREHOUSE_AUTHORITY','ACTIVE','Demo Console',NULL,?)", (uid, DEMO_USER_EMAIL, clock.now().isoformat()))
+    # Every facility, including ones added by the demo fixtures.
+    conn.execute("insert or ignore into user_facilities(user_id, facility_id) select ?, facility_id from facilities", (uid,))
+    conn.commit()
+
+
+def carry_sign_ins(old: Path, new: Path) -> None:
+    """Copy users, their facilities and live sessions from the old demo database to a rebuilt one, so a reset keeps you signed in."""
+    src = open_connection(path=old, readonly=True)
+    dst = open_connection(path=new)
+    try:
+        for table in ("users", "user_facilities", "auth_sessions"):
+            rows = src.execute(f"select * from {table}").fetchall()
+            if rows:
+                marks = ",".join("?" for _ in rows[0])
+                dst.executemany(f"insert or ignore into {table} values ({marks})", [tuple(r) for r in rows])
+        dst.commit()
+    finally:
+        src.close()
+        dst.close()
 
 
 def build_demo_app(workdir: Path | None = None, live_factory: Callable[[], Any] | None = None, policy: Any = None,
@@ -990,8 +1031,13 @@ def build_demo_app(workdir: Path | None = None, live_factory: Callable[[], Any] 
     # The fake cache.
     redis = fakeredis.FakeRedis(decode_responses=True)
 
-    # Build the first database.
+    # Build the first database, with the demo console's own sign-in.
     build_demo_db(db_path, fresh)
+    first = open_connection(path=db_path)
+    try:
+        seed_demo_user(first, clock)
+    finally:
+        first.close()
     # Shared state for the routes (its reset function is attached just below).
     state = DemoState(clock=clock, db_path=db_path, reset=lambda **_: None, fresh=fresh, live_factory=live_factory,
                       model_name=getattr(policy, "model_id", "") if live_factory else "")
@@ -1007,6 +1053,13 @@ def build_demo_app(workdir: Path | None = None, live_factory: Callable[[], Any] 
         old = state.db_path
         new = work / f"demo-{generation['n']}.sqlite3"
         build_demo_db(new, state.fresh)
+        # The demo user and every live session move across, so the browser stays signed in through a reset.
+        carry_sign_ins(old, new)
+        carried = open_connection(path=new)
+        try:
+            seed_demo_user(carried, clock)
+        finally:
+            carried.close()
         # Switch every route (and the message pipeline) to the new file.
         state.db_path = new
         deps.db_path = new
@@ -1027,5 +1080,33 @@ def build_demo_app(workdir: Path | None = None, live_factory: Callable[[], Any] 
         gateway_factory=live_factory if live_factory else UnconfiguredGateway)
     # Remove a stray folder if one exists (harmless if not).
     shutil.rmtree(work / "unused", ignore_errors=True)
+    app = create_app(deps)
+
+    # Local tooling only: a loopback client trades itself for a session as the seeded demo user. Registered here, never by create_app.
+    @app.get("/demo/login")
+    async def demo_login(request: Request) -> Any:
+        host = request.client.host if request.client else ""
+        # Anyone else is refused and given nothing.
+        if host not in LOOPBACK_HOSTS:
+            return JSONResponse({"status": "REJECTED", "reason_code": "DEMO_IS_LOCAL_ONLY"}, status_code=403)
+
+        def go() -> Any:
+            conn = open_connection(path=deps.db_path)
+            try:
+                user = users.find_by_email(conn, DEMO_USER_EMAIL)
+                if user is None:
+                    seed_demo_user(conn, clock)
+                    user = users.find_by_email(conn, DEMO_USER_EMAIL)
+                assert user is not None
+                token = sessions.create(conn, user, "GOOGLE", clock)
+            finally:
+                conn.close()
+            resp = RedirectResponse("/demo", status_code=302)
+            # Loopback traffic is plain http, so the Secure flag would stop the browser sending the cookie back.
+            resp.set_cookie(sessions.COOKIE_NAME, token, max_age=8 * 3600, **sessions.cookie_kwargs(False))  # type: ignore[arg-type]
+            return resp
+
+        return await run_in_threadpool(go)
+
     # Return the app and its dependencies.
-    return create_app(deps), deps
+    return app, deps

@@ -6,7 +6,6 @@ import sqlite3
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 
 from setuhaul.clock import FakeClock
 from setuhaul.db import open_connection
@@ -14,6 +13,7 @@ from setuhaul.demo_ui import build_demo_app
 from setuhaul.language import LANGS
 from setuhaul.partner_booking import handle_reply, render_partner_status, request_slot
 from setuhaul.stub_model import StubGateway
+from tests.auth_helpers import demo_client
 from tests.helpers import at, seed_partner_facility
 
 CONTACT = "partner.desk@partner.example"
@@ -29,7 +29,7 @@ def _approve(conn: sqlite3.Connection, clock: FakeClock, ref: str, mid: str = "<
 def demo(tmp_path: Path):  # type: ignore[no-untyped-def]
     app, deps = build_demo_app(tmp_path / "demo", live_factory=StubGateway)
     conn = open_connection(path=deps.demo.db_path)
-    yield TestClient(app), deps, conn
+    yield demo_client(app), deps, conn
     conn.close()
 
 

@@ -46,7 +46,7 @@ from pathlib import Path
 from typing import Any
 
 # FastAPI is the web framework.
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 
 # The error raised when a request body fails validation.
 from fastapi.exceptions import RequestValidationError
@@ -63,11 +63,15 @@ from redis import Redis
 # Runs blocking database code in a worker thread so the event loop is not blocked.
 from starlette.concurrency import run_in_threadpool
 
-# Live hold checker for conversation memory.
+# Web sessions, the role guard and the facility scope of cases.
+from setuhaul.auth import sessions
+from setuhaul.auth.authz import AuthzError, require_role
 from setuhaul.auth.google import GoogleVerifier
 
 # The Telegram reply sender type.
 from setuhaul.auth.telegram import TelegramClient
+from setuhaul.auth.users import User
+from setuhaul.auth.warehouse_routes import case_ids_in_scope
 from setuhaul.booking import make_hold_checker
 
 # Real or simulated clock.
@@ -639,28 +643,62 @@ def create_app(deps: AppDeps) -> FastAPI:
         code = {"NOT_FOUND": 404, "NOT_YOUR_CASE": 403, "INVALID_RESOLUTION": 422}.get(r.status, 409)
         return _reject(rid, code, r.status, case_id=r.case_id, claimed_by=r.claimed_by)
 
+    # Who is calling a case route: a legacy bearer token (all cases, the token's name) or a web session (scoped, the user's name).
+    # A plain dependency, so it runs (in a worker thread) before the body is validated and an anonymous caller always gets 401.
+    def case_actor(request: Request) -> tuple[str, User | None]:
+        # The service-to-service fallback keeps its old meaning exactly.
+        who = coordinator(request)
+        if who is not None:
+            return who, None
+        # Neither a bearer token nor a session cookie: the same 401 as before.
+        if not request.cookies.get(sessions.COOKIE_NAME):
+            raise AuthzError(401, "UNAUTHORIZED")
+        # A session must carry a warehouse role with a facility (or be an admin); refusals are 401/403/503.
+        user = require_role("WAREHOUSE_AUTHORITY", "ADMIN")(request)
+        return user.display_name or user.email, user
+
+    # A case that is not in the session user's scope looks like it does not exist.
+    def not_found(rid: str, case_id: str) -> JSONResponse:
+        return _reject(rid, 404, "NOT_FOUND", case_id=case_id, claimed_by=None)
+
+    # Run a change on one case after the scope check (the bearer fallback has no scope).
+    def change_case(rid: str, case_id: str, user: User | None, act: Callable[[sqlite3.Connection], TransitionResult]) -> JSONResponse:
+        def go(c: sqlite3.Connection) -> JSONResponse:
+            if user is not None and not case_ids_in_scope(c, user, case_id=case_id):
+                return not_found(rid, case_id)
+            return transition_response(rid, act(c))
+
+        return with_conn(rid, go)
+
     # List cases (open and claimed by default).
     @app.get("/v1/coordinator/cases")
-    async def cases(request: Request, status: str | None = None, limit: int = 50) -> JSONResponse:
+    async def cases(request: Request, actor: tuple[str, User | None] = Depends(case_actor), status: str | None = None, limit: int = 50) -> JSONResponse:
         rid = request.state.request_id
-        if coordinator(request) is None:
-            return _reject(rid, 401, "UNAUTHORIZED")
+        user = actor[1]
         # Keep only valid status names from the query.
         statuses = tuple(s for s in (status or "OPEN,CLAIMED").split(",") if s in ("OPEN", "CLAIMED", "RESOLVED", "CANCELLED"))
-        return await run_in_threadpool(with_conn, rid, lambda c: JSONResponse(
-            {"cases": [x.model_dump(mode="json") for x in list_open_cases(c, statuses or ("OPEN", "CLAIMED"), min(limit, 200))], "request_id": rid}))
+        statuses = statuses or ("OPEN", "CLAIMED")
+
+        def read(c: sqlite3.Connection) -> JSONResponse:
+            if user is None:
+                found = list_open_cases(c, statuses, min(limit, 200))
+            else:
+                # Same order and cap as the unscoped list, but only cases bound for the user's facilities.
+                found = [x for x in (get_case(c, i) for i in case_ids_in_scope(c, user, statuses, min(limit, 200))) if x is not None]
+            return JSONResponse({"cases": [x.model_dump(mode="json") for x in found], "request_id": rid})
+
+        return await run_in_threadpool(with_conn, rid, read)
 
     # One case with its full history.
     @app.get("/v1/coordinator/cases/{case_id}")
-    async def case_detail(request: Request, case_id: str) -> JSONResponse:
+    async def case_detail(request: Request, case_id: str, actor: tuple[str, User | None] = Depends(case_actor)) -> JSONResponse:
         rid = request.state.request_id
-        if coordinator(request) is None:
-            return _reject(rid, 401, "UNAUTHORIZED")
+        user = actor[1]
 
         # Load the case and its events.
         def read(c: sqlite3.Connection) -> JSONResponse:
             case = get_case(c, case_id)
-            if case is None:
+            if case is None or (user is not None and not case_ids_in_scope(c, user, case_id=case_id)):
                 return _reject(rid, 404, "NOT_FOUND")
             from setuhaul.escalation import case_events
 
@@ -670,28 +708,25 @@ def create_app(deps: AppDeps) -> FastAPI:
 
     # Claim a case.
     @app.post("/v1/coordinator/cases/{case_id}/claim")
-    async def claim_endpoint(request: Request, case_id: str) -> JSONResponse:
-        rid, who = request.state.request_id, coordinator(request)
-        if who is None:
-            return _reject(rid, 401, "UNAUTHORIZED")
-        return await run_in_threadpool(with_conn, rid, lambda c: transition_response(rid, claim_case(c, case_id, who, deps.clock)))
+    async def claim_endpoint(request: Request, case_id: str, actor: tuple[str, User | None] = Depends(case_actor)) -> JSONResponse:
+        rid = request.state.request_id
+        who, user = actor
+        return await run_in_threadpool(change_case, rid, case_id, user, lambda c: claim_case(c, case_id, who, deps.clock))
 
     # Resolve a claimed case.
     @app.post("/v1/coordinator/cases/{case_id}/resolve")
-    async def resolve_endpoint(request: Request, case_id: str, body: ResolveIn) -> JSONResponse:
-        rid, who = request.state.request_id, coordinator(request)
-        if who is None:
-            return _reject(rid, 401, "UNAUTHORIZED")
-        return await run_in_threadpool(with_conn, rid, lambda c: transition_response(
-            rid, resolve_case(c, case_id, who, body.resolution_code, body.note, deps.clock)))
+    async def resolve_endpoint(request: Request, case_id: str, body: ResolveIn, actor: tuple[str, User | None] = Depends(case_actor)) -> JSONResponse:
+        rid = request.state.request_id
+        who, user = actor
+        return await run_in_threadpool(change_case, rid, case_id, user, lambda c: resolve_case(
+            c, case_id, who, body.resolution_code, body.note, deps.clock))
 
     # Reopen a recently resolved case.
     @app.post("/v1/coordinator/cases/{case_id}/reopen")
-    async def reopen_endpoint(request: Request, case_id: str) -> JSONResponse:
-        rid, who = request.state.request_id, coordinator(request)
-        if who is None:
-            return _reject(rid, 401, "UNAUTHORIZED")
-        return await run_in_threadpool(with_conn, rid, lambda c: transition_response(rid, reopen_case(c, case_id, who, deps.clock)))
+    async def reopen_endpoint(request: Request, case_id: str, actor: tuple[str, User | None] = Depends(case_actor)) -> JSONResponse:
+        rid = request.state.request_id
+        who, user = actor
+        return await run_in_threadpool(change_case, rid, case_id, user, lambda c: reopen_case(c, case_id, who, deps.clock))
 
     # Google sign-in routes.
     from setuhaul.auth.routes import register_auth_routes
@@ -701,6 +736,10 @@ def create_app(deps: AppDeps) -> FastAPI:
     from setuhaul.auth.admin_routes import register_admin_routes
 
     register_admin_routes(app, deps)
+    # Read APIs for the warehouse screens: partner slot requests and project drivers' chats.
+    from setuhaul.auth.warehouse_routes import register_warehouse_routes
+
+    register_warehouse_routes(app, deps)
     # The Telegram driver channel reuses the driver pipeline above.
     from setuhaul.auth.telegram_routes import register_telegram_routes
 
