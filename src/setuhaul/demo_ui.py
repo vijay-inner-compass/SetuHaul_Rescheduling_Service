@@ -453,6 +453,16 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
             data = json.loads(bytes(resp.body))
             # Each message takes 20 simulated seconds, so a 180-second hold can lapse during a demo.
             demo.clock.advance(timedelta(seconds=MESSAGE_ADVANCE_SECONDS))
+            # A partner-warehouse request made in this chat is emailed straight away (production runs this as a scheduled job).
+            try:
+                sender, _, _ = mail()
+                mail_conn = db()
+                try:
+                    send_pending_requests(mail_conn, demo.clock, sender)
+                finally:
+                    mail_conn.close()
+            except Exception:  # noqa: BLE001, S110 - a mail problem must never break the driver's reply
+                pass
             return {"http_status": resp.status_code, **data, "clock": clock_info()}
 
         return await run_in_threadpool(go)

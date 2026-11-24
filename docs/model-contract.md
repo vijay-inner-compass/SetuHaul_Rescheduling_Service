@@ -21,7 +21,9 @@ External tracing (LangSmith) is OFF unless `SETUHAUL_LANGSMITH=approved` and `LA
 ## What the model can call
 Read tools: `list_my_shipments`, `get_shipment_status`, `compute_eta`, `search_slot_options`, `compare_option_set`,
 `offer_original_slot`. Write tools: `request_hold`, `confirm_reschedule`, `release_pending_change`,
-`cancel_appointment`. Always: `escalate_to_operations` (SAFETY, REGULATED_LOAD, POLICY_CONFLICT, DRIVER_REQUESTED,
+`cancel_appointment`, `request_partner_slot` (offered only when one of the driver's open loads is bound for a partner
+warehouse; it records an email request, books nothing, and the reply is worded by the system from the stored request).
+Always: `escalate_to_operations` (SAFETY, REGULATED_LOAD, POLICY_CONFLICT, DRIVER_REQUESTED,
 OTHER_UNCERTAINTY). Each description is written as a job description: USE / DO NOT USE / ARGUMENTS / RETURNS / FAILURE CODES.
 
 Rules enforced in code, not by the prompt:

@@ -120,3 +120,18 @@ def test_bad_request_is_a_clear_answer_not_a_crash(demo) -> None:  # type: ignor
     assert client.post("/demo/api/partner-request", json={"shipment_id": "SHP1006"}).json()["status"] == "NOT_PARTNER_FACILITY"
     assert client.post("/demo/api/partner-request", json={"start": "25:99"}).status_code == 422
     assert client.post("/demo/api/partner-reply", json={"request_ref": "PR-NOPE", "decision": "APPROVE"}).status_code == 404
+
+
+def test_sync_sends_a_request_queued_outside_the_console(demo) -> None:  # type: ignore[no-untyped-def]
+    from setuhaul.db import open_connection
+    from setuhaul.partner_booking import request_slot
+    from tests.helpers import at
+
+    client, deps = demo
+    conn = open_connection(path=deps.demo.db_path)
+    ref = request_slot(conn, deps.demo.clock, shipment_id="SHP-DEMO-P1", proposed_start=at("12:00"), proposed_end=at("13:00")).request_ref
+    conn.close()
+    assert client.get("/demo/api/partner-mailbox").json()["requests"][0]["email_status"] == "PENDING"
+    assert client.post("/demo/api/partner-sync").json()["sent"] == 1
+    box = client.get("/demo/api/partner-mailbox").json()
+    assert box["requests"][0]["email_status"] == "SENT" and ref in box["sent"][0]["subject"]

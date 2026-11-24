@@ -221,6 +221,13 @@ repair 45, no/stale GPS    : ClarificationNeeded MISSING_TRAVEL_TIME "After the 
 The unit tests for the boundary (exactly 30 minutes is not a discrepancy, 31 is) are in `tests/test_eta.py`.
 Remember the console's Send calls the shared store function directly; the signed endpoints are shown in section 7.
 
+## 5b. Partner warehouse by email (new)
+1. Start the console (`python scripts/run_demo.py`). Open **Operations > Partner mail**, press **Request partner slot (12:00)**.
+2. The request email appears (to the demo partner's coordinator). Switch the dock board to **Partner Warehouse Jaipur**: the request shows under the board as *waiting*, not booked.
+3. Press **Partner replies APPROVE**. The reply is read from the (simulated) inbox, the slot is booked and the board cell turns purple (partner warehouse). The driver (Ravi Partner-Demo) gets the update in the chat.
+4. Try **DECLINE**, or move time on with **+3 min and sweep** past 2 hours to see the request expire; the original booking is never touched.
+5. Real Gmail: set the `.env` block, run `python scripts/check_email_config.py`, set `SETUHAUL_PARTNER_EMAIL_MODE=live`, restart. The tab then shows real sent mail; reply from the partner mailbox and press **Check mailbox**.
+
 ## 6. Evidence scripts (each is a demonstration of a failure or rule)
 
 | Show this | Command | What you will see (observed) |

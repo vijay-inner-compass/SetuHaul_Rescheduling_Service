@@ -63,6 +63,7 @@ from setuhaul.model_gateway import (
 from setuhaul.observability import InMemoryExporter, RequestContext, log_event, start_span
 
 # The system prompt and the leak detector.
+from setuhaul.partner_booking import render_partner_status
 from setuhaul.prompts import build_system_prompt, leaks_prompt
 
 # The tool registry and per-turn state.
@@ -371,6 +372,11 @@ def _finalize(
     # A hold was released.
     elif turn.released:
         parts.append(say("hold_released", lang))
+    # A partner-warehouse request was made: worded from the stored request, never from the model.
+    elif turn.partner_shipment_id:
+        partner_text = render_partner_status(conn, turn.partner_shipment_id, lang)
+        if partner_text:
+            parts.append(partner_text)
 
     # Re-read state, as tools may have changed it.
     mem_state = services.memory.load(driver_id, thread_id).state

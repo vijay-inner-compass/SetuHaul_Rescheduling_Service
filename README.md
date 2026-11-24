@@ -55,6 +55,13 @@ Model configuration comes from the environment only: `SETUHAUL_MODEL_PROVIDER`, 
 (`SETUHAUL_MODEL_PROVIDER` is `openai` or `anthropic`; optionally a git-ignored `.env`, see `.env.example`). With none set, every turn takes the safe "cannot check bookings right now"
 path and opens an escalation case. Optional LangSmith tracing is off unless `SETUHAUL_LANGSMITH=approved` and `LANGSMITH_API_KEY` are set (scrubbed first; see `.env.example`). Load-test-only switches (`SETUHAUL_USE_STUB_MODEL`, `fakeredis://`, `SETUHAUL_FAKE_NOW`) are not for production.
 
+## Partner warehouses by email
+For a load bound for a partner warehouse (a facility whose docks we do not control) the service emails the warehouse and books
+only after their approval reply. See decision D69. Mail is `simulated` by default (in memory; the demo console's **Partner mail** tab
+plays the partner's reply). For real email, copy the Gmail block in `.env.example` to `.env` (2-Step Verification, an app password,
+IMAP enabled, a dedicated mailbox), set `SETUHAUL_PARTNER_EMAIL_MODE=live`, then run `python scripts/check_email_config.py`.
+Schedule `jobs/send_partner_requests`, `jobs/poll_partner_replies` and `jobs/expire_partner_requests` like the other jobs.
+
 ## Layout
 ```
 src/setuhaul/   config, clock, db, identity, rate_limit, memory, eta, feasibility, capacity, allocation, option_history,
