@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
-from setuhaul.auth import onboarding
+from setuhaul.auth import onboarding, projects
 from setuhaul.auth.authz import require_role
 from setuhaul.auth.http import reject as _reject
 from setuhaul.auth.users import User
@@ -24,7 +24,8 @@ if TYPE_CHECKING:
 
 # Refusal code -> HTTP status; anything unlisted is a 422 (bad input).
 _STATUS = {"FORBIDDEN": 403, "DRIVER_NOT_FOUND": 404, "DUPLICATE_PHONE": 409, "DUPLICATE_LICENCE": 409,
-           "NOT_PENDING": 409, "LICENCE_EXPIRED": 409}
+           "NOT_PENDING": 409, "LICENCE_EXPIRED": 409, "PROJECT_NOT_FOUND": 404, "FACILITY_NOT_FOUND": 404,
+           "NOT_ALLOCATED": 404, "DUPLICATE_CONTRACT": 409, "ALREADY_ALLOCATED": 409, "PROJECT_CLOSED": 409}
 
 
 # The body of POST /v1/drivers; unknown fields are refused.
@@ -37,6 +38,24 @@ class NewDriver(BaseModel):
     licence_expiry: date
     carrier_id: str = Field(min_length=1, max_length=32)
     vehicle_id: str = Field(min_length=1, max_length=32)
+
+
+# The body of POST /v1/projects; unknown fields are refused.
+class NewProject(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    customer_name: str = Field(min_length=1, max_length=120)
+    contract_ref: str = Field(min_length=1, max_length=60)
+    facility_id: str = Field(min_length=1, max_length=32)
+    starts_on: date
+    ends_on: date | None = None
+
+
+# The body of the allocate and release routes.
+class DriverRef(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    driver_id: str = Field(min_length=1, max_length=32)
 
 
 def register_admin_routes(app: FastAPI, deps: AppDeps) -> None:
@@ -100,3 +119,44 @@ def register_admin_routes(app: FastAPI, deps: AppDeps) -> None:
 
     app.post("/v1/drivers/{driver_id}/approve")(decision(True))
     app.post("/v1/drivers/{driver_id}/reject")(decision(False))
+
+    # Projects: both roles (the guard is spelled inline so FastAPI can resolve it); the library applies the facility scope and answers 404 for projects out of scope.
+    @app.post("/v1/projects")
+    async def create_project(request: Request, body: NewProject,
+                             user: Annotated[User, Depends(require_role("WAREHOUSE_AUTHORITY", "ADMIN"))]) -> Response:
+        rid = request.state.request_id
+
+        def write(conn: sqlite3.Connection) -> Response:
+            pid = projects.create(conn, actor=user, customer_name=body.customer_name, contract_ref=body.contract_ref,
+                                  facility_id=body.facility_id, starts_on=body.starts_on, ends_on=body.ends_on,
+                                  clock=deps.clock)
+            return JSONResponse({"status": "OK", "project_id": pid, "request_id": rid}, status_code=201)
+
+        return await run_in_threadpool(with_conn, rid, write)
+
+    @app.get("/v1/projects")
+    async def list_projects(request: Request, user: Annotated[User, Depends(require_role("WAREHOUSE_AUTHORITY", "ADMIN"))]) -> Response:
+        rid = request.state.request_id
+
+        def read(conn: sqlite3.Connection) -> Response:
+            return JSONResponse({"projects": projects.list_projects(conn, user), "request_id": rid})
+
+        return await run_in_threadpool(with_conn, rid, read)
+
+    def allocation(allocate: bool) -> Any:
+        async def handler(request: Request, project_id: str, body: DriverRef,
+                          user: Annotated[User, Depends(require_role("WAREHOUSE_AUTHORITY", "ADMIN"))]) -> Response:
+            rid = request.state.request_id
+
+            def write(conn: sqlite3.Connection) -> Response:
+                fn = projects.allocate if allocate else projects.release
+                fn(conn, actor=user, project_id=project_id, driver_id=body.driver_id, clock=deps.clock)
+                return JSONResponse({"status": "OK", "project_id": project_id, "driver_id": body.driver_id,
+                                     "request_id": rid})
+
+            return await run_in_threadpool(with_conn, rid, write)
+
+        return handler
+
+    app.post("/v1/projects/{project_id}/allocate")(allocation(True))
+    app.post("/v1/projects/{project_id}/release")(allocation(False))
