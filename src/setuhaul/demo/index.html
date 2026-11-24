@@ -123,6 +123,9 @@ table.board{border-collapse:separate;border-spacing:0;width:100%;font-variant-nu
 .cell.HELD{background:var(--warn-soft);color:var(--warn);background-image:repeating-linear-gradient(135deg,transparent 0 6px,rgba(161,92,0,.12) 6px 12px)}
 .cell.BOOKED{background:#dce8f8;color:var(--brand)}
 .cell.BLOCKED{background:#e5e8ed;color:var(--ink-3);background-image:repeating-linear-gradient(45deg,transparent 0 5px,rgba(15,27,45,.08) 5px 10px)}
+.cell.BOOKED.partner{background:#efe3fa;color:#6b2fa0}
+.partner-pending{margin-top:8px;font-size:12.5px;color:var(--ink-2)}
+.mailbody{white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace;font-size:12px;background:#f6f8fb;border:1px solid var(--line);border-radius:6px;padding:8px;margin:6px 0}
 .cell.past{opacity:.45}
 .cell.mine{outline:2px solid var(--brand-2);outline-offset:-2px;box-shadow:inset 0 0 0 2px #fff}
 
@@ -230,6 +233,7 @@ table.t td{padding:7px 6px;border-bottom:1px solid var(--line);vertical-align:to
         </div>
       </div>
       <div class="grid-wrap"><table class="board" id="board" aria-label="Dock availability"></table></div>
+      <div class="partner-pending" id="partnerPending" aria-live="polite"></div>
       <p class="muted" style="margin-top:10px">Select an available cell to book it as the warehouse planner for another truck. That is how you create a same-slot conflict for the driver to run into.</p>
     </div>
   </section>
@@ -240,6 +244,7 @@ table.t td{padding:7px 6px;border-bottom:1px solid var(--line);vertical-align:to
       <div class="tabs" role="tablist">
         <button role="tab" id="tabCases" aria-selected="true">Cases<span class="count" id="caseCount" style="display:none">0</span></button>
         <button role="tab" id="tabActivity" aria-selected="false">Activity</button>
+        <button role="tab" id="tabPartner" aria-selected="false">Partner mail</button>
       </div>
     </header>
     <div class="panel-body" id="opsBody"></div>
@@ -427,11 +432,14 @@ async function refreshBoard(){
       if(!s){h+=`<td></td>`;return;}
       const own=s.driver_id&&s.driver_id===mine;
       const text=s.status==="BOOKED"||s.status==="HELD"?initials((s.label||"").split(" · ")[0]):"";
-      const tip=`${s.start}–${s.end} dock ${d.code}: ${{AVAILABLE:"available",HELD:"held — "+s.label,BOOKED:"booked — "+s.label,BLOCKED:"blocked"+(s.label?" — "+s.label:"")}[s.status]}`;
-      h+=`<td><button class="cell ${s.status}${s.past?" past":""}${own?" mine":""}" data-slot="${esc(s.slot_id)}" data-status="${s.status}" data-tip="${esc(tip)}" title="${esc(tip)}" aria-label="${esc(tip)}"${s.status==="AVAILABLE"&&!s.past?"":" tabindex='-1'"}>${esc(text)}</button></td>`;
+      const pc=s.partner?" partner":"";
+      const tip=`${s.start}–${s.end} dock ${d.code}: ${{AVAILABLE:"available",HELD:"held — "+s.label,BOOKED:(s.partner?"booked by partner warehouse — ":"booked — ")+s.label,BLOCKED:"blocked"+(s.label?" — "+s.label:"")}[s.status]}`;
+      h+=`<td><button class="cell ${s.status}${pc}${s.past?" past":""}${own?" mine":""}" data-slot="${esc(s.slot_id)}" data-status="${s.status}" data-tip="${esc(tip)}" title="${esc(tip)}" aria-label="${esc(tip)}"${s.status==="AVAILABLE"&&!s.past?"":" tabindex='-1'"}>${esc(text)}</button></td>`;
     });h+=`</tr>`;
   });
   $("#board").innerHTML=h+`</tbody>`;setClock(b.clock);
+  const pp=b.pending_partner||[];
+  $("#partnerPending").innerHTML=pp.length?`<b>Waiting for the partner warehouse:</b> ${pp.map(p=>`${esc(p.order_reference)} (${esc(p.driver)}) for ${esc(p.start)}–${esc(p.end)}, request ${esc(p.request_ref)}`).join("; ")}. Not booked yet.`:"";
 }
 $("#board").addEventListener("click",e=>{
   const c=e.target.closest(".cell");if(!c||c.dataset.status!=="AVAILABLE"||c.classList.contains("past"))return;
@@ -478,12 +486,31 @@ async function refreshActivity(){
    <div style="margin-top:10px"><button class="btn small" id="deliverBtn"${pending?"":" disabled"}>Deliver ${pending} queued notification${pending===1?"":"s"}</button></div>`;
   const db=$("#deliverBtn");if(db)db.onclick=async()=>{const r=await api("/demo/api/deliver",{});toast(`Delivered ${r.data.sent} notification(s).`,"ok");refreshActivity();};
 }
-async function refreshOps(){await Promise.all([refreshCases(),state.tab==="activity"?refreshActivity():Promise.resolve()]);}
+const PR_CHIP={PENDING_PARTNER:["warn","Waiting for partner"],APPROVED:["ok","Approved and booked"],DECLINED:["mute","Declined"],EXPIRED:["mute","Expired"],FAILED:["bad","Could not book"]};
+async function refreshPartner(){
+  const r=await api("/demo/api/partner-mailbox");if(!r.ok||state.tab!=="partner")return;const m=r.data;
+  const sim=m.mode==="simulated";
+  const reqs=m.requests.map(q=>{const chip=PR_CHIP[q.status]||["mute",q.status];const mail=m.sent.find(x=>x.request_ref===q.request_ref);
+    const acts=q.status==="PENDING_PARTNER"&&sim?`<div class="actions"><button class="btn small primary" data-preply="APPROVE" data-ref="${esc(q.request_ref)}">Partner replies APPROVE</button><button class="btn small" data-preply="DECLINE" data-ref="${esc(q.request_ref)}">Partner replies DECLINE</button></div>`:"";
+    return `<div class="card"><div class="head"><div><h4>${esc(q.order_reference)} · ${esc(q.start)}–${esc(q.end)}</h4><div class="muted">${esc(q.facility)} · ${esc(q.request_ref)}</div></div><span class="chip ${chip[0]}">${chip[1]}</span></div>
+      <dl class="kv"><dt>Email</dt><dd>${q.email_status==="SENT"?"Sent":q.email_status==="FAILED"?"Failed: "+esc(q.last_error||""):"Queued"}</dd></dl>
+      ${mail?`<div class="muted">To ${esc(mail.to)}</div><div class="mailbody">${esc(mail.subject)}
+
+${esc(mail.body)}</div>`:""}${acts}</div>`;}).join("");
+  const inbox=m.inbox.length?`<div class="section-title">Replies read</div><table class="t"><thead><tr><th>From</th><th>Request</th><th>Result</th></tr></thead><tbody>${m.inbox.map(i=>`<tr><td>${esc(i.from_addr)}</td><td>${esc(i.request_ref||"none")}</td><td>${esc(i.outcome)}</td></tr>`).join("")}</tbody></table>`:"";
+  $("#opsBody").innerHTML=`<div class="muted" style="margin-bottom:8px">${sim?"Simulated mailbox: nothing leaves this computer. Use the buttons to play the partner's reply.":"Live Gmail mailbox: requests are really emailed and replies are read from the inbox."}</div>
+    <div class="actions" style="margin-bottom:8px"><button class="btn small primary" id="prAsk">Request partner slot (12:00)</button><button class="btn small" id="prSync">Check mailbox</button></div>
+    ${reqs||`<div class="empty">No partner requests yet.</div>`}${inbox}`;
+  $("#prAsk").onclick=async()=>{const x=await api("/demo/api/partner-request",{});toast(x.ok?(x.data.status==="REQUESTED"?"Request emailed to the partner warehouse.":"Not sent: "+x.data.status.replaceAll("_"," ").toLowerCase()+"."):"Could not send the request.",x.ok&&x.data.status==="REQUESTED"?"ok":"bad");refreshPartner();refreshBoard();};
+  $("#prSync").onclick=async()=>{const x=await api("/demo/api/partner-sync",{});toast(x.ok?`Sent ${x.data.sent}, read ${x.data.replies_handled} repl${x.data.replies_handled===1?"y":"ies"}.`:"Could not check the mailbox.",x.ok?"ok":"bad");refreshPartner();refreshBoard();refreshDriver();};
+  document.querySelectorAll("[data-preply]").forEach(b=>{b.onclick=async()=>{const x=await api("/demo/api/partner-reply",{request_ref:b.dataset.ref,decision:b.dataset.preply});toast(x.ok?"Partner reply read: "+x.data.request_status.toLowerCase()+".":"Could not play the reply.",x.ok?"ok":"bad");refreshPartner();refreshBoard();refreshDriver();};});
+}
+async function refreshOps(){await Promise.all([refreshCases(),state.tab==="activity"?refreshActivity():Promise.resolve(),state.tab==="partner"?refreshPartner():Promise.resolve()]);}
 async function refreshDrivers(){const r=await api("/demo/api/drivers");if(r.ok){state.drivers=r.data.drivers;renderDriverCard();}}
 
 /* wiring */
-function setTab(t){state.tab=t;$("#tabCases").setAttribute("aria-selected",String(t==="cases"));$("#tabActivity").setAttribute("aria-selected",String(t==="activity"));t==="cases"?renderCases({cases:state.lastCases}):refreshActivity();}
-$("#tabCases").onclick=()=>setTab("cases");$("#tabActivity").onclick=()=>setTab("activity");
+function setTab(t){state.tab=t;$("#tabCases").setAttribute("aria-selected",String(t==="cases"));$("#tabActivity").setAttribute("aria-selected",String(t==="activity"));$("#tabPartner").setAttribute("aria-selected",String(t==="partner"));t==="cases"?renderCases({cases:state.lastCases}):t==="partner"?refreshPartner():refreshActivity();}
+$("#tabCases").onclick=()=>setTab("cases");$("#tabActivity").onclick=()=>setTab("activity");$("#tabPartner").onclick=()=>setTab("partner");
 $("#driverSel").onchange=e=>{state.driverId=e.target.value;state.gps.driver=null;gpsClear();renderDriverCard();refreshDriver();refreshBoard();};
 $("#sendForm").onsubmit=e=>{e.preventDefault();send($("#msgInput").value);};
 $("#chips").onclick=e=>{const b=e.target.closest("button");if(b)send(b.dataset.text);};
@@ -510,7 +537,7 @@ function paintFacilities(){
 async function init(reset){
   const cfg=await api("/demo/api/config");if(!cfg.ok){toast("The demonstration service is not reachable.","bad");return;}
   state.cfg=cfg.data;state.facilities=cfg.data.facilities;state.coordinators=cfg.data.coordinators;
-  state.facility=state.facility&&!reset?state.facility:(state.facilities.find(f=>f.name.includes("Jaipur"))||state.facilities[0]).id;
+  state.facility=state.facility&&!reset?state.facility:(state.facilities.find(f=>f.id==="FAC-JAI-01")||state.facilities.find(f=>f.name.includes("Jaipur"))||state.facilities[0]).id;
   setClock(cfg.data.clock);renderChips();paintModel();paintFacilities();
   await refreshDrivers();renderDrivers();await Promise.all([refreshDriver(),refreshBoard(),refreshOps()]);
 }

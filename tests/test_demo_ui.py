@@ -75,7 +75,7 @@ def test_drivers_are_listed_by_name_with_loads_by_order_and_customer(demo) -> No
     client, _ = demo
     drivers = client.get("/demo/api/drivers").json()["drivers"]
     names = {d["name"] for d in drivers}
-    assert {"Manoj Sharma", "Arjun Das", "Pradeep Jat"} <= names and len(drivers) == 15
+    assert {"Manoj Sharma", "Arjun Das", "Pradeep Jat"} <= names and len(drivers) == 16  # 15 supplied + the seeded partner-warehouse demo driver
     manoj = next(d for d in drivers if d["name"] == "Manoj Sharma")
     assert {s["order"] for s in manoj["shipments"]} == {"ORD-260804-006", "ORD-260804-021"}
     assert manoj["carrier"] == "Shakti Transport Services" and manoj["shipments"][0]["customer"]

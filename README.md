@@ -12,6 +12,7 @@ SQLite is the system of record for the prototype.
 
 * [Knowledge transfer](docs/knowledge-transfer.md): background to execution for a new engineer, in one document.
 * [Running and demonstrating](docs/running-and-demonstrating.md): setup, every demo scenario and the real API, with captured output.
+* [Scheduling algorithm](docs/scheduling-algorithm.md): how slots are judged, ranked, held and confirmed.
 * [Code walkthrough](docs/code-walkthrough/README.md): the story behind each layer. Every source file also has line-by-line comments.
 * [Demonstration guide](docs/demonstration-guide.md): what to run, what to type and what you should see.
 * [Scenario catalogue](docs/scenario-catalogue.md): edge cases and failure scenarios, each with the test that proves it.
@@ -53,6 +54,13 @@ Coordinators can also use the CLI: `python -m setuhaul.coordinator --db data/wor
 Model configuration comes from the environment only: `SETUHAUL_MODEL_PROVIDER`, `SETUHAUL_MODEL_ID`, `SETUHAUL_MODEL_API_KEY`
 (`SETUHAUL_MODEL_PROVIDER` is `openai` or `anthropic`; optionally a git-ignored `.env`, see `.env.example`). With none set, every turn takes the safe "cannot check bookings right now"
 path and opens an escalation case. Optional LangSmith tracing is off unless `SETUHAUL_LANGSMITH=approved` and `LANGSMITH_API_KEY` are set (scrubbed first; see `.env.example`). Load-test-only switches (`SETUHAUL_USE_STUB_MODEL`, `fakeredis://`, `SETUHAUL_FAKE_NOW`) are not for production.
+
+## Partner warehouses by email
+For a load bound for a partner warehouse (a facility whose docks we do not control) the service emails the warehouse and books
+only after their approval reply. See decision D69. Mail is `simulated` by default (in memory; the demo console's **Partner mail** tab
+plays the partner's reply). For real email, copy the Gmail block in `.env.example` to `.env` (2-Step Verification, an app password,
+IMAP enabled, a dedicated mailbox), set `SETUHAUL_PARTNER_EMAIL_MODE=live`, then run `python scripts/check_email_config.py`.
+Schedule `jobs/send_partner_requests`, `jobs/poll_partner_replies` and `jobs/expire_partner_requests` like the other jobs.
 
 ## Layout
 ```

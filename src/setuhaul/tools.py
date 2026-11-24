@@ -21,7 +21,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 # datetime for times built from HH:MM text.
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Typing helpers.
 from typing import Any, Literal
@@ -74,6 +74,7 @@ from setuhaul.gps import gps_arrival_floor, gps_travel_minutes_for
 from setuhaul.identity import AuthError, TrustedDriverContext, authorize_shipment
 
 # Conversation state and the hold reference.
+from setuhaul.mailcfg import load_mail_settings
 from setuhaul.memory import ConversationMemoryStore, HoldRef
 
 # Tool call, tool result and schema helper types.
@@ -84,6 +85,7 @@ from setuhaul.observability import InMemoryExporter, RequestContext, start_span
 
 # Stored menus.
 from setuhaul.option_history import get_option_set, reconcile_option_set, record_option_set
+from setuhaul.partner_booking import request_slot
 
 # ETA and constraint contracts.
 from setuhaul.schemas import (
@@ -165,6 +167,13 @@ class ShipmentQuoteArgs(_Args):
     driver_quote: str = Field(min_length=1)
 
 
+# Arguments for request_partner_slot: which load, which start time (HH:MM, today, IST), and the driver's own words.
+class PartnerSlotArgs(_Args):
+    shipment_id: str
+    start_time: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$", description="Wanted start, HH:MM today (IST).")
+    driver_quote: str = Field(min_length=1, description="The driver's own words, copied from their current message.")
+
+
 # Arguments for escalate_to_operations. Only these model-chosen reasons are allowed; system reasons (NO_SLOT etc.) are raised by code.
 class EscalateArgs(_Args):
     reason_code: Literal["SAFETY", "REGULATED_LOAD", "POLICY_CONFLICT", "DRIVER_REQUESTED", "OTHER_UNCERTAINTY"]
@@ -202,6 +211,8 @@ class TurnState:
     # True when a hold or confirmation was refused because the truck can no longer reach the slot from its current position.
     position_changed: bool = False
     committed: list[str] = field(default_factory=list)  # names of write tools that changed state
+    # Set when a partner-warehouse request was made (or already open) this turn: the reply then states its stored state.
+    partner_shipment_id: str | None = None
 
 
 @dataclass
@@ -635,6 +646,32 @@ def _escalate(ctx: ToolContext, a: EscalateArgs) -> dict[str, Any]:
     return {"status": "ESCALATING", "note": "Tell the driver operations will take over; promise no time."}
 
 
+# WRITE tool: ask the partner warehouse for a slot by email. Only records the request; a job sends the email.
+def _request_partner_slot(ctx: ToolContext, a: PartnerSlotArgs) -> dict[str, Any]:
+    # The shipment must belong to this driver.
+    authorize_shipment(ctx.conn, ctx.trusted, a.shipment_id)
+    try:
+        ttl = load_mail_settings().request_ttl_min
+    except ValueError:  # a half-configured live mailbox must not break the chat
+        ttl = 120
+    start = _today_at(ctx, a.start_time)
+    r = request_slot(ctx.conn, ctx.clock, shipment_id=a.shipment_id, proposed_start=start,
+                     proposed_end=start + timedelta(hours=1), ttl_min=ttl)
+    if r.status in ("REQUESTED", "ALREADY_PENDING"):
+        ctx.turn.partner_shipment_id = a.shipment_id
+        ctx.turn.committed.append("request_partner_slot")
+        return {"status": r.status, "request_ref": r.request_ref,
+                "note": "Tell the driver this is only a request and nothing is booked until the warehouse replies. The system words the state."}
+    return {"status": r.status, "note": "Nothing was requested. This load does not go through a partner warehouse, or cannot be moved."}
+
+
+# Availability rule: the partner tool is offered only when one of the driver's open loads is bound for a partner warehouse.
+def _has_partner_shipment(ctx: ToolContext) -> bool:
+    return ctx.conn.execute(
+        "select 1 from shipments s join facilities f on f.facility_id=s.destination_facility_id where s.driver_id=? and f.is_partner=1 "
+        "and s.current_status not in ('CANCELLED','COMPLETED','IN_DOCK') limit 1", (ctx.driver_id,)).fetchone() is not None
+
+
 # Availability rule: hold and compare tools are offered only once a menu exists.
 def _has_option_set(ctx: ToolContext) -> bool:
     return _state(ctx).latest_option_set_id is not None
@@ -717,6 +754,14 @@ REGISTRY: dict[str, ToolSpec] = {t.name: t for t in [
         dont="to undo a hold (use release_pending_change).", args="shipment_id, driver_quote.",
         returns="CANCELLED, or ESCALATE (cutoff or customer commitment: operations decides).",
         fails="APPROVAL_NOT_PRESENT, FOREIGN_SHIPMENT."), ShipmentQuoteArgs, _cancel_appointment, write=True),
+    ToolSpec("request_partner_slot", _JOB.format(
+        use="ONLY when the driver asks for a slot at a partner warehouse (a facility we do not control) for a load bound there. "
+            "It emails the warehouse; nothing is booked until they approve by reply.",
+        dont="for our own facilities (use search_slot_options), or to say anything is booked.",
+        args="shipment_id, start_time (HH:MM today IST), driver_quote (their exact words from this message).",
+        returns="REQUESTED or ALREADY_PENDING (the system words the state), or NOT_PARTNER_FACILITY / NO_PARTNER_CONTACT / SHIPMENT_NOT_RESCHEDULABLE.",
+        fails="APPROVAL_NOT_PRESENT, FOREIGN_SHIPMENT, ONE_WRITE_PER_MESSAGE."),
+        PartnerSlotArgs, _request_partner_slot, write=True, available=_has_partner_shipment),
     ToolSpec("escalate_to_operations", _JOB.format(
         use="for safety issues, regulated loads, requests the tools cannot do, or when unsure.",
         dont="for ordinary delays that the other tools can handle.",

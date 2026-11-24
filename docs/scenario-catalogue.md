@@ -209,6 +209,22 @@ Legend: **Demo** = can be shown on the demo console; **Script** = shown by an ev
 | Inconsistent case rows | refused by the database | `test_the_database_refuses_inconsistent_case_rows` |
 | Coordinator CLI | list, show, claim, resolve | `test_cli_lists_shows_claims_and_resolves` |
 
+## J2. Partner warehouse by email
+
+| Situation | Result | Test |
+|---|---|---|
+| Partner replies APPROVE from a known contact | slot booked as `WAREHOUSE`, original ended in the same transaction | `test_approve_books_with_warehouse_source_and_ends_original_atomically` |
+| Crash part-way through booking | everything rolls back; a retry still works | `test_fault_after_original_ended_rolls_back_everything` |
+| Reply is "not approved" or quotes "APPROVE or DECLINE" | ambiguous: no booking, case opened | `test_parse_decision`, `test_ambiguous_reply_escalates_and_request_stays_open` |
+| Reply from someone who is not a contact | no booking, case opened | `test_wrong_sender_escalates_and_does_not_book` |
+| Reply for another request's reference | no booking | `test_valid_sender_but_other_requests_ref_does_not_book_this_request` |
+| Same email read twice | booked once | `test_same_message_twice_books_once`, `test_poll_twice_same_mail_books_once` |
+| Approval after expiry | no booking, case opened | `test_approval_after_expiry_does_not_book` |
+| Truck already unloading at the original | no booking, case opened | `test_original_in_progress_escalates_without_booking` |
+| Partner slot taken meanwhile | request fails, original kept, case opened | `test_slot_already_taken_ends_request_failed_and_escalates` |
+| SPF/DKIM/DMARC failure | no booking, case opened | `test_failed_authentication_escalates` |
+| Driver chat asks for a partner slot | request recorded, reply worded from stored state, model claim blocked | `test_answer_is_rendered_from_stored_state_not_the_models_claim` |
+
 ## K. Gaps worth knowing
 
 * The rate limit's increment and rollback are not atomic across processes (documented in `rate_limit.py`).
