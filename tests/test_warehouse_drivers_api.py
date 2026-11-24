@@ -159,3 +159,26 @@ def test_revoke_outside_scope_is_404_and_changes_nothing(world: World) -> None:
 def test_revoke_of_a_driver_with_no_binding_is_404(world: World) -> None:
     r = world.client("wh_a").post("/v1/warehouse/drivers/DRV001/telegram/revoke")
     assert r.status_code == 404 and r.json()["reason_code"] == "NOT_BOUND"
+
+
+def test_licence_valid_in_the_list_matches_onboarding_for_every_state(world: World) -> None:
+    today = world.clock.now().date()
+    ok = _add(world, "wh_a", "Ok", "+919811100011", "LIC-11")
+    expired = _add(world, "wh_a", "Exp", "+919811100012", "LIC-12")
+    today_ok = _add(world, "wh_a", "Today", "+919811100013", "LIC-13")
+    pending = _add(world, "wh_a", "Pend", "+919811100014", "LIC-14")
+    rejected = _add(world, "wh_a", "Rej", "+919811100015", "LIC-15")
+    conn = open_connection(path=world.path)
+    try:
+        for d in (ok, expired, today_ok, rejected):
+            onboarding.approve(conn, actor=world.users["admin"], driver_id=d, clock=world.clock) if d != rejected else \
+                onboarding.reject(conn, actor=world.users["admin"], driver_id=d, clock=world.clock)
+        conn.execute("update driver_profiles set licence_expiry=? where driver_id=?", ((today - timedelta(days=1)).isoformat(), expired))
+        conn.execute("update driver_profiles set licence_expiry=? where driver_id=?", (today.isoformat(), today_ok))
+        conn.commit()
+        want = {d: onboarding.licence_valid(conn, d, today) for d in (ok, expired, today_ok, pending, rejected, "DRV001")}
+    finally:
+        conn.close()
+    assert want == {ok: True, expired: False, today_ok: True, pending: False, rejected: False, "DRV001": True}
+    got = _by_id(world.client("wh_a").get("/v1/warehouse/drivers"))
+    assert {d: got[d]["licence_valid"] for d in want} == want

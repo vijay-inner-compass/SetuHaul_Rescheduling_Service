@@ -4,13 +4,14 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import date
 from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 
-from setuhaul.auth import onboarding, projects, telegram
+from setuhaul.auth import projects, telegram
 from setuhaul.auth.authz import AuthzError, assert_facility, facility_clause, require_role
 from setuhaul.auth.http import reject as _reject
 from setuhaul.auth.users import User
@@ -171,6 +172,7 @@ def register_warehouse_routes(app: FastAPI, deps: AppDeps) -> None:
         rid = request.state.request_id
 
         def read(conn: sqlite3.Connection) -> Response:
+            # Same rule as onboarding.licence_valid, from the columns already fetched (no profile means supplied, so valid).
             today = deps.clock.now().date()
             out = []
             for r in drivers_in_scope(conn, user):
@@ -180,7 +182,8 @@ def register_warehouse_routes(app: FastAPI, deps: AppDeps) -> None:
                 out.append({"driver_id": r["driver_id"], "driver_name": r["driver_name"], "phone": mask_phone(r["phone"]),
                             "carrier_id": r["carrier_id"], "vehicle_id": r["vehicle_id"],
                             "approval_status": r["approval_status"] or "SUPPLIED", "licence_expiry": r["licence_expiry"],
-                            "licence_valid": onboarding.licence_valid(conn, r["driver_id"], today), "telegram_status": tg})
+                            "licence_valid": r["approval_status"] is None or (
+                                r["approval_status"] == "APPROVED" and date.fromisoformat(r["licence_expiry"]) >= today), "telegram_status": tg})
             return JSONResponse({"drivers": out, "request_id": rid})
 
         return await run_in_threadpool(with_conn, rid, read)

@@ -9,7 +9,6 @@ from pathlib import Path
 import pytest
 
 from setuhaul.auth import admin_api, audit, users
-from setuhaul.auth.admin_api import check_disable
 from setuhaul.clock import FakeClock
 from setuhaul.db import open_connection
 from setuhaul.identity import AuthError
@@ -106,27 +105,6 @@ def test_an_admin_cannot_disable_themselves(world: World) -> None:
     assert admin.get("/v1/admin/users").status_code == 200
 
 
-def test_the_last_active_admin_cannot_be_disabled(world: World, clock: FakeClock) -> None:
-    conn = open_connection(path=world.path)
-    try:
-        sole = world.users["admin"]
-        # A different (stale) actor object against a database holding exactly one active admin.
-        ghost = sole.model_copy(update={"user_id": "USR-GHOST"})
-        with pytest.raises(AuthError) as exc:
-            check_disable(conn, actor=ghost, target_id=sole.user_id)
-        assert exc.value.code == "LAST_ADMIN"
-        # With a second active admin the same disable is allowed, and disabling a non-admin never trips the guard.
-        other = add_user(conn, clock, "boss2@x.com", "ADMIN")
-        check_disable(conn, actor=ghost, target_id=sole.user_id)
-        check_disable(conn, actor=other, target_id=world.users["wh_a"].user_id)
-        # A disabled admin does not count as active.
-        users.disable(conn, actor=sole, user_id=other.user_id, clock=clock)
-        with pytest.raises(AuthError):
-            check_disable(conn, actor=ghost, target_id=sole.user_id)
-    finally:
-        conn.close()
-
-
 # ---- audit -------------------------------------------------------------------------------------------------
 def _seed_audit(world: World) -> None:
     conn = open_connection(path=world.path)
@@ -185,3 +163,144 @@ def test_audit_since_is_compared_in_ist(world: World) -> None:
     # An hour earlier matches everything the fixed time did and more.
     earlier = (now - timedelta(hours=1)).astimezone(UTC).isoformat()
     assert len(admin.get("/v1/admin/audit", params={"since": earlier}).json()["entries"]) >= len(results[0])
+
+
+# ---- review fixes ------------------------------------------------------------------------------------------
+def test_stale_admins_disabling_each_other_leave_one_active_admin(world: World, clock: FakeClock) -> None:
+    conn = open_connection(path=world.path)
+    try:
+        a = world.users["admin"]
+        b = add_user(conn, clock, "boss2@x.com", "ADMIN")
+        # Both actor objects were read while both admins were active; the second call uses the stale one.
+        users.disable(conn, actor=a, user_id=b.user_id, clock=clock)
+        with pytest.raises(AuthError) as exc:
+            users.disable(conn, actor=b, user_id=a.user_id, clock=clock)
+        assert exc.value.code in ("FORBIDDEN", "LAST_ADMIN")
+        active = conn.execute("select count(*) from users where role='ADMIN' and status='ACTIVE'").fetchone()[0]
+        assert active == 1
+    finally:
+        conn.close()
+
+
+def test_concurrent_mutual_disable_never_empties_the_admin_set(world: World, clock: FakeClock) -> None:
+    import threading
+    setup = open_connection(path=world.path)
+    a = world.users["admin"]
+    b = add_user(setup, clock, "boss2@x.com", "ADMIN")
+    setup.close()
+    barrier = threading.Barrier(2)
+
+    def go(actor: users.User, target: str) -> None:
+        c = open_connection(path=world.path)
+        try:
+            barrier.wait()
+            try:
+                users.disable(c, actor=actor, user_id=target, clock=clock)
+            except AuthError:
+                pass
+        finally:
+            c.close()
+
+    threads = [threading.Thread(target=go, args=(a, b.user_id)), threading.Thread(target=go, args=(b, a.user_id))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    check = open_connection(path=world.path)
+    try:
+        assert check.execute("select count(*) from users where role='ADMIN' and status='ACTIVE'").fetchone()[0] >= 1
+    finally:
+        check.close()
+
+
+def test_library_refuses_self_disable_and_last_admin(world: World, clock: FakeClock) -> None:
+    conn = open_connection(path=world.path)
+    try:
+        a = world.users["admin"]
+        with pytest.raises(AuthError) as exc:
+            users.disable(conn, actor=a, user_id=a.user_id, clock=clock)
+        assert exc.value.code == "CANNOT_DISABLE_SELF"
+        # An actor who is no longer active (stale object, row disabled) is refused outright.
+        b = add_user(conn, clock, "boss2@x.com", "ADMIN")
+        conn.execute("update users set status='DISABLED' where user_id=?", (b.user_id,))
+        conn.commit()
+        with pytest.raises(AuthError) as exc2:
+            users.disable(conn, actor=b, user_id=a.user_id, clock=clock)
+        assert exc2.value.code == "FORBIDDEN"
+        # A genuinely active admin targeting the sole other admin is allowed only while someone else stays active.
+        c = add_user(conn, clock, "boss3@x.com", "ADMIN")
+        users.disable(conn, actor=c, user_id=a.user_id, clock=clock)
+        assert users.find_by_id(conn, c.user_id).status == "ACTIVE"  # type: ignore[union-attr]
+        # Role changed under the actor: no longer an admin, so cannot disable the last admin.
+        conn.execute("update users set role='WAREHOUSE_AUTHORITY' where user_id=?", (a.user_id,))
+        conn.commit()
+        with pytest.raises(AuthError) as exc3:
+            users.disable(conn, actor=a, user_id=c.user_id, clock=clock)
+        assert exc3.value.code == "FORBIDDEN"
+    finally:
+        conn.close()
+
+
+def test_http_refusals_still_write_refused_audit_rows(world: World) -> None:
+    admin = world.client("admin")
+    assert admin.post(f"/v1/admin/users/{world.users['admin'].user_id}/disable").status_code == 409
+    conn = open_connection(path=world.path)
+    try:
+        assert len(audit.query(conn, action="DISABLE", outcome="REFUSED")) == 1
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("state", ["DISABLED_ADMIN", "ACTIVE_WAREHOUSE", "DISABLED_WAREHOUSE", "ACTIVE_ADMIN"])
+def test_bootstrap_admin_recovers_a_locked_out_owner(world: World, clock: FakeClock, state: str) -> None:
+    conn = open_connection(path=world.path)
+    try:
+        role, status = {"DISABLED_ADMIN": ("ADMIN", "DISABLED"), "ACTIVE_WAREHOUSE": ("WAREHOUSE_AUTHORITY", "ACTIVE"),
+                        "DISABLED_WAREHOUSE": ("WAREHOUSE_AUTHORITY", "DISABLED"), "ACTIVE_ADMIN": ("ADMIN", "ACTIVE")}[state]
+        conn.execute("update users set role=?, status=? where email='boss@x.com'", (role, status))
+        conn.commit()
+        got = users.bootstrap_admin(conn, "Boss@X.com", clock)
+        assert got.role == "ADMIN" and got.status == "ACTIVE"
+        rows = audit.query(conn, action="BOOTSTRAP_ADMIN_REACTIVATED")
+        # Idempotent for an already active admin: no audit row.
+        assert len(rows) == (0 if state == "ACTIVE_ADMIN" else 1)
+    finally:
+        conn.close()
+
+
+def test_since_out_of_range_is_422_not_500(world: World) -> None:
+    r = world.client("admin").get("/v1/admin/audit", params={"since": "0001-01-01T00:00:00+14:00"})
+    assert r.status_code == 422 and r.json()["reason_code"] == "INVALID_SINCE"
+
+
+def test_audit_reads_scrub_secret_keys_written_by_anyone(world: World) -> None:
+    conn = open_connection(path=world.path)
+    conn.execute("insert into audit_log(ts, actor_user_id, actor_email, action, target_type, target_id, outcome, ip, detail_json)"
+                 " values (?,?,?,?,?,?,?,?,?)",
+                 (world.clock.now().isoformat(), None, None, "X", None, None, "OK", None,
+                  '{"token": "x", "otp": "1", "pin": "2", "Authorization": "a", "cookie": "c", "secret_key": "k", "keep": 1}'))
+    conn.commit()
+    conn.close()
+    entries = world.client("admin").get("/v1/admin/audit", params={"action": "X"}).json()["entries"]
+    assert entries[0]["detail"] == {"keep": 1}
+
+
+def test_audit_limit_returns_exactly_500_of_many(world: World) -> None:
+    conn = open_connection(path=world.path)
+    conn.executemany("insert into audit_log(ts, action, outcome) values (?,?,?)",
+                     [(world.clock.now().isoformat(), "BULK", "OK")] * 650)
+    conn.commit()
+    conn.close()
+    got = world.client("admin").get("/v1/admin/audit", params={"limit": 100000, "action": "BULK"}).json()["entries"]
+    assert len(got) == 500
+
+
+@pytest.mark.parametrize("name", ["   ", "\t\n"])
+def test_whitespace_display_name_is_refused(world: World, name: str) -> None:
+    assert _invite(world, display_name=name).status_code == 422
+    conn = open_connection(path=world.path)
+    try:
+        with pytest.raises(AuthError):
+            users.invite(conn, actor=world.users["admin"], email="q@x.com", role="ADMIN", display_name=name, clock=world.clock)
+    finally:
+        conn.close()

@@ -10,15 +10,16 @@ import sqlite3
 from setuhaul.clock import Clock
 
 # Keys whose values are credentials; matched case-insensitively and dropped before writing.
-_FORBIDDEN_KEYS = frozenset({"password", "token", "code", "secret", "password_hash", "salt", "access_token", "id_token"})
+_FORBIDDEN_KEYS = frozenset({"password", "token", "code", "secret", "password_hash", "salt", "access_token", "id_token",
+                            "otp", "pin", "secret_key", "authorization", "cookie"})
 
 
-def _scrub(value: object) -> object:
+def scrub(value: object) -> object:
     # Drop forbidden keys at every depth so a nested payload cannot smuggle a secret in.
     if isinstance(value, dict):
-        return {k: _scrub(v) for k, v in value.items() if str(k).lower() not in _FORBIDDEN_KEYS}
+        return {k: scrub(v) for k, v in value.items() if str(k).lower() not in _FORBIDDEN_KEYS}
     if isinstance(value, list):
-        return [_scrub(v) for v in value]
+        return [scrub(v) for v in value]
     return value
 
 
@@ -36,7 +37,7 @@ def record(
     clock: Clock,
 ) -> None:
     # Serialise the scrubbed detail, or store NULL when there is none.
-    detail_json = json.dumps(_scrub(detail), sort_keys=True) if detail is not None else None
+    detail_json = json.dumps(scrub(detail), sort_keys=True) if detail is not None else None
     # Append one row stamped with the injected clock.
     conn.execute(
         "INSERT INTO audit_log(ts, actor_user_id, actor_email, action, target_type, target_id, outcome, ip, detail_json)"

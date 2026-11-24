@@ -99,6 +99,10 @@ def invite(
         conn.commit()
         raise AuthError("FORBIDDEN")
     addr = _normalise(email)
+    # A blank display name is not a name.
+    display_name = display_name.strip()
+    if not display_name:
+        raise AuthError("INVALID_NAME")
     # A syntactically empty address is not an invite.
     if "@" not in addr:
         raise AuthError("INVALID_EMAIL")
@@ -134,14 +138,27 @@ def invite(
 
 
 def disable(conn: sqlite3.Connection, *, actor: User, user_id: str, clock: Clock) -> None:
-    # Only an active admin may disable.
+    # Only an active admin may disable (a quick check on the object; the database is re-read below).
     if actor.role != "ADMIN" or actor.status != "ACTIVE":
         raise AuthError("FORBIDDEN")
     now = clock.now().isoformat()
     with immediate(conn):
+        # Re-read the actor under the write lock: a stale object must not outlive a disable or role change.
+        fresh = _load(conn, "user_id = ?", actor.user_id)
+        if fresh is None or fresh.role != "ADMIN" or fresh.status != "ACTIVE":
+            raise AuthError("FORBIDDEN")
+        # Nobody disables themselves.
+        if user_id == actor.user_id:
+            raise AuthError("CANNOT_DISABLE_SELF")
         target = _load(conn, "user_id = ?", user_id)
         if target is None:
             raise AuthError("UNKNOWN_USER")
+        # Never leave the system without an active admin: some OTHER active admin must remain.
+        if target.role == "ADMIN" and target.status == "ACTIVE":
+            others = conn.execute("select count(*) from users where role='ADMIN' and status='ACTIVE' and user_id<>?",
+                                  (user_id,)).fetchone()[0]
+            if others == 0:
+                raise AuthError("LAST_ADMIN")
         # Mark the account disabled so no new login succeeds.
         conn.execute("update users set status='DISABLED' where user_id=?", (user_id,))
         # Kill every live session at once; already-revoked ones keep their original time.
@@ -160,6 +177,17 @@ def bootstrap_admin(conn: sqlite3.Connection, email: str, clock: Clock) -> User:
         # Idempotent: an existing user with this address is returned unchanged.
         existing = find_by_email(conn, addr)
         if existing is not None:
+            # The owner's way back from a lockout: a disabled or demoted account becomes an active admin again.
+            if existing.role != "ADMIN" or existing.status != "ACTIVE":
+                conn.execute("update users set role='ADMIN', status='ACTIVE' where user_id=?", (existing.user_id,))
+                audit.record(
+                    conn, actor_user_id=None, actor_email=None, action="BOOTSTRAP_ADMIN_REACTIVATED", target_type="user",
+                    target_id=existing.user_id, outcome="OK", ip=None,
+                    detail={"was_role": existing.role, "was_status": existing.status}, clock=clock,
+                )
+                reactivated = find_by_email(conn, addr)
+                assert reactivated is not None
+                return reactivated
             return existing
         uid = _new_id()
         conn.execute(

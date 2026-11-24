@@ -62,8 +62,9 @@ from setuhaul.auth import sessions, users
 from setuhaul.auth.authz import require_role
 
 # The same facility snapshot the service uses, to draw the dock board.
-# Releases or re-offers slots when a new ping arrives (same handling as the real API).
 from setuhaul.board import build_board
+
+# Releases or re-offers slots when a new ping arrives (same handling as the real API).
 from setuhaul.booking import make_hold_checker
 
 # A controllable clock.
