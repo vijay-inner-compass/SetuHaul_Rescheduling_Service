@@ -70,6 +70,11 @@ def find_by_email(conn: sqlite3.Connection, email: str) -> User | None:
     return _load(conn, "email = ? collate nocase", _normalise(email))
 
 
+def find_by_id(conn: sqlite3.Connection, user_id: str) -> User | None:
+    # Fresh read by primary key, so callers such as sessions never see a cached role or status.
+    return _load(conn, "user_id = ?", user_id)
+
+
 def _new_id() -> str:
     # Server-generated, never supplied by the caller.
     return "USR-" + secrets.token_hex(5).upper()
