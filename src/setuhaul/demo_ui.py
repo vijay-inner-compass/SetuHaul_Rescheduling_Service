@@ -43,7 +43,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 # Typing helper.
-from typing import Any
+from typing import Any, Literal
 
 # Web framework types.
 from fastapi import FastAPI, Request
@@ -95,12 +95,23 @@ from setuhaul.identity import provision_identities
 
 # The hold-expiry sweep, triggered by a button.
 from setuhaul.jobs.expire_holds import expire_due_holds
+from setuhaul.jobs.poll_partner_replies import poll_partner_replies
+from setuhaul.jobs.send_partner_requests import send_pending_requests
+from setuhaul.mail_transport import (
+    IncomingMail,
+    InMemoryMailbox,
+    MailReader,
+    MailSender,
+    build_mail,
+)
+from setuhaul.mailcfg import MailSettings, load_mail_settings
 
 # Conversation memory, used to write the driver's messages.
 from setuhaul.memory import ConversationMemoryStore
 
 # Delivers queued downstream notices when the button is pressed.
 from setuhaul.notifications import deliver_pending_notifications
+from setuhaul.partner_booking import expire_partner_requests, render_request_email, request_slot
 
 # A new truck position: confirmation, hold release, earlier-slot offers.
 from setuhaul.position import handle_driver_position
@@ -196,6 +207,22 @@ class ResolveIn(BaseModel):
     note: str = Field(max_length=500)
 
 
+# Ask the demo partner warehouse for a slot; the default load is the seeded one bound for the partner.
+class PartnerAskIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    shipment_id: str = "SHP-DEMO-P1"
+    start: str = Field(default="12:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+# Play the partner's reply in simulated mode.
+class PartnerReplyIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_ref: str
+    decision: Literal["APPROVE", "DECLINE"]
+
+
 # A GPS position sent from the demo console, with how old the fix should look.
 class GpsIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -206,10 +233,43 @@ class GpsIn(BaseModel):
     age_minutes: int = Field(ge=0, le=1440)
 
 
+def seed_partner_demo(conn: sqlite3.Connection) -> None:
+    """A partner warehouse (one dock, one contact), a driver and a load bound for it with a planner booking. All DEMO_FIXTURE."""
+    day = "2026-08-04"
+    stamp = f"{day}T06:00:00+05:30"
+    conn.execute("insert into facilities (facility_id, facility_name, city, state, timezone, open_time, close_time, checkin_grace_min, "
+                 "default_unload_min, active_flag, is_partner) values ('FAC-PARTNER-01','Partner Warehouse Jaipur (demo fixture)','Jaipur',"
+                 "'Rajasthan','Asia/Kolkata','06:00','22:00',30,60,1,1)")
+    # Next door to the Jaipur centre, so the GPS-assisted ETA works for the demo load too.
+    jai = conn.execute("select lat, lon from facilities where facility_id='FAC-JAI-01'").fetchone()
+    conn.execute("update facilities set lat=?, lon=? where facility_id='FAC-PARTNER-01'", (jai["lat"], jai["lon"]))
+    conn.execute("insert into docks (dock_id, facility_id, dock_code, dock_type, supports_refrigerated, max_vehicle_weight_kg, dock_status) "
+                 "values ('DOCK-PARTNER-D1','FAC-PARTNER-01','D1','STANDARD',0,20000,'ACTIVE')")
+    conn.execute("insert into facility_contacts (contact_id, facility_id, contact_role, contact_name, email, phone, active_flag) "
+                 "values ('CON-PARTNER-1','FAC-PARTNER-01','WAREHOUSE_COORDINATOR','Partner Desk','partner.desk@partner.example','+91-0000000000',1)")
+    conn.execute("insert into drivers (driver_id, carrier_id, driver_name, phone, licence_number, home_base_city, driver_status) "
+                 "values ('DRV-DEMO-P','CAR003','Ravi Partner-Demo','+91-9000019999','DEMO-LIC-0001','Jaipur','ACTIVE')")
+    # The new load is a copy of an existing one, pointed at the partner warehouse.
+    base = dict(conn.execute("select * from shipments where shipment_id='SHP1006'").fetchone())
+    base.update(shipment_id="SHP-DEMO-P1", order_reference="ORD-DEMO-P1", driver_id="DRV-DEMO-P", destination_facility_id="FAC-PARTNER-01",
+                current_status="IN_TRANSIT")
+    cols = ", ".join(base)
+    conn.execute(f"insert into shipments ({cols}) values ({', '.join('?' for _ in base)})", tuple(base.values()))
+    conn.execute("insert into appointment_slots (slot_id, facility_id, dock_id, slot_start_ts, slot_end_ts, slot_status, created_at) "
+                 "values ('PSLOT-DEMO-10','FAC-PARTNER-01','DOCK-PARTNER-D1',?,?,'OPEN',?)",
+                 (f"{day}T10:00:00+05:30", f"{day}T11:00:00+05:30", stamp))
+    conn.execute("insert into appointments (appointment_id, shipment_id, slot_id, appointment_status, booking_source, is_current, booked_at, "
+                 "confirmed_at, updated_at) values ('APT-DEMO-P1','SHP-DEMO-P1','PSLOT-DEMO-10','CONFIRMED','PLANNER',1,?,?,?)", (stamp, stamp, stamp))
+    conn.execute("insert into chat_threads (thread_id, driver_id, shipment_id, opened_at, thread_status, thread_intent) "
+                 "values ('THR-DEMO-P1','DRV-DEMO-P','SHP-DEMO-P1',?,'OPEN','GENERAL_QUESTION')", (stamp,))
+
+
 def seed_demo_evidence(conn: sqlite3.Connection) -> None:
     """Labour and consignee evidence the snapshot lacks, labelled DEMO_FIXTURE, plus a clean chat history."""
     # The demo day.
     day = "2026-08-04"
+    # A partner warehouse and a load bound for it, so the email flow can be shown.
+    seed_partner_demo(conn)
     # Labour windows (8 crews, equipment available, 06:00-22:00) for both facilities, marked DEMO_FIXTURE so they are never mistaken for real data.
     for fac in ("FAC-JAI-01", "FAC-GGN-01"):
         conn.execute("insert into labour_windows (facility_id, window_start, window_end, available_crews, equipment_available, source, recorded_at) "
@@ -632,9 +692,115 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
                 try:
                     # Expire holds whose time has passed.
                     swept = expire_due_holds(conn, demo.clock).expired
+                    expire_partner_requests(conn, demo.clock)
                 finally:
                     conn.close()
             return {"clock": clock_info(), "swept": swept}
+
+        return await run_in_threadpool(go)
+
+    # The partner mailbox: built once per demo state from the environment (simulated unless set to live), cleared by reset.
+    def mail() -> tuple[MailSender, MailReader, MailSettings]:
+        if "mail" not in demo.notes:
+            settings = load_mail_settings()
+            sender, reader = build_mail(settings)
+            demo.notes["mail"] = (sender, reader, settings)
+        return demo.notes["mail"]  # type: ignore[no-any-return]
+
+    # Ask the partner warehouse for a slot, and send the email.
+    @app.post("/demo/api/partner-request")
+    async def partner_request(request: Request, body: PartnerAskIn) -> Any:
+        denied = local_only(request)
+        if denied:
+            return denied
+
+        def go() -> dict[str, Any]:
+            sender, _, settings = mail()
+            conn = db()
+            try:
+                now = demo.clock.now().astimezone(IST)
+                hh, mm = (int(x) for x in body.start.split(":"))
+                start = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+                res = request_slot(conn, demo.clock, shipment_id=body.shipment_id, proposed_start=start,
+                                   proposed_end=start + timedelta(hours=1), ttl_min=settings.request_ttl_min)
+                send_pending_requests(conn, demo.clock, sender)
+                return {"status": res.status, "request_ref": res.request_ref}
+            finally:
+                conn.close()
+
+        return await run_in_threadpool(go)
+
+    # What the mailbox holds: requests, the emails sent for them, and replies received.
+    @app.get("/demo/api/partner-mailbox")
+    async def partner_mailbox(request: Request) -> Any:
+        def read() -> dict[str, Any]:
+            _, _, settings = mail()
+            conn = db(True)
+            try:
+                reqs = conn.execute(
+                    "select r.*, s.order_reference, f.facility_name from partner_requests r join shipments s using(shipment_id) "
+                    "join facilities f on f.facility_id=r.facility_id order by r.created_at, r.rowid").fetchall()
+                sent = []
+                for r in reqs:
+                    if r["email_status"] == "SENT":
+                        to_addr, subject, text = render_request_email(conn, r["request_ref"])
+                        sent.append({"request_ref": r["request_ref"], "to": to_addr, "subject": subject, "body": text,
+                                     "message_id": r["message_id"]})
+                inbox = [dict(r) for r in conn.execute("select message_id, request_ref, from_addr, outcome, received_at from partner_inbound "
+                                                       "order by received_at, rowid")]
+                return {"mode": settings.mode, "clock": clock_info(), "sent": sent, "inbox": inbox, "requests": [
+                    {"request_ref": r["request_ref"], "order_reference": r["order_reference"], "facility": r["facility_name"],
+                     "status": r["status"], "email_status": r["email_status"], "last_error": r["last_error"],
+                     "start": _hhmm(r["proposed_start"]), "end": _hhmm(r["proposed_end"]), "expires_at": r["expires_at"]} for r in reqs]}
+            finally:
+                conn.close()
+
+        return local_only(request) or await run_in_threadpool(read)
+
+    # Simulated mode only: play the partner's reply by injecting the email they would send, then read the inbox as the job would.
+    @app.post("/demo/api/partner-reply")
+    async def partner_reply(request: Request, body: PartnerReplyIn) -> Any:
+        denied = local_only(request)
+        if denied:
+            return denied
+
+        def go() -> Any:
+            _, reader, settings = mail()
+            if settings.mode != "simulated" or not isinstance(reader, InMemoryMailbox):
+                return JSONResponse({"status": "REJECTED", "reason_code": "REPLY_SIMULATION_IS_SIMULATED_MODE_ONLY"}, status_code=409)
+            conn = db()
+            try:
+                row = conn.execute("select r.request_ref, r.message_id, c.email from partner_requests r join facility_contacts c "
+                                   "using(contact_id) where r.request_ref=?", (body.request_ref,)).fetchone()
+                if row is None:
+                    return JSONResponse({"status": "REJECTED", "reason_code": "UNKNOWN_REQUEST"}, status_code=404)
+                reader.inject(IncomingMail(message_id=f"<sim-{uuid.uuid4().hex[:10]}@partner.example>", from_addr=row["email"],
+                                           subject=f"Re: SetuHaul slot request [{row['request_ref']}]", in_reply_to=row["message_id"],
+                                           body=body.decision, authentication_results=None))
+                poll_partner_replies(conn, demo.clock, reader)
+                return {"request_status": conn.execute("select status from partner_requests where request_ref=?",
+                                                       (body.request_ref,)).fetchone()["status"]}
+            finally:
+                conn.close()
+
+        return await run_in_threadpool(go)
+
+    # The "Check mailbox" button: send anything queued, read replies, expire what is overdue.
+    @app.post("/demo/api/partner-sync")
+    async def partner_sync(request: Request) -> Any:
+        denied = local_only(request)
+        if denied:
+            return denied
+
+        def go() -> dict[str, Any]:
+            sender, reader, _ = mail()
+            conn = db()
+            try:
+                sent = send_pending_requests(conn, demo.clock, sender)
+                handled = poll_partner_replies(conn, demo.clock, reader)
+                return {"sent": sent, "replies_handled": handled, "expired": expire_partner_requests(conn, demo.clock)}
+            finally:
+                conn.close()
 
         return await run_in_threadpool(go)
 
@@ -834,8 +1000,9 @@ def build_demo_app(workdir: Path | None = None, live_factory: Callable[[], Any] 
         # Switch every route (and the message pipeline) to the new file.
         state.db_path = new
         deps.db_path = new
-        # Empty the cache.
+        # Empty the cache and the simulated partner mailbox.
         redis.flushall()
+        state.notes.pop("mail", None)
         # Clock back to the start.
         clock.set(parse_operational_timestamp(DEMO_START))
         # Remove the old file and its WAL files if possible; leftovers are harmless.

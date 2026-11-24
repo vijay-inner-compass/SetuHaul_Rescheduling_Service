@@ -29,13 +29,12 @@ def _approve(conn: sqlite3.Connection, clock: FakeClock, ref: str, mid: str = "<
 def demo(tmp_path: Path):  # type: ignore[no-untyped-def]
     app, deps = build_demo_app(tmp_path / "demo", live_factory=StubGateway)
     conn = open_connection(path=deps.demo.db_path)
-    seed_partner_facility(conn, "SHP1006")
     yield TestClient(app), deps, conn
     conn.close()
 
 
 def _ask(conn: sqlite3.Connection, clock: FakeClock) -> str:
-    ref = request_slot(conn, clock, shipment_id="SHP1006", proposed_start=at("14:00"), proposed_end=at("15:00")).request_ref
+    ref = request_slot(conn, clock, shipment_id="SHP-DEMO-P1", proposed_start=at("14:00"), proposed_end=at("15:00")).request_ref
     assert ref
     return ref
 
@@ -54,9 +53,9 @@ def test_board_lists_pending_request_separately_not_as_booked(demo) -> None:  # 
     client, deps, conn = demo
     ref = _ask(conn, deps.demo.clock)
     board = client.get("/demo/api/board", params={"facility_id": "FAC-PARTNER-01"}).json()
-    assert not any(s["status"] == "BOOKED" for d in board["docks"] for s in d["slots"])
+    assert not any(s["partner"] for d in board["docks"] for s in d["slots"])
     assert [p["request_ref"] for p in board["pending_partner"]] == [ref]
-    assert board["pending_partner"][0]["order_reference"] == "ORD-260804-006"
+    assert board["pending_partner"][0]["order_reference"] == "ORD-DEMO-P1"
 
 
 def test_pending_wording_never_says_confirmed(db: sqlite3.Connection, clock: FakeClock) -> None:
