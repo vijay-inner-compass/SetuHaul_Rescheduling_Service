@@ -64,6 +64,7 @@ from redis import Redis
 from starlette.concurrency import run_in_threadpool
 
 # Live hold checker for conversation memory.
+from setuhaul.auth.google import GoogleVerifier
 from setuhaul.booking import make_hold_checker
 
 # Real or simulated clock.
@@ -175,6 +176,10 @@ class AppDeps:
     # Optional span collector.
     exporter: InMemoryExporter | None = None
     demo: Any = None  # a demo_ui.DemoState turns on the localhost-only demo screen
+    # Google sign-in verifier; None leaves the sign-in routes answering 503.
+    google: GoogleVerifier | None = None
+    # Key for the signed OAuth state cookie.
+    session_secret: bytes = b""
 
 
 # The inbound webhook body. Unknown fields are rejected (extra='forbid').
@@ -669,6 +674,10 @@ def create_app(deps: AppDeps) -> FastAPI:
             return _reject(rid, 401, "UNAUTHORIZED")
         return await run_in_threadpool(with_conn, rid, lambda c: transition_response(rid, reopen_case(c, case_id, who, deps.clock)))
 
+    # Google sign-in routes.
+    from setuhaul.auth.routes import register_auth_routes
+
+    register_auth_routes(app, deps)
     # The demo screen is registered only when a demo state is supplied.
     if deps.demo is not None:
         from setuhaul.demo_ui import register_demo
@@ -716,8 +725,27 @@ def create_app_from_env() -> FastAPI:
         from setuhaul.clock import FakeClock
 
         clock = FakeClock(parse_operational_timestamp(os.environ["SETUHAUL_FAKE_NOW"]))
+    # Google sign-in is configured only when the client id and secret are both present.
+    google: GoogleVerifier | None = None
+    if os.environ.get("SETUHAUL_GOOGLE_CLIENT_ID") and os.environ.get("SETUHAUL_GOOGLE_CLIENT_SECRET"):
+        import httpx
+
+        from setuhaul.auth.google import RealGoogleVerifier
+
+        google = RealGoogleVerifier(os.environ["SETUHAUL_GOOGLE_CLIENT_ID"], os.environ["SETUHAUL_GOOGLE_CLIENT_SECRET"],
+                                    httpx.Client(timeout=10.0), clock)
+    # The first admin, created at start-up when an address is configured (idempotent).
+    if os.environ.get("SETUHAUL_BOOTSTRAP_ADMIN_EMAIL"):
+        from setuhaul.auth import users
+
+        boot = open_connection(path=s.db_path)
+        try:
+            users.bootstrap_admin(boot, os.environ["SETUHAUL_BOOTSTRAP_ADMIN_EMAIL"], clock)
+        finally:
+            boot.close()
     # Assemble the dependencies and build the app.
     return create_app(AppDeps(
+        google=google, session_secret=os.environ.get("SETUHAUL_SESSION_SECRET", "").encode(),
         db_path=s.db_path, redis=redis,
         webhook_secret=os.environ.get("SETUHAUL_WEBHOOK_SECRET", "").encode(), coordinator_tokens=tokens,
         fallback_path=Path(os.environ.get("SETUHAUL_FALLBACK_ESCALATIONS", "escalations-fallback.jsonl")), policy=policy,
