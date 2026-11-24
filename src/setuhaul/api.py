@@ -680,6 +680,10 @@ def create_app(deps: AppDeps) -> FastAPI:
     from setuhaul.auth.routes import register_auth_routes
 
     register_auth_routes(app, deps)
+    # Driver onboarding and approval.
+    from setuhaul.auth.admin_routes import register_admin_routes
+
+    register_admin_routes(app, deps)
     # The demo screen is registered only when a demo state is supplied.
     if deps.demo is not None:
         from setuhaul.demo_ui import register_demo

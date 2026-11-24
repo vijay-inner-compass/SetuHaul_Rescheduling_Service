@@ -1,0 +1,23 @@
+"""Phone normalisation to E.164."""
+
+# Lazy annotations, like the rest of the codebase.
+from __future__ import annotations
+
+import pytest
+
+from setuhaul.auth.phone import normalise_e164
+
+
+@pytest.mark.parametrize("raw", ["+91 90000 10006", "919000010006", "09000010006", "9000010006",
+                                 "+91-9000010006", "(+91) 90000.10006", " +919000010006 "])
+def test_indian_forms_normalise(raw: str) -> None:
+    assert normalise_e164(raw) == "+919000010006"
+
+
+@pytest.mark.parametrize("raw", ["", "   ", "abc", "90000x10006", "123456789", "+1234567890123456", "+91-CALL-ME"])
+def test_bad_input_is_none(raw: str) -> None:
+    assert normalise_e164(raw) is None
+
+
+def test_other_country_with_plus_is_kept() -> None:
+    assert normalise_e164("+44 20 7946 0958") == "+442079460958"
