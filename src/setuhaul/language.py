@@ -292,6 +292,32 @@ T: dict[str, dict[str, str]] = {
         "hi": " ऑपरेशंस टीम {minutes} मिनट के भीतर जवाब देने का लक्ष्य रखती है।",
         "hinglish": " Operations team {minutes} minute ke andar jawab dene ka lakshya rakhti hai.",
     },
+    # Partner-warehouse requests. Wording follows the stored request state; a pending request is never described as booked.
+    "partner_pending": {
+        "en": "I have asked {facility} for a dock slot at {time} on {date}. This is only a request until they reply, so I am waiting for their answer. Your current appointment is unchanged. I will tell you here as soon as they reply.",
+        "hi": "मैंने {facility} से {date} को {time} का डॉक स्लॉट माँगा है। जब तक उनका जवाब नहीं आता यह सिर्फ़ एक अनुरोध है, इसलिए मैं उनके जवाब का इंतज़ार कर रहा हूँ। आपकी मौजूदा अपॉइंटमेंट जैसी थी वैसी ही है। जवाब आते ही मैं यहीं बताऊँगा।",
+        "hinglish": "Maine {facility} se {date} ko {time} ka dock slot manga hai. Jab tak unka jawab nahi aata yeh sirf ek request hai, isliye main unke jawab ka intezaar kar raha hoon. Aapki maujooda appointment jaisi thi waisi hi hai. Jawab aate hi main yahin bataunga.",
+    },
+    "partner_approved": {
+        "en": "{facility} has approved your slot at {time} on {date}. Your earlier appointment has been cancelled.",
+        "hi": "{facility} ने {date} को {time} का आपका स्लॉट मंज़ूर कर दिया है। आपकी पिछली अपॉइंटमेंट रद्द कर दी गई है।",
+        "hinglish": "{facility} ne {date} ko {time} ka aapka slot manzoor kar diya hai. Aapki pichhli appointment cancel kar di gayi hai.",
+    },
+    "partner_declined": {
+        "en": "{facility} could not offer the {time} slot on {date}. Your original appointment is unchanged.",
+        "hi": "{facility} {date} को {time} का स्लॉट नहीं दे सका। आपकी मूल अपॉइंटमेंट जैसी थी वैसी ही है।",
+        "hinglish": "{facility} {date} ko {time} ka slot nahi de saka. Aapki original appointment jaisi thi waisi hi hai.",
+    },
+    "partner_expired": {
+        "en": "{facility} did not reply in time about the {time} slot on {date}. Your original appointment is unchanged.",
+        "hi": "{facility} ने {date} को {time} के स्लॉट पर समय पर जवाब नहीं दिया। आपकी मूल अपॉइंटमेंट जैसी थी वैसी ही है।",
+        "hinglish": "{facility} ne {date} ko {time} ke slot par samay par jawab nahi diya. Aapki original appointment jaisi thi waisi hi hai.",
+    },
+    "partner_failed": {
+        "en": "I could not complete the request to {facility} for {time} on {date}. A coordinator has been asked to help. Your original appointment is unchanged.",
+        "hi": "मैं {date} को {time} के लिए {facility} से अनुरोध पूरा नहीं कर सका। एक कोऑर्डिनेटर से मदद माँगी गई है। आपकी मूल अपॉइंटमेंट जैसी थी वैसी ही है।",
+        "hinglish": "Main {date} ko {time} ke liye {facility} se request poori nahi kar saka. Ek coordinator se madad maangi gayi hai. Aapki original appointment jaisi thi waisi hi hai.",
+    },
     # Replaces model text that quoted the system prompt.
     "prompt_leak": {
         "en": "I cannot share that. I can help with your delivery slot: tell me what is happening.",

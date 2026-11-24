@@ -534,8 +534,8 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
                 # The same snapshot the service uses to judge slots.
                 state = build_facility_state(conn, facility_id, demo.clock.now())
                 # Who occupies each slot, as 'driver . order'.
-                owner = {r["slot_id"]: (r["driver_id"], f"{r['driver_name']} · {r['order_reference']}") for r in conn.execute(
-                    "select a.slot_id, d.driver_id, d.driver_name, s.order_reference from appointments a join shipments s using(shipment_id) "
+                owner = {r["slot_id"]: (r["driver_id"], f"{r['driver_name']} · {r['order_reference']}", r["booking_source"]) for r in conn.execute(
+                    "select a.slot_id, a.booking_source, d.driver_id, d.driver_name, s.order_reference from appointments a join shipments s using(shipment_id) "
                     "join drivers d on d.driver_id=s.driver_id where a.appointment_status in ('PENDING_CONFIRMATION','CONFIRMED','IN_PROGRESS','HELD')")}
                 now = demo.clock.now()
                 # One entry per dock.
@@ -558,12 +558,21 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
                         # One cell of the board.
                         slots.append({"slot_id": slot.slot_id, "hour": slot.start.astimezone(IST).hour, "start": f"{slot.start.astimezone(IST):%H:%M}",
                                       "end": f"{slot.end.astimezone(IST):%H:%M}", "status": status, "past": slot.start < now,
-                                      "label": who[1] if who else (slot.block_reason or ""), "driver_id": who[0] if who else None})
+                                      "label": who[1] if who else (slot.block_reason or ""), "driver_id": who[0] if who else None,
+                                      "source": who[2] if who else None, "partner": bool(who and who[2] == "WAREHOUSE")})
                     # One row of the board.
                     docks.append({"code": dock.code, "type": dock.dock_type.title(), "max_kg": dock.max_weight_kg, "slots": slots})
                 # The hours that have slots, for the column headings.
                 hours = sorted({s["hour"] for d in docks for s in d["slots"]})
-                return {"facility": facility_id, "hours": hours, "docks": docks, "clock": clock_info()}
+                # Requests still waiting for a partner's reply: shown beside the board, never as booked slots.
+                pending = [{"request_ref": r["request_ref"], "order_reference": r["order_reference"], "driver": r["driver_name"],
+                            "start": f"{datetime.fromisoformat(r['proposed_start']).astimezone(IST):%H:%M}",
+                            "end": f"{datetime.fromisoformat(r['proposed_end']).astimezone(IST):%H:%M}",
+                            "expires_at": r["expires_at"]} for r in conn.execute(
+                    "select r.request_ref, r.proposed_start, r.proposed_end, r.expires_at, s.order_reference, d.driver_name "
+                    "from partner_requests r join shipments s using(shipment_id) join drivers d on d.driver_id=s.driver_id "
+                    "where r.facility_id=? and r.status='PENDING_PARTNER' order by r.created_at", (facility_id,))]
+                return {"facility": facility_id, "hours": hours, "docks": docks, "pending_partner": pending, "clock": clock_info()}
             finally:
                 conn.close()
 

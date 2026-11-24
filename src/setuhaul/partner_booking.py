@@ -38,6 +38,9 @@ from setuhaul.escalation import HandoffRequest, create_handoff
 # History rows are append-only.
 from setuhaul.events import append_appointment_event
 
+# Wording shared with the rest of the service.
+from setuhaul.language import say
+
 # Shipments in these states can no longer be moved.
 _NOT_RESCHEDULABLE = ("CANCELLED", "COMPLETED", "IN_DOCK")
 
@@ -94,10 +97,12 @@ def expire_partner_requests(conn: sqlite3.Connection, clock: Clock) -> int:
     """Mark overdue pending requests EXPIRED. The shipment's original appointment is never touched."""
     with immediate(conn):
         now = clock.now()
-        cur = conn.execute(
-            "update partner_requests set status='EXPIRED', decided_at=? where status='PENDING_PARTNER' and expires_at<=?",
-            (now.isoformat(), now.isoformat()))
-        return cur.rowcount
+        due = conn.execute("select * from partner_requests where status='PENDING_PARTNER' and expires_at<=?", (now.isoformat(),)).fetchall()
+        conn.execute("update partner_requests set status='EXPIRED', decided_at=? where status='PENDING_PARTNER' and expires_at<=?",
+                     (now.isoformat(), now.isoformat()))
+        for req in due:
+            _tell_driver(conn, req, "EXPIRED", now)
+        return len(due)
 
 
 def render_request_email(conn: sqlite3.Connection, request_ref: str) -> tuple[str, str, str]:
@@ -122,6 +127,46 @@ def render_request_email(conn: sqlite3.Connection, request_ref: str) -> tuple[st
         f"Keep [{request_ref}] in the subject. We book the slot only after your APPROVE reply.\n"
     )
     return row["email"], subject, body
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# What the driver sees
+# ---------------------------------------------------------------------------------------------------------------------
+
+_STATUS_KEY = {"PENDING_PARTNER": "partner_pending", "APPROVED": "partner_approved", "DECLINED": "partner_declined",
+               "EXPIRED": "partner_expired", "FAILED": "partner_failed"}
+
+
+def _say_status(status: str, facility: str, proposed_start: str, lang: str) -> str:
+    start = datetime.fromisoformat(proposed_start)
+    return say(_STATUS_KEY[status], lang, facility=facility, time=f"{start:%H:%M}", date=f"{start:%d %B}")
+
+
+def render_partner_status(conn: sqlite3.Connection, shipment_id: str, lang: str = "en") -> str | None:
+    """Wording for the shipment's latest partner request, taken from the stored state. None when there is none."""
+    row = conn.execute("select r.status, r.proposed_start, f.facility_name from partner_requests r "
+                       "join facilities f using(facility_id) where r.shipment_id=? order by r.created_at desc, r.rowid desc limit 1",
+                       (shipment_id,)).fetchone()
+    return None if row is None else _say_status(row["status"], row["facility_name"], row["proposed_start"], lang)
+
+
+def _driver_thread(conn: sqlite3.Connection, shipment_id: str) -> str | None:
+    """The chat thread to talk to the driver in: this shipment's newest, else the driver's newest."""
+    row = conn.execute("select t.thread_id from chat_threads t join shipments s on s.driver_id=t.driver_id where s.shipment_id=? "
+                       "order by (t.shipment_id=s.shipment_id) desc, t.opened_at desc limit 1", (shipment_id,)).fetchone()
+    return None if row is None else str(row["thread_id"])
+
+
+def _tell_driver(conn: sqlite3.Connection, req: sqlite3.Row, status: str, now: datetime) -> None:
+    """Post the new state into the driver's chat, as an OPERATIONS message. Skipped when the driver has no chat yet."""
+    thread = _driver_thread(conn, req["shipment_id"])
+    if thread is None:
+        return
+    fac = conn.execute("select facility_name from facilities where facility_id=?", (req["facility_id"],)).fetchone()
+    conn.execute("insert into chat_messages (chat_message_id, thread_id, sender_type, message_text, message_ts) "
+                 "values (?,?, 'OPERATIONS', ?, ?)",
+                 ("MSG-" + uuid.uuid4().hex[:12].upper(), thread,
+                  _say_status(status, fac["facility_name"], req["proposed_start"], "en"), now.isoformat()))
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -258,6 +303,7 @@ def handle_reply(conn: sqlite3.Connection, clock: Clock, *, message_id: str, fro
                 return ReplyOutcome(status="IGNORED_DUPLICATE")
             conn.execute("update partner_requests set status='DECLINED', reply_message_id=?, decided_at=? "
                          "where request_ref=? and status='PENDING_PARTNER'", (message_id, now.isoformat(), req["request_ref"]))
+            _tell_driver(conn, req, "DECLINED", now)
         return ReplyOutcome(status="DECLINED")
     return _book(conn, clock, req, message_id, from_addr)
 
@@ -311,6 +357,7 @@ def _book(conn: sqlite3.Connection, clock: Clock, req: sqlite3.Row, message_id: 
                                                   "to_slot_id": slot_id})
                 conn.execute("update partner_requests set status='APPROVED', slot_id=?, appointment_id=?, reply_message_id=?, "
                              "decided_at=? where request_ref=?", (slot_id, appt_id, message_id, stamp, ref))
+                _tell_driver(conn, req, "APPROVED", now)
     except sqlite3.IntegrityError:
         # The partner slot was taken (unique index) after the request was made: the transaction rolled back whole.
         with immediate(conn):
