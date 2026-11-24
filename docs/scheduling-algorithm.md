@@ -242,3 +242,30 @@ Every new GPS ping triggers `handle_new_position` for each of the driver's open 
 * **Straight-line travel.** Haversine × 1.3 at 40 km/h ignores real roads and traffic. It is used only as a floor on arrival and as a cross-check, never to make arrival earlier.
 * **Single-facility search.** Only the shipment's destination facility is searched.
 * **Facility-wide labour cap.** Crew demand is counted across all docks at the facility.
+
+## 13. Determinism
+
+**Given the same inputs, the algorithm returns the same result.** The inputs include the clock, so "same" means the same facility
+snapshot, the same context (ETA, load, constraints, consignee, `now`) and the same GPS ping.
+
+### Deterministic
+
+* `evaluate_slot` and `search_feasible_slots` are pure functions of the context and the snapshot. They use no randomness and do not depend on dict or set order.
+* Every ordering has a total tie-break: search sorts by `(slot_start, dock_code)`, ranking by `(slot_start, dock_code, slot_id)`.
+* All failing hard reasons are collected together, so a verdict never depends on which rule happened to fire first.
+* `slot_version` and the decision digest are hashes of sorted facts, so they are stable between runs.
+
+### Not deterministic
+
+| Source | Effect |
+|---|---|
+| The clock (`now`) | Drives slot-in-past, the 5-minute snapshot age, hold expiry, the 15-minute menu life and GPS freshness. The same request a minute later can produce a different menu. |
+| Live data | Occupancy, dock events, labour rows and the latest GPS ping change continuously, and the GPS floor moves the arrival time. |
+| Commit order | When two drivers want one slot, whoever commits first wins (FCFS, D5). `allocate_fcfs` is deterministic only once that order is fixed; the database arbitrates in production. |
+| Identifiers | Appointment ids use `uuid4`, so they differ between runs. They never influence which slot is chosen. |
+| The model layer | An LLM turns the driver's message into a delay report and picks an option. Its interpretation can vary. That is outside the scheduling code, which only receives the structured result. |
+
+### Reproducing a result
+
+Freeze the clock (the injectable `Clock`), fix the database and fix the structured report: the menu, the hold and the confirmation then repeat exactly,
+apart from the generated ids. `scripts/replay_traces.py` is the repo's tool for replaying recorded traces.
