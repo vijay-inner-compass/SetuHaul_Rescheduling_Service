@@ -192,6 +192,8 @@ class AppDeps:
     google: GoogleVerifier | None = None
     # Key for the signed OAuth state cookie.
     session_secret: bytes = b""
+    # The site's public origin (SETUHAUL_PUBLIC_URL); when set it fixes the OAuth redirect URI and the Secure cookie flag.
+    public_url: str = ""
     # The break-glass admin password route exists only when this is on (SETUHAUL_LOCAL_ADMIN=1).
     local_admin_enabled: bool = False
     # Shared secret Telegram echoes in a header on every webhook call; empty leaves the Telegram route off.
@@ -870,6 +872,7 @@ def create_app_from_env() -> FastAPI:
         telegram_secret=tg_secret, telegram=tg_client,
         google=google, session_secret=os.environ.get("SETUHAUL_SESSION_SECRET", "").encode(),
         local_admin_enabled=os.environ.get("SETUHAUL_LOCAL_ADMIN") == "1",
+        public_url=os.environ.get("SETUHAUL_PUBLIC_URL", ""),
         db_path=s.db_path, redis=redis,
         webhook_secret=os.environ.get("SETUHAUL_WEBHOOK_SECRET", "").encode(), coordinator_tokens=tokens,
         fallback_path=Path(os.environ.get("SETUHAUL_FALLBACK_ESCALATIONS", "escalations-fallback.jsonl")), policy=policy,

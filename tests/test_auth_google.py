@@ -221,3 +221,140 @@ def test_real_verifier_authorize_url_has_pkce(clock: FakeClock) -> None:
     q = parse_qs(urlparse(v.authorize_url("st", "ch", "http://localhost/auth/callback", "n1")).query)
     assert q["code_challenge_method"] == ["S256"] and q["nonce"] == ["n1"] and q["client_id"] == [CLIENT_ID]
     assert re.fullmatch(r"openid email profile", q["scope"][0])
+
+
+# ---- hardening sweep (11c group A) ----
+
+def _make_with(tmp_path: Path, clock: FakeClock, google: FakeGoogleVerifier, base: str = "http://localhost", **over):  # type: ignore[no-untyped-def]
+    # Like _make, but with extra AppDeps settings (public_url, secret, redis).
+    path = make_working_db(tmp_path / "auth.sqlite3")
+    conn = open_connection(path=path)
+    admin = users.bootstrap_admin(conn, "boss@x.com", clock)
+    users.invite(conn, actor=admin, email="ok@x.com", role="ADMIN", display_name="Ok", clock=clock)
+    conn.close()
+    kwargs = {"redis": fakeredis.FakeRedis(decode_responses=True), "session_secret": SECRET, **over}
+    deps = AppDeps(db_path=path, webhook_secret=b"w", coordinator_tokens={}, fallback_path=tmp_path / "f.jsonl", clock=clock,
+                   google=google, **kwargs)
+    return path, deps, TestClient(create_app(deps), base_url=base, follow_redirects=False)
+
+
+def test_public_url_sets_redirect_uri_and_ignores_host(tmp_path: Path, clock: FakeClock) -> None:
+    _, _, client = _make_with(tmp_path, clock, FakeGoogleVerifier(), base="http://evil.example", public_url="https://haul.example.com")
+    r = client.get("/auth/login", headers={"host": "evil.example"})
+    # Cookie is Secure because the public URL is https, whatever the Host header says.
+    assert "secure" in r.headers["set-cookie"].lower()
+
+
+def test_public_url_redirect_uri_used_for_exchange(tmp_path: Path, clock: FakeClock) -> None:
+    seen: list[str] = []
+
+    class Spy(FakeGoogleVerifier):
+        def authorize_url(self, state: str, code_challenge: str, redirect_uri: str, nonce: str) -> str:
+            seen.append(redirect_uri)
+            return super().authorize_url(state, code_challenge, redirect_uri, nonce)
+
+        def exchange_and_verify(self, code: str, code_verifier: str, redirect_uri: str, nonce: str) -> GoogleIdentity:
+            seen.append(redirect_uri)
+            return super().exchange_and_verify(code, code_verifier, redirect_uri, nonce)
+
+    _, _, client = _make_with(tmp_path, clock, Spy(GoogleIdentity("ok@x.com", True, "Ok")), base="https://evil.example",
+                              public_url="https://haul.example.com")
+    state, _ = _start(client)
+    client.get("/auth/callback", params={"code": "c", "state": state})
+    assert seen == ["https://haul.example.com/auth/callback"] * 2
+
+
+def test_public_url_http_is_not_secure(tmp_path: Path, clock: FakeClock) -> None:
+    _, _, client = _make_with(tmp_path, clock, FakeGoogleVerifier(), base="https://app.example.com", public_url="http://10.0.0.5:8000")
+    assert "secure" not in client.get("/auth/login").headers["set-cookie"].lower()
+
+
+def test_unset_public_url_uses_request_host(tmp_path: Path, clock: FakeClock) -> None:
+    seen: list[str] = []
+
+    class Spy(FakeGoogleVerifier):
+        def authorize_url(self, state: str, code_challenge: str, redirect_uri: str, nonce: str) -> str:
+            seen.append(redirect_uri)
+            return super().authorize_url(state, code_challenge, redirect_uri, nonce)
+
+    _, _, client = _make_with(tmp_path, clock, Spy(), base="https://app.example.com")
+    client.get("/auth/login")
+    assert seen == ["https://app.example.com/auth/callback"]
+
+
+@pytest.mark.parametrize("bad", ["haul.example.com", "ftp://haul.example.com", "https://haul.example.com/app",
+                                 "https://haul.example.com?x=1", "https://", "https://h.example.com#f", "https://h.example.com/"])
+def test_bad_public_url_refused_at_startup(tmp_path: Path, clock: FakeClock, bad: str) -> None:
+    with pytest.raises(ValueError, match="SETUHAUL_PUBLIC_URL"):
+        _make_with(tmp_path, clock, FakeGoogleVerifier(), public_url=bad)
+
+
+def test_google_error_param_is_audited_as_google_error(tmp_path: Path, clock: FakeClock) -> None:
+    path, _, client = _make_with(tmp_path, clock, FakeGoogleVerifier(GoogleIdentity("ok@x.com", True, "Ok")))
+    _start(client)
+    r = client.get("/auth/callback", params={"error": "access_denied-SECRET-TEXT"})
+    assert r.status_code == 400 and r.json()["reason_code"] == "GOOGLE_ERROR"
+    rows = _rows(path, "LOGIN_REFUSED")
+    assert len(rows) == 1 and "GOOGLE_ERROR" in rows[0]["detail_json"]
+    # Only the fixed reason is stored, never Google's text.
+    assert "SECRET-TEXT" not in str(tuple(rows[0]))
+    # The state cookie is cleared.
+    assert 'setuhaul_oauth=""' in r.headers["set-cookie"] or "max-age=0" in r.headers["set-cookie"].lower()
+
+
+def test_non_ascii_state_is_a_clean_400(tmp_path: Path, clock: FakeClock) -> None:
+    path, _, client = _make_with(tmp_path, clock, FakeGoogleVerifier(GoogleIdentity("ok@x.com", True, "Ok")))
+    _start(client)
+    r = client.get("/auth/callback", params={"code": "c", "state": "sté\u00e4te"})
+    assert r.status_code == 400 and r.json()["reason_code"] == "BAD_STATE"
+    assert len(_rows(path, "LOGIN_REFUSED")) == 1
+
+
+def test_non_ascii_cookie_is_a_clean_400(tmp_path: Path, clock: FakeClock) -> None:
+    from setuhaul.auth import routes
+
+    _, _, client = _make_with(tmp_path, clock, FakeGoogleVerifier(GoogleIdentity("ok@x.com", True, "Ok")))
+    # A validly signed cookie whose stored state is non-ASCII, against an ASCII query state.
+    sealed = routes._seal(SECRET, {"state": "sté\u00e4te", "verifier": "v", "nonce": "n", "exp": clock.now().timestamp() + 100})
+    client.cookies.set("setuhaul_oauth", sealed)
+    r = client.get("/auth/callback", params={"code": "c", "state": "plain"})
+    assert r.status_code == 400 and r.json()["reason_code"] == "BAD_STATE"
+    # And the same non-ASCII value on both sides must not crash either.
+    r2 = client.get("/auth/callback", params={"code": "c", "state": "sté\u00e4te"})
+    assert r2.status_code in (302, 401, 400)
+
+
+def test_short_session_secret_keeps_google_off(tmp_path: Path, clock: FakeClock, caplog: pytest.LogCaptureFixture) -> None:
+    secret = b"short-secret-31-bytes-xxxxxxxxx"[:31]
+    with caplog.at_level("WARNING"):
+        _, _, client = _make_with(tmp_path, clock, FakeGoogleVerifier(), session_secret=secret)
+    assert client.get("/auth/login").status_code == 503
+    assert client.get("/auth/callback", params={"code": "c", "state": "s"}).status_code == 503
+    assert "SETUHAUL_SESSION_SECRET" in caplog.text and secret.decode() not in caplog.text
+
+
+def test_route_passes_cookie_verifier_and_nonce(tmp_path: Path, clock: FakeClock) -> None:
+    from setuhaul.auth import routes
+
+    fake = FakeGoogleVerifier(GoogleIdentity("ok@x.com", True, "Ok"))
+    _, _, client = _make_with(tmp_path, clock, fake)
+    state, cookie = _start(client)
+    client.get("/auth/callback", params={"code": "c", "state": state})
+    data = routes._open(SECRET, cookie, clock.now().timestamp())
+    assert data is not None
+    assert fake.last_verifier == data["verifier"] and fake.last_nonce == data["nonce"]
+    assert fake.last_verifier != state and fake.last_nonce != state and fake.last_verifier != fake.last_nonce
+
+
+def test_redis_outage_is_an_audited_503(tmp_path: Path, clock: FakeClock) -> None:
+    import redis as redis_lib
+
+    class Down:
+        def set(self, *a: object, **k: object) -> bool:
+            raise redis_lib.exceptions.ConnectionError("down")
+
+    path, _, client = _make_with(tmp_path, clock, FakeGoogleVerifier(GoogleIdentity("ok@x.com", True, "Ok")), redis=Down())
+    state, _ = _start(client)
+    r = client.get("/auth/callback", params={"code": "c", "state": state})
+    assert r.status_code == 503 and r.json()["reason_code"] == "STATE_STORE_UNAVAILABLE"
+    assert "STATE_STORE_UNAVAILABLE" in _rows(path, "LOGIN_REFUSED")[0]["detail_json"]
