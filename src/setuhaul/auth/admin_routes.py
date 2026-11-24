@@ -14,7 +14,7 @@ from starlette.concurrency import run_in_threadpool
 
 from setuhaul.auth import onboarding
 from setuhaul.auth.authz import require_role
-from setuhaul.auth.routes import _reject
+from setuhaul.auth.http import reject as _reject
 from setuhaul.auth.users import User
 from setuhaul.db import open_connection
 from setuhaul.identity import AuthError
@@ -50,6 +50,9 @@ def register_admin_routes(app: FastAPI, deps: AppDeps) -> None:
             return fn(conn)  # type: ignore[no-any-return]
         except AuthError as exc:
             return _reject(rid, _STATUS.get(exc.code, 422), exc.code)
+        except sqlite3.IntegrityError as exc:
+            # The UNIQUE constraints are the backstop for a race the up-front checks lost.
+            return _reject(rid, 409, "DUPLICATE_PHONE" if "phone" in str(exc) else "DUPLICATE_LICENCE")
         except sqlite3.Error:
             return _reject(rid, 503, "DATABASE_UNAVAILABLE")
         finally:

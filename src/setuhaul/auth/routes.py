@@ -18,6 +18,7 @@ from starlette.concurrency import run_in_threadpool
 
 from setuhaul.auth import audit, local_admin, sessions, users
 from setuhaul.auth.authz import AuthzError
+from setuhaul.auth.http import reject as _reject
 from setuhaul.db import open_connection
 from setuhaul.identity import AuthError
 
@@ -68,11 +69,6 @@ def _open(secret: bytes, cookie: str | None, now_ts: float) -> dict[str, Any] | 
 def _is_secure(request: Request) -> bool:
     # Secure everywhere except plain-http local development.
     return (request.url.hostname or "") not in {h.strip("[]") for h in _LOCAL_HOSTS}
-
-
-def _reject(rid: str, status: int, code: str) -> JSONResponse:
-    # Same shape as the rest of the API.
-    return JSONResponse({"status": "REJECTED", "reason_code": code, "request_id": rid}, status_code=status)
 
 
 def register_auth_routes(app: FastAPI, deps: AppDeps) -> None:

@@ -21,3 +21,13 @@ def test_bad_input_is_none(raw: str) -> None:
 
 def test_other_country_with_plus_is_kept() -> None:
     assert normalise_e164("+44 20 7946 0958") == "+442079460958"
+
+
+@pytest.mark.parametrize("raw", ["0091 9000010006", "00919000010006", "0919000010006", "+91 09000010006"])
+def test_prefix_variants_collapse_to_canonical(raw: str) -> None:
+    assert normalise_e164(raw) == "+919000010006"
+
+
+@pytest.mark.parametrize("raw", ["+09000010006", "+0 9000010006", "0000000000000"])
+def test_leading_zero_after_plus_is_none(raw: str) -> None:
+    assert normalise_e164(raw) is None

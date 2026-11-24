@@ -252,3 +252,59 @@ def test_routes_reject_and_duplicates_and_validation(tmp_path: Path, clock: Fake
     assert client.post("/v1/drivers", json={**body, "vehicle_id": "NOPE", "phone": "9000010033",
                                            "licence_number": "Z"}).status_code == 422
     assert client.post("/v1/drivers/DRV016/reject").status_code == 200
+
+
+# ---- review fixes ---------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("phone", ["0091 9000010001", "+91 09000010001"])
+def test_prefix_variants_of_supplied_phone_are_duplicates(tmp_path: Path, clock: FakeClock, phone: str) -> None:
+    _, conn, _, wh, car, veh = _env(tmp_path, clock)
+    with pytest.raises(AuthError) as e:
+        _add(conn, wh, clock, car, veh, phone=phone)
+    assert e.value.code == "DUPLICATE_PHONE"
+
+
+def test_licence_duplicate_ignores_spaces_and_hyphens(tmp_path: Path, clock: FakeClock) -> None:
+    _, conn, _, wh, car, veh = _env(tmp_path, clock)
+    for lic in ("RJ14 DL1001", "rj14-dl-1001"):
+        with pytest.raises(AuthError) as e:
+            _add(conn, wh, clock, car, veh, licence_number=lic)
+        assert e.value.code == "DUPLICATE_LICENCE"
+
+
+def test_name_and_expiry_bounds(tmp_path: Path, clock: FakeClock) -> None:
+    _, conn, _, wh, car, veh = _env(tmp_path, clock)
+    for name in ("Ra\x00vi", "Ra\nvi", "x" * 121):
+        with pytest.raises(AuthError) as e:
+            _add(conn, wh, clock, car, veh, name=name)
+        assert e.value.code == "INVALID_NAME"
+    with pytest.raises(AuthError) as e2:
+        _add(conn, wh, clock, car, veh, licence_expiry=clock.now().date() + timedelta(days=366 * 21))
+    assert e2.value.code == "INVALID_LICENCE_EXPIRY"
+    assert _add(conn, wh, clock, car, veh, name="x" * 120)
+
+
+def test_add_driver_refuses_unknown_role(tmp_path: Path, clock: FakeClock) -> None:
+    _, conn, _, wh, car, veh = _env(tmp_path, clock)
+    odd = User.model_construct(**{**wh.model_dump(), "role": "DRIVER"})
+    with pytest.raises(AuthError) as e:
+        onboarding.add_driver(conn, actor=odd, name="R", phone="9000010099", licence_number="L1",
+                              licence_expiry=clock.now().date() + timedelta(days=5), carrier_id=car,
+                              vehicle_id=veh, clock=clock)
+    assert e.value.code == "FORBIDDEN"
+    assert conn.execute("select count(*) from drivers").fetchone()[0] == 15
+
+
+@pytest.mark.parametrize(("msg", "code"), [("UNIQUE constraint failed: drivers.phone", "DUPLICATE_PHONE"),
+                                           ("UNIQUE constraint failed: drivers.licence_number", "DUPLICATE_LICENCE")])
+def test_unique_backstop_is_409(tmp_path: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch,
+                                msg: str, code: str) -> None:
+    client, tok, body = _client(tmp_path, clock)
+
+    def boom(*a: object, **k: object) -> str:
+        raise sqlite3.IntegrityError(msg)
+
+    monkeypatch.setattr(onboarding, "add_driver", boom)
+    _as(client, tok["wh"])
+    r = client.post("/v1/drivers", json=body)
+    assert r.status_code == 409 and r.json()["reason_code"] == code

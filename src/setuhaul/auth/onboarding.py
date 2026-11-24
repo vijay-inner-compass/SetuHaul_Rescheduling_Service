@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 
 from setuhaul.auth import audit
 from setuhaul.auth.phone import normalise_e164
@@ -19,6 +19,15 @@ from setuhaul.identity import AuthError
 
 # Driver ids look like DRV001; the next one is the highest number plus one.
 _DRIVER_ID = re.compile(r"DRV(\d+)")
+
+
+# A licence valid for more than about 20 years from today is a typo.
+_MAX_LICENCE_DAYS = 7305
+
+
+def _licence_key(number: str) -> str:
+    # Case, spaces and hyphens are formatting, not identity.
+    return re.sub(r"[\s-]", "", number).upper()
 
 
 def _refuse_forbidden(conn: sqlite3.Connection, actor: User, action: str, driver_id: str | None, clock: Clock) -> None:
@@ -52,18 +61,24 @@ def add_driver(
     clock: Clock,
 ) -> str:
     # Only active admins and warehouse authorities may add drivers.
-    if actor.status != "ACTIVE":
+    if actor.status != "ACTIVE" or actor.role not in ("ADMIN", "WAREHOUSE_AUTHORITY"):
         _refuse_forbidden(conn, actor, "DRIVER_ADDED", None, clock)
     # Phone must be a real number; it is stored in E.164 form.
     canonical = normalise_e164(phone)
     if canonical is None:
         raise AuthError("INVALID_PHONE")
     licence = licence_number.strip()
-    if not name.strip() or not licence:
+    if not licence:
         raise AuthError("INVALID_REQUEST")
-    # A licence that is already expired is never onboarded.
-    if licence_expiry < clock.now().date():
+    # A sane name: non-empty, bounded, no control characters.
+    if not name.strip() or len(name) > 120 or any(ord(c) < 32 or ord(c) == 127 for c in name):
+        raise AuthError("INVALID_NAME")
+    # A licence that is already expired is never onboarded, and one decades away is a typo.
+    today = clock.now().date()
+    if licence_expiry < today:
         raise AuthError("LICENCE_EXPIRED")
+    if licence_expiry > today + timedelta(days=_MAX_LICENCE_DAYS):
+        raise AuthError("INVALID_LICENCE_EXPIRY")
     # One transaction: the id is chosen, the rows written and the audit row appended together.
     with immediate(conn):
         # The vehicle must exist, be active and belong to the stated carrier.
@@ -78,8 +93,11 @@ def add_driver(
         for (existing,) in conn.execute("select phone from drivers"):
             if normalise_e164(existing) == canonical:
                 raise AuthError("DUPLICATE_PHONE")
-        if conn.execute("select 1 from drivers where upper(licence_number)=upper(?)", (licence,)).fetchone():
-            raise AuthError("DUPLICATE_LICENCE")
+        # Licence numbers compare ignoring case, spaces and hyphens.
+        key = _licence_key(licence)
+        for (existing,) in conn.execute("select licence_number from drivers"):
+            if _licence_key(existing) == key:
+                raise AuthError("DUPLICATE_LICENCE")
         driver_id = _next_driver_id(conn)
         # Inactive until an admin approves.
         conn.execute(
@@ -117,6 +135,7 @@ def _decide(conn: sqlite3.Connection, actor: User, driver_id: str, clock: Clock,
                 raise AuthError("LICENCE_EXPIRED")
             conn.execute("update drivers set driver_status='ACTIVE' where driver_id=?", (driver_id,))
         status = "APPROVED" if approve else "REJECTED"
+        # On rejection approved_by/approved_at hold the deciding admin and time (schema reuse).
         conn.execute("update driver_profiles set approval_status=?, approved_by=?, approved_at=? where driver_id=?",
                      (status, actor.user_id, now.isoformat(), driver_id))
         audit.record(conn, actor_user_id=actor.user_id, actor_email=actor.email, action=action, target_type="driver",
