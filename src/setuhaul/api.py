@@ -65,6 +65,9 @@ from starlette.concurrency import run_in_threadpool
 
 # Live hold checker for conversation memory.
 from setuhaul.auth.google import GoogleVerifier
+
+# The Telegram reply sender type.
+from setuhaul.auth.telegram import TelegramClient
 from setuhaul.booking import make_hold_checker
 
 # Real or simulated clock.
@@ -101,7 +104,12 @@ from setuhaul.escalation import (
 from setuhaul.gps import UnknownShipment, active_shipment_for_driver, store_ping
 
 # Phone-to-driver lookup and webhook signature check.
-from setuhaul.identity import AuthError, resolve_driver, verify_channel_request
+from setuhaul.identity import (
+    AuthError,
+    TrustedDriverContext,
+    resolve_driver,
+    verify_channel_request,
+)
 
 # The background maintenance runner.
 from setuhaul.jobs.expire_holds import MaintenanceRunner
@@ -182,6 +190,10 @@ class AppDeps:
     session_secret: bytes = b""
     # The break-glass admin password route exists only when this is on (SETUHAUL_LOCAL_ADMIN=1).
     local_admin_enabled: bool = False
+    # Shared secret Telegram echoes in a header on every webhook call; empty leaves the Telegram route off.
+    telegram_secret: bytes = b""
+    # Sends replies to Telegram chats; None means no replies can be sent.
+    telegram: TelegramClient | None = None
 
 
 # The inbound webhook body. Unknown fields are rejected (extra='forbid').
@@ -336,14 +348,19 @@ def create_app(deps: AppDeps) -> FastAPI:
 
     # The ordered pipeline: sender lookup -> duplicate check -> rate limit -> claim the id -> conversation. All before the model is called.
     def _process(conn: sqlite3.Connection, payload: MessageIn, request_id: str) -> JSONResponse:
-        # The clock.
-        clock = deps.clock
         try:
             # Identify the driver from their phone number. The model never supplies identity.
             trusted = resolve_driver(conn, payload.sender)
         except AuthError as exc:
             # Unknown or disallowed sender.
             return _reject(request_id, 403, exc.code)
+        # The rest of the pipeline is shared with the Telegram channel, which resolves its driver differently.
+        return _process_trusted(conn, trusted, payload, request_id)
+
+    # Duplicate check -> rate limit -> claim the id -> conversation, for a driver whose identity is already verified.
+    def _process_trusted(conn: sqlite3.Connection, trusted: TrustedDriverContext, payload: MessageIn, request_id: str) -> JSONResponse:
+        # The clock.
+        clock = deps.clock
         # The verified driver.
         driver_id = trusted.driver_id
         # A fingerprint of the message text: the same id with different text is a conflict.
@@ -684,6 +701,10 @@ def create_app(deps: AppDeps) -> FastAPI:
     from setuhaul.auth.admin_routes import register_admin_routes
 
     register_admin_routes(app, deps)
+    # The Telegram driver channel reuses the driver pipeline above.
+    from setuhaul.auth.telegram_routes import register_telegram_routes
+
+    register_telegram_routes(app, deps, _process_trusted)
     # The demo screen is registered only when a demo state is supplied.
     if deps.demo is not None:
         from setuhaul.demo_ui import register_demo
@@ -749,8 +770,18 @@ def create_app_from_env() -> FastAPI:
             users.bootstrap_admin(boot, os.environ["SETUHAUL_BOOTSTRAP_ADMIN_EMAIL"], clock)
         finally:
             boot.close()
+    # Telegram is configured only when both the bot token and the webhook secret are present.
+    tg_client: TelegramClient | None = None
+    tg_secret = os.environ.get("SETUHAUL_TELEGRAM_WEBHOOK_SECRET", "").encode()
+    if os.environ.get("SETUHAUL_TELEGRAM_BOT_TOKEN") and tg_secret:
+        import httpx
+
+        from setuhaul.auth.telegram import RealTelegramClient
+
+        tg_client = RealTelegramClient(os.environ["SETUHAUL_TELEGRAM_BOT_TOKEN"], httpx.Client(timeout=10.0))
     # Assemble the dependencies and build the app.
     return create_app(AppDeps(
+        telegram_secret=tg_secret if tg_client is not None else b"", telegram=tg_client,
         google=google, session_secret=os.environ.get("SETUHAUL_SESSION_SECRET", "").encode(),
         local_admin_enabled=os.environ.get("SETUHAUL_LOCAL_ADMIN") == "1",
         db_path=s.db_path, redis=redis,
