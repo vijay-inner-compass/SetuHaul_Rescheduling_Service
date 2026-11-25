@@ -31,7 +31,7 @@ import tempfile
 import uuid
 
 # Callable typing.
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 # dataclass for the demo state.
 from dataclasses import dataclass, field
@@ -58,8 +58,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 
 # Web sign-in: the role guard, sessions and the seeded demo user.
-from setuhaul.auth import sessions, users
-from setuhaul.auth.authz import require_role
+from setuhaul.auth import audit, local_admin, sessions, users
+from setuhaul.auth.authz import AuthzError, require_role
+from setuhaul.auth.google import GoogleVerifier, RealGoogleVerifier
 
 # The same facility snapshot the service uses, to draw the dock board.
 from setuhaul.board import build_board
@@ -68,7 +69,7 @@ from setuhaul.board import build_board
 from setuhaul.booking import make_hold_checker
 
 # A controllable clock.
-from setuhaul.clock import FakeClock
+from setuhaul.clock import FakeClock, SystemClock
 
 # Settings loader (travel-time constants for the GPS readout).
 from setuhaul.config import load_settings
@@ -81,6 +82,9 @@ from setuhaul.db import (
     open_connection,
     parse_operational_timestamp,
 )
+
+# The separate demo driver account.
+from setuhaul.demo_driver import register_demo_driver
 
 # Case queue operations for the operations panel.
 from setuhaul.escalation import claim_case, get_driver_case_status, list_open_cases, resolve_case
@@ -162,6 +166,43 @@ class DemoState:
     coordinators: tuple[str, ...] = ("Asha Verma", "Ben Thomas")
     # Free-form scratch space.
     notes: dict[str, Any] = field(default_factory=dict)
+    # TEST ONLY: lets automated tests act as a driver. scripts/run_demo.py never sets it, because driver messages come from Telegram.
+    driver_simulation: bool = False
+
+
+# The real sign-in settings the demo connects: the same ones the service reads, so the login page is the real one.
+@dataclass
+class DemoSignIn:
+    google: GoogleVerifier | None = None
+    session_secret: bytes = b""
+    local_admin: bool = False
+    admin_email: str = ""
+    # The backup password for this run (typed at start-up; the demo database is rebuilt every time, so it is not kept).
+    admin_password: str = field(default="", repr=False)
+
+
+def sign_in_from_env(env: Mapping[str, str]) -> DemoSignIn:
+    """Read the sign-in variables. A missing or short signing secret is replaced for this run only."""
+    google: GoogleVerifier | None = None
+    client_id, client_secret = env.get("SETUHAUL_GOOGLE_CLIENT_ID", ""), env.get("SETUHAUL_GOOGLE_CLIENT_SECRET", "")
+    if client_id and client_secret:
+        import httpx
+
+        # Real time, not the demo's frozen clock: token expiry must be judged against now.
+        google = RealGoogleVerifier(client_id, client_secret, httpx.Client(timeout=10.0), SystemClock())
+    secret = env.get("SETUHAUL_SESSION_SECRET", "").encode()
+    return DemoSignIn(google=google, session_secret=secret if len(secret) >= 32 else os.urandom(32),
+                      local_admin=env.get("SETUHAUL_LOCAL_ADMIN") == "1", admin_email=env.get("SETUHAUL_BOOTSTRAP_ADMIN_EMAIL", "").strip())
+
+
+def seed_sign_in(conn: sqlite3.Connection, settings: DemoSignIn, clock: FakeClock) -> None:
+    """Create the first admin and, when the backup login is on, its password."""
+    if not settings.admin_email:
+        return
+    admin = users.bootstrap_admin(conn, settings.admin_email, clock)
+    if settings.local_admin and settings.admin_password:
+        local_admin.set_password(conn, admin.user_id, settings.admin_password, clock)
+    conn.commit()
 
 
 # A chat message typed in the driver console.
@@ -373,6 +414,23 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
         # Local caller: allowed.
         return None
 
+    # The console only reads: driver messages and positions arrive from Telegram, so no web role may act as a driver.
+    def read_only(request: Request) -> JSONResponse | None:
+        if demo.driver_simulation:
+            return None
+        # The signed-in user, for the audit row (the router has already checked the role).
+        user = require_role("WAREHOUSE_AUTHORITY", "ADMIN")(request)
+        conn = open_connection(path=demo.db_path)
+        try:
+            audit.record(conn, actor_user_id=user.user_id, actor_email=user.email, action="DEMO_DRIVER_WRITE", target_type="route",
+                         target_id=request.url.path, outcome="FORBIDDEN", ip=request.client.host if request.client else None,
+                         detail=None, clock=demo.clock)
+            conn.commit()
+        finally:
+            conn.close()
+        # http_status is in the body too, because the page reads it from there.
+        return JSONResponse({"http_status": 403, "status": "REJECTED", "reason_code": "READ_ONLY_CONSOLE"}, status_code=403)
+
     # Open a database connection (read-only for display routes).
     def db(readonly: bool = False) -> sqlite3.Connection:
         return open_connection(path=demo.db_path, readonly=readonly)
@@ -389,8 +447,15 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
         return {"iso": now.isoformat(), "text": f"{now.astimezone(IST):%a %d %b %Y, %H:%M:%S} IST"}
 
     # The demo page.
-    @router.get("/demo", response_class=HTMLResponse)
-    async def page(request: Request) -> Any:
+    # On the app, not the router, so a signed-out visitor gets the login page instead of a JSON error. Same role rule.
+    @app.get("/demo", response_class=HTMLResponse)
+    def page(request: Request) -> Any:
+        try:
+            require_role("WAREHOUSE_AUTHORITY", "ADMIN")(request)
+        except AuthzError as exc:
+            if exc.status == 401:
+                return RedirectResponse("/", status_code=303)
+            raise
         return local_only(request) or HTMLResponse(html)
 
     # Static configuration for the page: clock, model mode, coordinators, facilities.
@@ -403,7 +468,8 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
             finally:
                 conn.close()
             return {"clock": clock_info(), "chat_enabled": demo.live_factory is not None, "model": demo.model_name,
-                    "coordinators": list(demo.coordinators), "facilities": facilities, "message_advance_seconds": MESSAGE_ADVANCE_SECONDS, "fresh": demo.fresh}
+                    "coordinators": list(demo.coordinators), "facilities": facilities, "message_advance_seconds": MESSAGE_ADVANCE_SECONDS, "fresh": demo.fresh,
+                    "read_only": not demo.driver_simulation}
 
         return local_only(request) or await run_in_threadpool(read)
 
@@ -441,87 +507,92 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
     # A chat message from the driver console.
     @router.post("/demo/api/chat")
     async def chat(request: Request, body: ChatIn) -> Any:
-        denied = local_only(request)
+        denied = local_only(request) or read_only(request)
         if denied:
             return denied
         # No model configured: the driver chat is switched off (there is no stand-in assistant), and nothing is created.
         if demo.live_factory is None:
             return JSONResponse({"http_status": 409, "status": "REJECTED", "reason_code": "NO_MODEL_CONFIGURED"}, status_code=409)
 
-        def go() -> dict[str, Any]:
-            # Imported here to avoid a circular import.
-            from setuhaul.api import MessageIn
+        return await run_in_threadpool(run_driver_message, body.driver_id, body.text, request.state.request_id)
 
-            conn = db(True)
+    # Send one message as a driver through the real pipeline. Shared by the console route and the demo driver account.
+    def run_driver_message(driver_id: str, text: str, request_id: str) -> dict[str, Any]:
+        # Imported here to avoid a circular import.
+        from setuhaul.api import MessageIn
+
+        conn = db(True)
+        try:
+            # The driver's phone number: the same identity a real webhook would carry.
+            row = conn.execute("select phone from drivers where driver_id=?", (driver_id,)).fetchone()
+        finally:
+            conn.close()
+        # Unknown driver.
+        if row is None:
+            return {"http_status": 404, "status": "REJECTED", "reason_code": "UNKNOWN_DRIVER"}
+        # Build the same payload the webhook receives.
+        payload = MessageIn.model_validate({"from": row["phone"], "message_id": f"DEMO-{uuid.uuid4().hex[:12]}", "text": text})
+        # Run it through the REAL pipeline: duplicate check, rate limit, conversation, tools. Only the signature step is skipped.
+        resp = process(payload, request_id)
+        # Decode the service's JSON response.
+        data = json.loads(bytes(resp.body))
+        # Each message takes 20 simulated seconds, so a 180-second hold can lapse during a demo.
+        demo.clock.advance(timedelta(seconds=MESSAGE_ADVANCE_SECONDS))
+        # A partner-warehouse request made in this chat is emailed straight away (production runs this as a scheduled job).
+        try:
+            sender, _, _ = mail()
+            mail_conn = db()
             try:
-                # The driver's phone number: the same identity a real webhook would carry.
-                row = conn.execute("select phone from drivers where driver_id=?", (body.driver_id,)).fetchone()
+                send_pending_requests(mail_conn, demo.clock, sender)
             finally:
-                conn.close()
-            # Unknown driver.
-            if row is None:
-                return {"http_status": 404, "status": "REJECTED", "reason_code": "UNKNOWN_DRIVER"}
-            # Build the same payload the webhook receives.
-            payload = MessageIn.model_validate({"from": row["phone"], "message_id": f"DEMO-{uuid.uuid4().hex[:12]}", "text": body.text})
-            # Run it through the REAL pipeline: duplicate check, rate limit, conversation, tools. Only the signature step is skipped.
-            resp = process(payload, request.state.request_id)
-            # Decode the service's JSON response.
-            data = json.loads(bytes(resp.body))
-            # Each message takes 20 simulated seconds, so a 180-second hold can lapse during a demo.
-            demo.clock.advance(timedelta(seconds=MESSAGE_ADVANCE_SECONDS))
-            # A partner-warehouse request made in this chat is emailed straight away (production runs this as a scheduled job).
-            try:
-                sender, _, _ = mail()
-                mail_conn = db()
-                try:
-                    send_pending_requests(mail_conn, demo.clock, sender)
-                finally:
-                    mail_conn.close()
-            except Exception:  # noqa: BLE001, S110 - a mail problem must never break the driver's reply
-                pass
-            return {"http_status": resp.status_code, **data, "clock": clock_info()}
-
-        return await run_in_threadpool(go)
+                mail_conn.close()
+        except Exception:  # noqa: BLE001, S110 - a mail problem must never break the driver's reply
+            pass
+        return {"http_status": resp.status_code, **data, "clock": clock_info()}
 
     # Everything the driver console shows: chat, live hold with seconds left, and case banner.
     @router.get("/demo/api/driver/{driver_id}/state")
     async def driver_state(request: Request, driver_id: str) -> Any:
-        def read() -> dict[str, Any]:
-            conn = db(True)
-            try:
-                # The driver's current conversation thread.
-                thread = conn.execute("select thread_id from chat_threads where driver_id=? and thread_status<>'CLOSED' order by opened_at desc, rowid desc limit 1",
-                                      (driver_id,)).fetchone()
-                # Messages shown in the chat.
-                msgs = []
-                if thread:
-                    for m in conn.execute("select sender_type, message_text, message_ts from chat_messages where thread_id=? and is_duplicate=0 "
-                                          "order by rowid desc limit 40", (thread["thread_id"],)):
-                        # Operations messages are labelled as such; the assistant's own replies as 'assistant'.
-                        who = {"DRIVER": "driver", "AGENT": "assistant"}.get(m["sender_type"], "operations")
-                        msgs.append({"who": who, "text": m["message_text"], "time": _hhmmss(parse_operational_timestamp(m["message_ts"]))})
-                    # Newest were fetched first; show oldest first.
-                    msgs.reverse()
-                # The driver's hold, if any.
-                hold = conn.execute(
-                    "select a.appointment_id, sl.slot_start_ts, sl.slot_end_ts, dk.dock_code, m.expires_epoch from appointments a "
-                    "join appointment_hold_meta m using(appointment_id) join appointment_slots sl using(slot_id) join docks dk on dk.dock_id=sl.dock_id "
-                    "where m.driver_id=? and a.appointment_status='HELD'", (driver_id,)).fetchone()
-                # Current simulated time in seconds.
-                now_epoch = int(demo.clock.now().timestamp())
-                # No visible hold by default.
-                held = None
-                # Only an unexpired hold is shown, with the seconds left.
-                if hold and hold["expires_epoch"] > now_epoch:
-                    held = {"slot": f"{_hhmm(hold['slot_start_ts'])}-{_hhmm(hold['slot_end_ts'])} at dock {hold['dock_code']}",
-                            "seconds_left": hold["expires_epoch"] - now_epoch}
-                # The driver's hand-off case, in plain words.
-                case = get_driver_case_status(conn, driver_id)
-                return {"messages": msgs, "hold": held, "case": {"status": case.status, "text": case.text} if case else None, "clock": clock_info()}
-            finally:
-                conn.close()
+        return local_only(request) or await run_in_threadpool(driver_view, driver_id)
 
-        return local_only(request) or await run_in_threadpool(read)
+    # One driver's conversation, hold and case. Shared by the console route and the demo driver account.
+    def driver_view(driver_id: str) -> dict[str, Any]:
+        conn = db(True)
+        try:
+            # The driver's current conversation thread.
+            thread = conn.execute("select thread_id from chat_threads where driver_id=? and thread_status<>'CLOSED' order by opened_at desc, rowid desc limit 1",
+                                  (driver_id,)).fetchone()
+            # Messages shown in the chat.
+            msgs = []
+            if thread:
+                for m in conn.execute("select sender_type, message_text, message_ts from chat_messages where thread_id=? and is_duplicate=0 "
+                                      "order by rowid desc limit 40", (thread["thread_id"],)):
+                    # Operations messages are labelled as such; the assistant's own replies as 'assistant'.
+                    who = {"DRIVER": "driver", "AGENT": "assistant"}.get(m["sender_type"], "operations")
+                    msgs.append({"who": who, "text": m["message_text"], "time": _hhmmss(parse_operational_timestamp(m["message_ts"]))})
+                # Newest were fetched first; show oldest first.
+                msgs.reverse()
+            # The driver's hold, if any.
+            hold = conn.execute(
+                "select a.appointment_id, sl.slot_start_ts, sl.slot_end_ts, dk.dock_code, m.expires_epoch from appointments a "
+                "join appointment_hold_meta m using(appointment_id) join appointment_slots sl using(slot_id) join docks dk on dk.dock_id=sl.dock_id "
+                "where m.driver_id=? and a.appointment_status='HELD'", (driver_id,)).fetchone()
+            # Current simulated time in seconds.
+            now_epoch = int(demo.clock.now().timestamp())
+            # No visible hold by default.
+            held = None
+            # Only an unexpired hold is shown, with the seconds left.
+            if hold and hold["expires_epoch"] > now_epoch:
+                held = {"slot": f"{_hhmm(hold['slot_start_ts'])}-{_hhmm(hold['slot_end_ts'])} at dock {hold['dock_code']}",
+                        "seconds_left": hold["expires_epoch"] - now_epoch}
+            # The driver's hand-off case, in plain words.
+            case = get_driver_case_status(conn, driver_id)
+            return {"messages": msgs, "hold": held, "case": {"status": case.status, "text": case.text} if case else None, "clock": clock_info()}
+        finally:
+            conn.close()
+
+    # Handed to build_demo_app for the separate demo driver account.
+    app.state.demo_driver_io = (run_driver_message, driver_view)
 
     # Build the GPS readout for one load: the dock, the latest ping, distance, travel time and GPS ETA. Used by both GPS routes.
     def gps_readout(conn: sqlite3.Connection, shipment_id: str) -> dict[str, Any]:
@@ -557,7 +628,7 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
     # Send a GPS position as the driver's phone would (without the signature step) and read back what the service makes of it.
     @router.post("/demo/api/gps")
     async def gps_send(request: Request, body: GpsIn) -> Any:
-        denied = local_only(request)
+        denied = local_only(request) or read_only(request)
         if denied:
             return denied
 
@@ -971,7 +1042,7 @@ def carry_sign_ins(old: Path, new: Path) -> None:
     src = open_connection(path=old, readonly=True)
     dst = open_connection(path=new)
     try:
-        for table in ("users", "user_facilities", "auth_sessions"):
+        for table in ("users", "user_facilities", "auth_sessions", "admin_credentials"):
             rows = src.execute(f"select * from {table}").fetchall()
             if rows:
                 marks = ",".join("?" for _ in rows[0])
@@ -983,7 +1054,8 @@ def carry_sign_ins(old: Path, new: Path) -> None:
 
 
 def build_demo_app(workdir: Path | None = None, live_factory: Callable[[], Any] | None = None, policy: Any = None,
-                   fresh: bool = False) -> tuple[FastAPI, Any]:
+                   fresh: bool = False, driver_simulation: bool = False, sign_in: DemoSignIn | None = None,
+                   auto_login: bool = True) -> tuple[FastAPI, Any]:
     """The service wired for the demo: fixed clock, in-process cache, the configured model (chat is off without one), no real channel."""
     # An in-process fake Redis, so no server is needed.
     import fakeredis
@@ -1006,14 +1078,16 @@ def build_demo_app(workdir: Path | None = None, live_factory: Callable[[], Any] 
 
     # Build the first database, with the demo console's own sign-in.
     build_demo_db(db_path, fresh)
+    signing = sign_in or DemoSignIn()
     first = open_connection(path=db_path)
     try:
         seed_demo_user(first, clock)
+        seed_sign_in(first, signing, clock)
     finally:
         first.close()
     # Shared state for the routes (its reset function is attached just below).
     state = DemoState(clock=clock, db_path=db_path, reset=lambda **_: None, fresh=fresh, live_factory=live_factory,
-                      model_name=getattr(policy, "model_id", "") if live_factory else "")
+                      model_name=getattr(policy, "model_id", "") if live_factory else "", driver_simulation=driver_simulation)
     # Counts resets, so each one gets its own database file.
     generation = {"n": 0}
 
@@ -1050,13 +1124,14 @@ def build_demo_app(workdir: Path | None = None, live_factory: Callable[[], Any] 
     deps = AppDeps(
         db_path=db_path, redis=redis, webhook_secret=os.urandom(16), coordinator_tokens={}, fallback_path=work / "fallback.jsonl",
         policy=policy or ModelPolicy(provider="none", model_id=""), clock=clock, demo=state,
-        gateway_factory=live_factory if live_factory else UnconfiguredGateway)
+        gateway_factory=live_factory if live_factory else UnconfiguredGateway,
+        google=signing.google, session_secret=signing.session_secret, local_admin_enabled=signing.local_admin)
     # Remove a stray folder if one exists (harmless if not).
     shutil.rmtree(work / "unused", ignore_errors=True)
     app = create_app(deps)
 
-    # Local tooling only: a loopback client trades itself for a session as the seeded demo user. Registered here, never by create_app.
-    @app.get("/demo/login")
+    # Local tooling only: a loopback client trades itself for a session as the seeded demo user. Registered here, never by create_app,
+    # and only when asked (scripts/run_demo.py --auto-login), because it skips authentication.
     async def demo_login(request: Request) -> Any:
         host = request.client.host if request.client else ""
         # Anyone else is refused and given nothing.
@@ -1084,6 +1159,12 @@ def build_demo_app(workdir: Path | None = None, live_factory: Callable[[], Any] 
         resp = await run_in_threadpool(go)
         # No demo user could be found or made: refuse rather than hand out nothing.
         return resp or JSONResponse({"status": "REJECTED", "reason_code": "DEMO_USER_UNAVAILABLE"}, status_code=503)
+
+    if auto_login:
+        app.get("/demo/login")(demo_login)
+
+    # The separate demo driver account (loopback only, its own cookie, no board): see demo_driver.py.
+    register_demo_driver(app, deps, *app.state.demo_driver_io)
 
     # Return the app and its dependencies.
     return app, deps

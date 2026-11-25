@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SetuHaul | Demo driver</title>
+<style>
+:root{--bg:#f3f5f8;--surface:#fff;--line:#dde3ea;--ink:#0f1b2d;--ink-3:#6b7a90;--brand:#12355b;--brand-soft:#e8f0fa;--bad:#b42318}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 "Segoe UI",system-ui,sans-serif}
+.phone{max-width:440px;margin:0 auto;height:100vh;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line)}
+header{background:var(--brand);color:#fff;padding:12px 16px}
+header h1{margin:0;font-size:16px}
+header div{opacity:.8;font-size:12px}
+#notice{padding:8px 16px;background:var(--brand-soft)}
+#notice:empty{display:none}
+#thread{flex:1;overflow:auto;padding:12px 16px;display:flex;flex-direction:column;gap:8px}
+.msg{max-width:85%;padding:8px 10px;border-radius:8px;background:var(--brand-soft);white-space:pre-wrap;align-self:flex-start}
+.msg.driver{align-self:flex-end;background:var(--brand);color:#fff}
+.msg small{display:block;opacity:.7;font-size:11px}
+.empty{color:var(--ink-3);text-align:center;margin-top:24px}
+footer{border-top:1px solid var(--line);padding:10px 12px}
+#error{color:var(--bad);min-height:18px;font-size:12px}
+#chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+button{font:inherit;border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 10px;cursor:pointer}
+button:disabled,input:disabled{opacity:.5;cursor:default}
+form{display:flex;gap:8px}
+input{flex:1;font:inherit;padding:8px;border:1px solid var(--line);border-radius:8px}
+#send{background:var(--brand);color:#fff}
+</style>
+</head>
+<body>
+<div class="phone">
+  <header><h1 id="name">Demo driver</h1><div id="sub">Demo driver account (local only). Real drivers write from Telegram.</div></header>
+  <div id="notice" role="status"></div>
+  <div id="thread" aria-live="polite"><div class="empty">No messages yet.</div></div>
+  <footer>
+    <div id="error" role="alert"></div>
+    <div id="chips"></div>
+    <form id="form" autocomplete="off">
+      <input id="text" type="text" maxlength="2000" placeholder="Type your message" aria-label="Message">
+      <button id="send" type="submit">Send</button>
+    </form>
+  </footer>
+</div>
+<script>
+(()=>{
+const $=s=>document.querySelector(s);
+const QUICK=["I will be about two hours late","What slots can I get?","1","Yes, confirm","What is the status?"];
+let busy=false,enabled=false;
+// Everything from the server is put on screen with textContent only.
+function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e;}
+function controls(){for(const c of document.querySelectorAll("#chips button,#text,#send"))c.disabled=busy||!enabled;}
+async function refresh(){
+  const r=await fetch("/demo/driver/api/state");
+  if(!r.ok){enabled=false;controls();$("#error").textContent="Signed out. Open /demo/driver-login again.";return;}
+  const s=await r.json();enabled=s.chat_enabled;
+  $("#name").textContent=s.driver.name;
+  $("#sub").textContent=`${s.driver.carrier} · demo driver account. Real drivers write from Telegram.`;
+  $("#notice").textContent=[s.hold?`Slot held: ${s.hold.slot}`:"",s.case?s.case.text:""].filter(Boolean).join(" · ");
+  const t=$("#thread");
+  t.replaceChildren(...(s.messages.length?s.messages.map(m=>{const d=el("div",m.who==="driver"?"msg driver":"msg",m.text);d.appendChild(el("small",null,`${m.who==="operations"?"Operations team · ":""}${m.time}`));return d;}):[el("div","empty","No messages yet.")]));
+  t.scrollTop=t.scrollHeight;
+  if(!enabled)$("#error").textContent="Chat is switched off: no language model is configured.";
+  controls();
+}
+async function send(text){
+  if(!text.trim()||busy||!enabled)return;
+  busy=true;controls();$("#error").textContent="Sending…";$("#text").value="";
+  try{
+    const r=await fetch("/demo/driver/api/message",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text})});
+    const d=await r.json();
+    $("#error").textContent=!r.ok||d.http_status>=400?`The service refused the message (${d.reason_code||"ERROR"}).`:"";
+  }catch(e){$("#error").textContent="The message could not be sent.";}
+  busy=false;await refresh();
+}
+$("#chips").append(...QUICK.map(q=>{const b=el("button",null,q);b.type="button";b.onclick=()=>send(q);return b;}));
+$("#form").onsubmit=e=>{e.preventDefault();send($("#text").value);};
+refresh();
+setInterval(()=>{if(!busy&&!document.hidden)refresh();},2500);
+})();
+</script>
+</body>
+</html>

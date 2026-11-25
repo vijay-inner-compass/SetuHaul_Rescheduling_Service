@@ -41,18 +41,26 @@ Observed: `647 passed in 29.35s`, `All checks passed!`, `Success: no issues foun
 ## 3. The demo console
 
 ```powershell
-python scripts/run_demo.py            # opens http://127.0.0.1:8800/demo/login, which signs you in and shows /demo
+python scripts/run_demo.py            # opens http://127.0.0.1:8800/ : sign in, then go to /demo
+python scripts/run_demo.py --auto-login   # NO authentication: /demo/login signs you in as a demo warehouse user
 python scripts/run_demo.py --no-browser --port 8800   # headless
 python scripts/run_demo.py --fresh    # start with an empty dock board (no existing appointments)
 ```
 
-**Open `/demo/login` first.** The console now needs a web session; without one `/demo` and its API answer 401. `/demo/login` exists only
-in `run_demo.py` (never in the real service) and only for loopback requests: it signs the browser in as a seeded demo **warehouse authority**
-bound to every facility. The same session also opens the real screens:
+**The demo uses the real sign-in.** `run_demo.py` reads these from `.env` (or the environment) and shows a login page at `/`; signed-out
+visitors to `/demo` are sent there. Only what is configured is offered.
+
+* **Backup admin password** (works without Google): set `SETUHAUL_BOOTSTRAP_ADMIN_EMAIL=<you>` and `SETUHAUL_LOCAL_ADMIN=1`. The demo
+  asks for the password in the terminal at each start (12 characters or more); it is not stored, because the demo database is rebuilt.
+* **Google**: also set `SETUHAUL_GOOGLE_CLIENT_ID` and `SETUHAUL_GOOGLE_CLIENT_SECRET`, and register
+  `http://127.0.0.1:8800/auth/callback` as a redirect URI on your OAuth client. Open the page as `127.0.0.1`, the same host. The signing
+  secret is generated for the run if `SETUHAUL_SESSION_SECRET` is unset. `SETUHAUL_BOOTSTRAP_ADMIN_EMAIL` must be your Google address.
+* `--auto-login` restores the old shortcut (`/demo/login`, loopback only) and **skips authentication**.
+* The demo clock is frozen, so a session does not expire and a locked backup password does not unlock until the demo is restarted.
 
 | Screen | What it is | As the demo user |
 |---|---|---|
-| `/` | sign-in page; a signed-in user is sent on to their screen | redirects to `/warehouse`. The Google button answers 503 in the demo (no Google client) |
+| `/` | sign-in page; a signed-in user is sent on to their screen | redirects to `/warehouse`. The page offers only the sign-in methods you configured |
 | `/warehouse` | dock board, cases, partner requests, driver chats, projects, drivers | works |
 | `/admin` | users, pending drivers, audit log | "Not allowed" (403): admins only |
 
@@ -69,7 +77,13 @@ To guarantee the stand-in, start with `$env:SETUHAUL_DOTENV = "off"` first.
 
 The page has three panels and a top bar:
 
-* **Driver console** (left): pick a driver, see their loads, a GPS panel, the chat, and quick-message buttons.
+* **Driver console** (left): pick a driver, see their loads, GPS readout and conversation. **Read only** for every web user (decision D90):
+  no message box, quick replies or ping button, and the server refuses those requests (`403 READ_ONLY_CONSOLE`, audited). Drivers write from Telegram.
+  Walkthrough steps below that type as the driver can no longer be done in the console. The local demo has no Telegram connection, so its
+  conversations stay empty until someone uses the demo driver account below.
+* **Demo driver account** (separate page, decision D91): open `http://127.0.0.1:8800/demo/driver-login` (default driver Manoj Sharma,
+  `?driver=DRV007` for another). It sends messages as that one driver and shows only that driver's conversation: no dock board, no
+  operations. It has its own cookie, so you can keep the admin console open in another tab and watch. Local demo and loopback only.
 * **Dock board** (middle): docks by hour for one facility; Available, Held (amber, 3 min), Booked, Blocked, and the selected driver's own cells.
 * **Operations** (right): **Cases** (the hand-off queue) and **Activity** (appointment history, notification outbox, GPS pings).
 * **Top bar:** the model name, the simulated clock, **+1 min**, **+3 min and sweep**, **Reset demo**.
@@ -78,7 +92,7 @@ The page has three panels and a top bar:
 Do this between scenarios. Each chat message advances the clock 20 seconds, so a 180-second hold can be watched lapsing.
 
 Direct API calls to the same routes (`/demo/api/chat`, `/clock`, `/board`, `/cases`, `/gps`, ...) are used below to show exact text; they run the same code as the page.
-A script calling them must first keep the session cookie that `/demo/login` sets (for example one `httpx.Client` for all calls).
+A script calling them must first keep the session cookie from a sign-in (`/demo/login` sets one when started with `--auto-login`) (for example one `httpx.Client` for all calls).
 
 ## 4. Scenarios on the console
 
@@ -235,7 +249,7 @@ The unit tests for the boundary (exactly 30 minutes is not a discrepancy, 31 is)
 Remember the console's Send calls the shared store function directly; the signed endpoints are shown in section 7.
 
 ## 5b. Partner warehouse by email (new)
-1. Start the console (`python scripts/run_demo.py`, signing in through `/demo/login`). Open **Operations > Partner mail**, press **Request partner slot (12:00)**.
+1. Start the console (`python scripts/run_demo.py`, signed in). Open **Operations > Partner mail**, press **Request partner slot (12:00)**.
 2. The request email appears (to the demo partner's coordinator). Switch the dock board to **Partner Warehouse Jaipur**: the request shows under the board as *waiting*, not booked.
 3. Press **Partner replies APPROVE**. The reply is read from the (simulated) inbox, the slot is booked and the board cell turns purple (partner warehouse). The driver (Ravi Partner-Demo) gets the update in the chat.
 4. Try **DECLINE**, or move time on with **+3 min and sweep** past 2 hours to see the request expire; the original booking is never touched.
@@ -458,7 +472,7 @@ Always close with the limits: [client-readout.md](client-readout.md) lists what 
 
 | Symptom | Cause and fix |
 |---|---|
-| `/demo` answers 401 | open `/demo/login` first (loopback only) |
+| `/demo` shows the login page | sign in at `/`; if it says no sign-in is configured, set the `.env` values above or start with `--auto-login` |
 | `/auth/login` answers 503 `GOOGLE_NOT_CONFIGURED` | client id or secret missing, or `SETUHAUL_SESSION_SECRET` shorter than 32 bytes |
 | 403 `CROSS_SITE_REQUEST` from your own pages | set `SETUHAUL_PUBLIC_URL` to exactly the origin in the browser's address bar |
 | Telegram webhook answers 503 / 401 | 503: token or secret missing, or secret shorter than 16 characters. 401: `setWebhook` used a different secret |

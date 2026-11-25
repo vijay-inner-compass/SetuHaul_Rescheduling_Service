@@ -83,7 +83,7 @@ def test_without_a_ping_nothing_changes(chat: Chat) -> None:
 
 def test_demo_far_ping_then_chat_shows_the_note(tmp_path: Path) -> None:
     # Through the demo routes: post a ping 120 km out, then tell the driver's 20 minute lie to the real pipeline.
-    client = demo_client(build_demo_app(tmp_path / "demo", live_factory=StubGateway)[0])
+    client = demo_client(build_demo_app(tmp_path / "demo", live_factory=StubGateway, driver_simulation=True)[0])
     did = next(d["id"] for d in client.get("/demo/api/drivers").json()["drivers"] if d["name"] == "Manoj Sharma")
     fac = client.get(f"/demo/api/driver/{did}/gps").json()["facility"]
     sent = client.post("/demo/api/gps", json={"driver_id": did, "lat": fac["lat"] + 120 / 111.2, "lon": fac["lon"], "age_minutes": 0})

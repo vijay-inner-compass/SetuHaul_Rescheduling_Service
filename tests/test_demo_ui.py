@@ -16,7 +16,7 @@ from tests.auth_helpers import demo_client
 
 @pytest.fixture()
 def demo(tmp_path: Path):  # type: ignore[no-untyped-def]
-    app, deps = build_demo_app(tmp_path / "demo", live_factory=StubGateway)
+    app, deps = build_demo_app(tmp_path / "demo", live_factory=StubGateway, driver_simulation=True)
     return demo_client(app), deps
 
 
@@ -51,7 +51,7 @@ def test_the_page_escapes_everything_it_renders() -> None:
 
 
 def test_demo_routes_refuse_anyone_but_this_machine(tmp_path: Path) -> None:
-    app, _ = build_demo_app(tmp_path / "d", live_factory=StubGateway)
+    app, _ = build_demo_app(tmp_path / "d", live_factory=StubGateway, driver_simulation=True)
     outsider = demo_client(app, client=("203.0.113.9", 50000))
     for path in ("/demo", "/demo/api/drivers", "/demo/api/board", "/demo/api/cases", "/demo/api/config"):
         r = outsider.get(path)
@@ -177,7 +177,7 @@ def test_a_driver_who_cannot_be_served_becomes_a_case_a_coordinator_can_work(dem
 # --- model switch, reset, validation ----------------------------------------------------------------------------
 def test_without_a_configured_model_the_chat_is_off_and_there_is_no_stand_in(tmp_path: Path) -> None:
     # No model configured: the page says so, chat is refused, nothing is created, and the rest of the console still works.
-    app, _ = build_demo_app(tmp_path / "nomodel")
+    app, _ = build_demo_app(tmp_path / "nomodel", driver_simulation=True)
     client = demo_client(app)
     cfg = client.get("/demo/api/config").json()
     assert cfg["chat_enabled"] is False and cfg["model"] == "" and "model_mode" not in cfg
@@ -201,7 +201,7 @@ def test_the_model_switch_endpoint_no_longer_exists(demo) -> None:  # type: igno
 def test_chat_uses_the_configured_gateway(tmp_path: Path) -> None:
     from setuhaul.model_gateway import ModelResponse, ScriptedGateway
 
-    app, _deps = build_demo_app(tmp_path / "live", live_factory=lambda: ScriptedGateway([ModelResponse(text="Hello from the live model.")]))
+    app, _deps = build_demo_app(tmp_path / "live", live_factory=lambda: ScriptedGateway([ModelResponse(text="Hello from the live model.")]), driver_simulation=True)
     client = demo_client(app)
     assert client.get("/demo/api/config").json()["chat_enabled"] is True
     r = client.post("/demo/api/chat", json={"driver_id": driver_id(client, "Manoj Sharma"), "text": "hello there"}).json()
@@ -235,7 +235,7 @@ def statuses(client: TestClient) -> set[str]:
 
 
 def test_an_empty_board_has_every_slot_free_and_loads_without_bookings(tmp_path: Path) -> None:
-    app, _ = build_demo_app(tmp_path / "fresh", fresh=True, live_factory=StubGateway)
+    app, _ = build_demo_app(tmp_path / "fresh", fresh=True, live_factory=StubGateway, driver_simulation=True)
     client = demo_client(app)
     assert client.get("/demo/api/config").json()["fresh"] is True
     assert "BOOKED" not in statuses(client) and "HELD" not in statuses(client)
@@ -244,7 +244,7 @@ def test_an_empty_board_has_every_slot_free_and_loads_without_bookings(tmp_path:
 
 def test_a_driver_can_book_from_an_empty_board(tmp_path: Path) -> None:
     # A load with no appointment at all still gets options, a hold and a confirmation on the empty board.
-    app, _ = build_demo_app(tmp_path / "fresh2", fresh=True, live_factory=StubGateway)
+    app, _ = build_demo_app(tmp_path / "fresh2", fresh=True, live_factory=StubGateway, driver_simulation=True)
     client = demo_client(app)
     manoj = driver_id(client, "Manoj Sharma")
     assert "These slots are available" in say(client, manoj, "my truck is 60 minutes late")["reply"]
