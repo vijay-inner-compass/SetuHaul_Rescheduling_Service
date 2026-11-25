@@ -780,11 +780,12 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
             return denied
 
         def go() -> dict[str, Any]:
-            sender, reader, _ = mail()
+            sender, reader, settings = mail()
             conn = db()
             try:
                 sent = send_pending_requests(conn, demo.clock, sender)
-                handled = poll_partner_replies(conn, demo.clock, reader)
+                handled = poll_partner_replies(conn, demo.clock, reader, require_auth=settings.mode == "live",
+                                               auth_serv_id=settings.auth_serv_id)
                 return {"sent": sent, "replies_handled": handled, "expired": expire_partner_requests(conn, demo.clock)}
             finally:
                 conn.close()
