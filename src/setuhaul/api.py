@@ -119,6 +119,9 @@ from setuhaul.identity import (
 # The background maintenance runner.
 from setuhaul.jobs.expire_holds import MaintenanceRunner
 
+# The background sender of queued driver notices.
+from setuhaul.jobs.send_driver_notifications import DriverNoticeRunner
+
 # Conversation memory.
 from setuhaul.memory import ConversationMemoryStore
 
@@ -201,6 +204,10 @@ class AppDeps:
     telegram_secret: bytes = b""
     # Sends replies to Telegram chats; None means no replies can be sent.
     telegram: TelegramClient | None = None
+    # Send queued driver notices from a background thread (needs a Telegram client; one server process only).
+    run_driver_notices: bool = False
+    # Seconds between delivery passes.
+    notice_interval_s: float = 5.0
 
 
 # The inbound webhook body. Unknown fields are rejected (extra='forbid').
@@ -287,6 +294,11 @@ def create_app(deps: AppDeps) -> FastAPI:
                                        conn_factory=lambda: open_connection(path=deps.db_path))
             # Start it off the event loop.
             await run_in_threadpool(runner.start)
+        # Messages written outside a driver's turn reach their phone only through this sender.
+        notices = None
+        if deps.run_driver_notices and deps.telegram is not None:
+            notices = DriverNoticeRunner(deps.clock, deps.telegram, lambda: open_connection(path=deps.db_path), deps.notice_interval_s)
+            notices.start()
         try:
             # The application serves requests while suspended here.
             yield
@@ -294,6 +306,8 @@ def create_app(deps: AppDeps) -> FastAPI:
         finally:
             if runner is not None:
                 await run_in_threadpool(runner.stop)
+            if notices is not None:
+                await run_in_threadpool(notices.stop)
 
     # A bearer name that looks like a web identity would let that token act as a signed-in user's claims.
     for token_name in deps.coordinator_tokens.values():
@@ -902,7 +916,9 @@ def create_app_from_env() -> FastAPI:
         db_path=s.db_path, redis=redis,
         webhook_secret=os.environ.get("SETUHAUL_WEBHOOK_SECRET", "").encode(), coordinator_tokens=tokens,
         fallback_path=Path(os.environ.get("SETUHAUL_FALLBACK_ESCALATIONS", "escalations-fallback.jsonl")), policy=policy,
-        gateway_factory=factory, run_maintenance=os.environ.get("SETUHAUL_RUN_MAINTENANCE") == "1", clock=clock))
+        # With a bot, queued notices are sent, and the sweep runs so that lapsed offers are noticed and unbooked moves go back.
+        gateway_factory=factory, run_driver_notices=tg_client is not None,
+        run_maintenance=os.environ.get("SETUHAUL_RUN_MAINTENANCE") == "1" or tg_client is not None, clock=clock))
 
 
 # Public names (some are re-exported for tests).

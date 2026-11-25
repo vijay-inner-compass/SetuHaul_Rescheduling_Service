@@ -8,6 +8,8 @@ in Phase 11. Every operation is idempotent, so several runners are safe.
 # Lazy annotations.
 from __future__ import annotations
 
+import logging
+
 # sqlite3 for the Connection type.
 import sqlite3
 
@@ -140,6 +142,13 @@ class MaintenanceRunner:
                 )
         return MaintenanceResult(expired=expired, purged_option_sets=purged)
 
+    def run_safely(self) -> None:
+        """One pass for the background loop: an error (a locked database, say) is logged and the next pass still runs."""
+        try:
+            self.run_once()
+        except Exception as exc:  # noqa: BLE001 - the sweep must outlive any single failure
+            logging.getLogger(__name__).error("maintenance sweep failed: %s", type(exc).__name__)
+
     def start(self) -> None:
         """Prototype loop for a single process.
 
@@ -151,7 +160,7 @@ class MaintenanceRunner:
         # A throwaway runner for the first sweep, which happens immediately at startup.
         boot = MaintenanceRunner(self._factory(), self._clock, self._interval)  # opened and closed on this thread
         try:
-            boot.run_once()  # sweep at startup, as the plan requires
+            boot.run_safely()  # sweep at startup, as the plan requires
         finally:
             boot.close()
         factory = self._factory
@@ -162,7 +171,7 @@ class MaintenanceRunner:
             try:
                 # Event.wait(timeout) sleeps for the interval but wakes at once if stop() is called; it returns True then.
                 while not self._stop.wait(self._interval):
-                    worker.run_once()
+                    worker.run_safely()
             finally:
                 worker.close()
 

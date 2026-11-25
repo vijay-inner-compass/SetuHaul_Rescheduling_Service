@@ -152,7 +152,7 @@ def expire_hold_in_txn(conn: sqlite3.Connection, appointment_id: str, now: datet
     """
     # Only a row that is still HELD qualifies; anything else (confirmed, released, already expired) is left alone.
     row = conn.execute(
-        "select a.shipment_id, m.driver_id, m.thread_id from appointments a "
+        "select a.shipment_id, m.driver_id, m.thread_id, m.expires_at from appointments a "
         "join appointment_hold_meta m using(appointment_id) "
         "where a.appointment_id=? and a.appointment_status='HELD'",
         (appointment_id,),
@@ -182,7 +182,8 @@ def expire_hold_in_txn(conn: sqlite3.Connection, appointment_id: str, now: datet
         conn, f"HOLD_EXPIRED:{appointment_id}", "DRIVER", row["driver_id"], event_id,
         {"kind": "HOLD_EXPIRED", "thread_id": row["thread_id"], "appointment_id": appointment_id,
          "text": HOLD_EXPIRED_MESSAGE},
-        now,
+        # Dated when the hold ran out, not when it was noticed: after downtime the sender skips it as old news.
+        min(now, parse_operational_timestamp(row["expires_at"])),
     )
     return True
 

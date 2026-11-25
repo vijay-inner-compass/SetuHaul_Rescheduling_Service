@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -143,7 +143,7 @@ def _language(conn: sqlite3.Connection, driver_id: str, thread_id: str | None) -
 
 
 def _tell(conn: sqlite3.Connection, clock: Clock, memory: ConversationMemoryStore | None, driver_id: str, thread_id: str | None,
-          shipment_id: str, key: str, **fields: str) -> None:
+          shipment_id: str, key: str, *, happened_at: datetime | None = None, **fields: str) -> None:
     """Put a message in the driver's chat, in their language, and queue it for their phone."""
     text = say(key, _language(conn, driver_id, thread_id), **fields)
     now = clock.now()
@@ -153,7 +153,7 @@ def _tell(conn: sqlite3.Connection, clock: Clock, memory: ConversationMemoryStor
         # Callers without the cache (the sweeps) write the durable log; the cache is rebuilt from it.
         conn.execute("insert into chat_messages (chat_message_id, thread_id, sender_type, message_text, message_ts) "
                      "values (?,?, 'OPERATIONS', ?, ?)", ("MSG-" + uuid.uuid4().hex[:12].upper(), thread_id, text, now.isoformat()))
-    queue_driver_notice(conn, driver_id, shipment_id, text, now)
+    queue_driver_notice(conn, driver_id, shipment_id, text, now, happened_at)
 
 
 def _release_live_holds(conn: sqlite3.Connection, clock: Clock, driver_id: str, shipment_id: str) -> None:
@@ -170,7 +170,8 @@ def _facility_name(conn: sqlite3.Connection, facility_id: str) -> str:
 
 
 def _revert(conn: sqlite3.Connection, clock: Clock, request_id: str, reason: str, message_key: str, *,
-            case_summary: str | None = None, memory: ConversationMemoryStore | None = None) -> bool:
+            case_summary: str | None = None, memory: ConversationMemoryStore | None = None,
+            happened_at: datetime | None = None) -> bool:
     """Send an approved but unbooked move back: never leave a load pointing at a site where it has no booking."""
     with immediate(conn):
         req = conn.execute("select * from facility_change_requests where request_id=? and status='APPROVED' "
@@ -188,7 +189,7 @@ def _revert(conn: sqlite3.Connection, clock: Clock, request_id: str, reason: str
         SqlEscalationSink(conn, clock).record(HandoffRequest(
             reason_code="NO_SLOT", driver_id=driver_id, thread_id=thread_id, shipment_id=shipment_id,
             summary=case_summary, created_at=clock.now()))
-    _tell(conn, clock, memory, driver_id, thread_id, shipment_id, message_key,
+    _tell(conn, clock, memory, driver_id, thread_id, shipment_id, message_key, happened_at=happened_at,
           facility=_facility_name(conn, req["to_facility_id"]), origin=_facility_name(conn, req["from_facility_id"]))
     return True
 
@@ -197,6 +198,17 @@ def abandon(conn: sqlite3.Connection, clock: Clock, request_id: str, reason: str
     """The follow-up to an approval failed: undo the move, tell the driver and ask a person to look."""
     _revert(conn, clock, request_id, reason, "move_no_slot",
             case_summary="A facility move was approved but the follow-up failed.")
+
+
+def _lapsed_at(conn: sqlite3.Connection, clock: Clock, req: sqlite3.Row) -> datetime:
+    """When the move stopped being possible: the last hold or partner request ran out. Never later than now."""
+    ends = [parse_operational_timestamp(req["decided_at"])]
+    ends += [parse_operational_timestamp(r[0]) for r in conn.execute(
+        "select m.expires_at from appointment_hold_meta m join appointments a using(appointment_id) where a.shipment_id=?",
+        (req["shipment_id"],))]
+    ends += [parse_operational_timestamp(r[0]) for r in conn.execute(
+        "select coalesce(decided_at, expires_at) from partner_requests where shipment_id=?", (req["shipment_id"],))]
+    return min(clock.now(), max(ends))
 
 
 def settle(conn: sqlite3.Connection, clock: Clock, driver_id: str | None = None) -> int:
@@ -221,7 +233,8 @@ def settle(conn: sqlite3.Connection, clock: Clock, driver_id: str | None = None)
             "and a.appointment_status='HELD' and m.expires_epoch > ?", (shipment_id, int(clock.now().timestamp()))).fetchone()
         asked = conn.execute("select 1 from partner_requests where shipment_id=? and status='PENDING_PARTNER'", (shipment_id,)).fetchone()
         if held is None and asked is None:
-            reverted += _revert(conn, clock, req["request_id"], "NOT_CONFIRMED", "move_lapsed")
+            reverted += _revert(conn, clock, req["request_id"], "NOT_CONFIRMED", "move_lapsed",
+                                happened_at=_lapsed_at(conn, clock, req))
     return reverted
 
 

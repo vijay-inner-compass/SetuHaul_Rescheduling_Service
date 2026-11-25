@@ -437,7 +437,7 @@ Rules enforced by the server:
 
 ### Known limitations
 
-* **Driver notices are not delivered on their own.** Queued for a driver: *hold expired*, facility-change answers and closer-truck offers; booking, cancellation and escalation changes queue none (other operations, partner-warehouse and position messages are written into the chat history only). Nothing schedules or runs `jobs/send_driver_notifications.py` (it has no command-line entry point). The bot only replies to what the driver sends.
+* **Driver notices are sent only when the bot is configured**, by one server process, every 5 seconds; running several server copies could send duplicates. Delivery is at least once: a crash between sending and recording can repeat a message. Notices more than 30 minutes old are marked `TOO_OLD` and not sent. Queued for a driver: *hold expired*, facility-change answers and closer-truck offers; booking, cancellation and escalation changes queue none (other operations, partner-warehouse and position messages are written into the chat history only). The demo does not send to Telegram.
 * The generic `jobs/deliver_notifications` runner does not filter by recipient: a scheduler using it would also mark driver notices as sent without Telegram.
 * Drivers have no web account or screen.
 * An admin can create projects and allocate drivers, although one line of the design spec says admins only read projects.
@@ -508,7 +508,7 @@ instead. If nothing can be offered, the load goes back to its original facility 
 **If no booking comes of it** (the offer lapses, every slot is declined, or the partner declines or does not answer), the load goes back
 to its original facility and the driver is told. This happens at the driver's next message or the next sweep job.
 
-**Telegram.** Messages written outside a driver's turn (approval, rejection, closer-truck offer) are queued for the phone, but **nothing
-sends the queue yet** (see the limits in section 7a): today a Telegram driver sees only replies to their own messages.
+**Telegram.** With the bot configured, the server sends messages written outside a driver's turn (approval, rejection, closer-truck
+offer, lapsed hold) within a few seconds, and runs the hold sweep itself (section 7a).
 
 **Limits.** The partner request proposes the first full hour after the arrival.
