@@ -152,26 +152,30 @@ def test_one_telegram_account_cannot_bind_two_drivers(tmp_path: Path, clock: Fak
     assert conn.execute("select count(*) from telegram_identities").fetchone()[0] == 1
 
 
-def test_revoked_binding_refused_and_rebind_allowed_only_when_approved(tmp_path: Path, clock: FakeClock) -> None:
-    conn, admin, wh = _env(tmp_path, clock)
+def test_revoked_binding_refused_and_rebind_allowed_only_after_relink_and_when_eligible(tmp_path: Path, clock: FakeClock) -> None:
+    conn, admin, _ = _env(tmp_path, clock)
     assert _bind(conn, clock, user_id=111) == telegram.BindResult.BOUND
-    telegram.revoke(conn, actor=wh, driver_id=DRV6, clock=clock)
-    # A revoked binding no longer resolves.
+    # DRV006 is a supplied driver: only an admin may revoke it.
+    telegram.revoke(conn, actor=admin, driver_id=DRV6, clock=clock)
+    # A revoked binding no longer resolves, and the revoke is sticky: a new account is refused too.
     assert telegram.resolve_driver(conn, 111, clock.now().date()) is None
+    assert _bind(conn, clock, user_id=333) == telegram.BindResult.REFUSED
+    telegram.allow_relink(conn, actor=admin, driver_id=DRV6, clock=clock)
     # While the driver is suspended, re-binding is refused.
     conn.execute("update drivers set driver_status='SUSPENDED' where driver_id=?", (DRV6,))
     conn.commit()
     assert _bind(conn, clock, user_id=333) == telegram.BindResult.REFUSED
     conn.execute("update drivers set driver_status='ACTIVE' where driver_id=?", (DRV6,))
     conn.commit()
-    # Once eligible again a new account (or the same one) binds by reusing the revoked row.
+    # Once eligible again (and re-link allowed) a new account binds.
     assert _bind(conn, clock, user_id=333) == telegram.BindResult.BOUND
     assert telegram.resolve_driver(conn, 333, clock.now().date()) == DRV6
     assert telegram.resolve_driver(conn, 111, clock.now().date()) is None
     rows = conn.execute("select * from telegram_identities").fetchall()
     assert len(rows) == 1 and rows[0]["revoked_at"] is None
-    # The old account may bind again later too (its row is not in the way).
+    # The old account may bind again later too, after another revoke and re-link.
     telegram.revoke(conn, actor=admin, driver_id=DRV6, clock=clock)
+    telegram.allow_relink(conn, actor=admin, driver_id=DRV6, clock=clock)
     assert _bind(conn, clock, user_id=111) == telegram.BindResult.BOUND
     assert len(conn.execute("select * from telegram_identities").fetchall()) == 1
 
@@ -200,15 +204,15 @@ def test_licence_expiry_stops_resolution(tmp_path: Path, clock: FakeClock) -> No
 
 
 def test_bind_and_refusals_audited(tmp_path: Path, clock: FakeClock) -> None:
-    conn, _, wh = _env(tmp_path, clock)
+    conn, admin, _ = _env(tmp_path, clock)
     _bind(conn, clock, contact_user_id=None)
     _bind(conn, clock)
-    telegram.revoke(conn, actor=wh, driver_id=DRV6, clock=clock)
+    telegram.revoke(conn, actor=admin, driver_id=DRV6, clock=clock)
     refused, ok, revoked = (_audits(conn, a) for a in ("TELEGRAM_BIND_REFUSED", "TELEGRAM_BIND_OK", "TELEGRAM_REVOKED"))
     assert len(refused) == 1 and refused[0]["outcome"] == "REFUSED"
     assert json.loads(refused[0]["detail_json"])["reason"] == "CONTACT_NOT_OWN"
     assert len(ok) == 1 and ok[0]["target_id"] == DRV6 and ok[0]["outcome"] == "OK"
-    assert len(revoked) == 1 and revoked[0]["actor_user_id"] == wh.user_id and revoked[0]["target_id"] == DRV6
+    assert len(revoked) == 1 and revoked[0]["actor_user_id"] == admin.user_id and revoked[0]["target_id"] == DRV6
     # No phone number is written to the audit detail.
     assert "9000010006" not in "".join(r["detail_json"] or "" for r in conn.execute("select detail_json from audit_log"))
 
@@ -217,11 +221,14 @@ def _active_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return list(conn.execute("select * from telegram_identities where revoked_at is null"))
 
 
-def test_same_account_rebinds_same_driver_after_revoke(tmp_path: Path, clock: FakeClock) -> None:
-    conn, _, wh = _env(tmp_path, clock)
+def test_same_account_rebinds_same_driver_only_after_allow_relink(tmp_path: Path, clock: FakeClock) -> None:
+    conn, admin, _ = _env(tmp_path, clock)
     assert _bind(conn, clock, user_id=111) == telegram.BindResult.BOUND
-    telegram.revoke(conn, actor=wh, driver_id=DRV6, clock=clock)
-    # The very same Telegram account links the very same driver again.
+    telegram.revoke(conn, actor=admin, driver_id=DRV6, clock=clock)
+    # Re-sharing the contact does not undo the revoke.
+    assert _bind(conn, clock, user_id=111) == telegram.BindResult.REFUSED
+    telegram.allow_relink(conn, actor=admin, driver_id=DRV6, clock=clock)
+    # Now the very same Telegram account links the very same driver again.
     assert _bind(conn, clock, user_id=111) == telegram.BindResult.BOUND
     assert telegram.resolve_driver(conn, 111, clock.now().date()) == DRV6
     rows = _active_rows(conn)
@@ -229,10 +236,12 @@ def test_same_account_rebinds_same_driver_after_revoke(tmp_path: Path, clock: Fa
     assert len(conn.execute("select * from telegram_identities").fetchall()) == 1
 
 
-def test_different_account_rebinds_after_revoke_and_old_one_stops_resolving(tmp_path: Path, clock: FakeClock) -> None:
-    conn, _, wh = _env(tmp_path, clock)
+def test_different_account_rebinds_after_relink_and_old_one_stops_resolving(tmp_path: Path, clock: FakeClock) -> None:
+    conn, admin, _ = _env(tmp_path, clock)
     assert _bind(conn, clock, user_id=111) == telegram.BindResult.BOUND
-    telegram.revoke(conn, actor=wh, driver_id=DRV6, clock=clock)
+    telegram.revoke(conn, actor=admin, driver_id=DRV6, clock=clock)
+    assert _bind(conn, clock, user_id=222) == telegram.BindResult.REFUSED
+    telegram.allow_relink(conn, actor=admin, driver_id=DRV6, clock=clock)
     assert _bind(conn, clock, user_id=222) == telegram.BindResult.BOUND
     assert telegram.resolve_driver(conn, 222, clock.now().date()) == DRV6
     assert telegram.resolve_driver(conn, 111, clock.now().date()) is None

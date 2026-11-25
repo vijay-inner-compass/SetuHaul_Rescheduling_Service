@@ -113,6 +113,10 @@ def add_driver(
     return driver_id
 
 
+# The states each decision may start from: approve a pending or a rejected (suspended) driver; reject a pending or an approved one.
+_FROM = {True: ("PENDING_APPROVAL", "REJECTED"), False: ("PENDING_APPROVAL", "APPROVED")}
+
+
 def _decide(conn: sqlite3.Connection, actor: User, driver_id: str, clock: Clock, approve: bool) -> None:
     action = "DRIVER_APPROVED" if approve else "DRIVER_REJECTED"
     # Admins only.
@@ -121,25 +125,30 @@ def _decide(conn: sqlite3.Connection, actor: User, driver_id: str, clock: Clock,
     with immediate(conn):
         if conn.execute("select 1 from drivers where driver_id=?", (driver_id,)).fetchone() is None:
             raise AuthError("DRIVER_NOT_FOUND")
-        # Only app-created, still-pending profiles can be decided; supplied drivers have none.
+        # Only app-created profiles in a state this decision may leave; supplied drivers have none, so are never touched.
         prof = conn.execute(
-            "select licence_expiry from driver_profiles"
-            " where driver_id=? and created_by_user_id is not null and approval_status='PENDING_APPROVAL'",
+            "select licence_expiry, approval_status from driver_profiles where driver_id=? and created_by_user_id is not null",
             (driver_id,)).fetchone()
-        if prof is None:
+        if prof is None or prof["approval_status"] not in _FROM[approve]:
             raise AuthError("NOT_PENDING")
         now = clock.now()
         if approve:
-            # An expired licence cannot be approved.
+            # An expired licence cannot be approved (nor re-approved after a suspension).
             if date.fromisoformat(prof["licence_expiry"]) < now.date():
                 raise AuthError("LICENCE_EXPIRED")
             conn.execute("update drivers set driver_status='ACTIVE' where driver_id=?", (driver_id,))
+        else:
+            # Rejecting (or suspending) puts the row this feature inserted back to INACTIVE: bot access stops at once.
+            conn.execute("update drivers set driver_status='INACTIVE' where driver_id=?", (driver_id,))
+            # Stopping a driver who was approved is a suspension, recorded as such.
+            if prof["approval_status"] == "APPROVED":
+                action = "DRIVER_SUSPENDED"
         status = "APPROVED" if approve else "REJECTED"
         # On rejection approved_by/approved_at hold the deciding admin and time (schema reuse).
         conn.execute("update driver_profiles set approval_status=?, approved_by=?, approved_at=? where driver_id=?",
                      (status, actor.user_id, now.isoformat(), driver_id))
         audit.record(conn, actor_user_id=actor.user_id, actor_email=actor.email, action=action, target_type="driver",
-                     target_id=driver_id, outcome="OK", ip=None, detail=None, clock=clock)
+                     target_id=driver_id, outcome="OK", ip=None, detail={"from": prof["approval_status"]}, clock=clock)
 
 
 def approve(conn: sqlite3.Connection, *, actor: User, driver_id: str, clock: Clock) -> None:
@@ -148,8 +157,16 @@ def approve(conn: sqlite3.Connection, *, actor: User, driver_id: str, clock: Clo
 
 
 def reject(conn: sqlite3.Connection, *, actor: User, driver_id: str, clock: Clock) -> None:
-    # Rejection leaves the driver inactive.
+    # Rejection (of a pending driver) or suspension (of an approved one) leaves the driver inactive.
     _decide(conn, actor, driver_id, clock, False)
+
+
+def decided(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    # App-onboarded drivers already approved or rejected (the admin may suspend or re-approve them), oldest id first.
+    return list(conn.execute(
+        "select d.driver_id, d.driver_name, d.phone, d.carrier_id, p.vehicle_id, p.licence_expiry, p.approval_status"
+        " from drivers d join driver_profiles p on p.driver_id=d.driver_id"
+        " where p.approval_status in ('APPROVED','REJECTED') and p.created_by_user_id is not null order by d.driver_id"))
 
 
 def pending(conn: sqlite3.Connection) -> list[sqlite3.Row]:

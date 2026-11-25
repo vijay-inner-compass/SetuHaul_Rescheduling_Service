@@ -124,18 +124,19 @@ def test_revoke_roles(world: World) -> None:
     assert world.client("wh_none").post(path).status_code == 403
 
 
-def test_a_warehouse_authority_revokes_a_driver_they_can_see(world: World) -> None:
-    _bind(world, "DRV001")
-    r = world.client("wh_a").post("/v1/warehouse/drivers/DRV001/telegram/revoke")
+def test_a_warehouse_authority_revokes_a_driver_they_onboarded(world: World) -> None:
+    mine = _add(world, "wh_a", "Added By A", "+919811100001", "LIC-A-1")
+    _bind(world, mine)
+    r = world.client("wh_a").post(f"/v1/warehouse/drivers/{mine}/telegram/revoke")
     assert r.status_code == 200 and r.json()["telegram_status"] == "REVOKED"
     conn = open_connection(path=world.path)
     try:
-        assert [x["target_id"] for x in audit.query(conn, action="TELEGRAM_REVOKED", outcome="OK")] == ["DRV001"]
+        assert [x["target_id"] for x in audit.query(conn, action="TELEGRAM_REVOKED", outcome="OK")] == [mine]
     finally:
         conn.close()
-    assert _by_id(world.client("wh_a").get("/v1/warehouse/drivers"))["DRV001"]["telegram_status"] == "REVOKED"
+    assert _by_id(world.client("wh_a").get("/v1/warehouse/drivers"))[mine]["telegram_status"] == "REVOKED"
     # Revoking again: nothing active is left to revoke.
-    again = world.client("wh_a").post("/v1/warehouse/drivers/DRV001/telegram/revoke")
+    again = world.client("wh_a").post(f"/v1/warehouse/drivers/{mine}/telegram/revoke")
     assert again.status_code == 404 and again.json()["reason_code"] == "NOT_BOUND"
 
 
@@ -157,7 +158,7 @@ def test_revoke_outside_scope_is_404_and_changes_nothing(world: World) -> None:
 
 
 def test_revoke_of_a_driver_with_no_binding_is_404(world: World) -> None:
-    r = world.client("wh_a").post("/v1/warehouse/drivers/DRV001/telegram/revoke")
+    r = world.client("admin").post("/v1/warehouse/drivers/DRV001/telegram/revoke")
     assert r.status_code == 404 and r.json()["reason_code"] == "NOT_BOUND"
 
 

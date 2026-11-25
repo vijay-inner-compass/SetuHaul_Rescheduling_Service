@@ -15,7 +15,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from setuhaul.api import claim_label
-from setuhaul.auth import audit, onboarding, projects, sessions, users
+from setuhaul.auth import audit, onboarding, projects, sessions, telegram, users
 from setuhaul.auth.admin_api import DEFAULT_AUDIT_LIMIT, parse_since
 from setuhaul.auth.authz import AuthzError, assert_facility, require_role
 from setuhaul.auth.users import User
@@ -167,6 +167,22 @@ def _pending_section(conn: sqlite3.Connection) -> str:
     return f'<section id="pending"><h2>Pending drivers</h2>{table}</section>'
 
 
+def _decided_section(conn: sqlite3.Connection) -> str:
+    rows = []
+    for d in onboarding.decided(conn):
+        did = d["driver_id"]
+        # Suspend an approved driver (the reject endpoint); re-approve a rejected one (the approve endpoint, licence checked).
+        if d["approval_status"] == "APPROVED":
+            action = _button("Suspend", f"/v1/drivers/{_segment(did)}/reject", confirm=f"Suspend {d['driver_name']}?")
+        else:
+            action = _button("Re-approve", f"/v1/drivers/{_segment(did)}/approve", confirm=f"Re-approve {d['driver_name']}?")
+        rows.append([esc(did), esc(d["driver_name"]), esc(mask_phone(d["phone"])), esc(d["carrier_id"]), esc(d["vehicle_id"]),
+                     esc(d["licence_expiry"]), esc(d["approval_status"]), action])
+    table = _table(("Driver", "Name", "Phone", "Carrier", "Vehicle", "Licence expiry", "Approval", ""), rows,
+                   "No onboarded drivers have been decided yet.")
+    return f'<section id="decided"><h2>Onboarded drivers</h2>{table}</section>'
+
+
 def _audit_section(conn: sqlite3.Connection, query: dict[str, str]) -> str:
     actor, action, outcome, since = (query.get(k, "").strip() for k in ("actor", "action", "outcome", "since"))
     note = ""
@@ -197,9 +213,9 @@ def _audit_section(conn: sqlite3.Connection, query: dict[str, str]) -> str:
 
 
 def render_admin(conn: sqlite3.Connection, me: User, query: dict[str, str]) -> str:
-    # The admin screen: users, pending drivers, audit log.
+    # The admin screen: users, pending drivers, decided onboarded drivers (suspend / re-approve), audit log.
     nav = '<a href="/admin">Admin</a> <a href="/warehouse">Warehouse</a>'
-    body = _users_section(conn, me) + _pending_section(conn) + _audit_section(conn, query)
+    body = _users_section(conn, me) + _pending_section(conn) + _decided_section(conn) + _audit_section(conn, query)
     return _layout("Admin", body, ("common.js", "admin.js"), me, nav)
 
 
@@ -279,10 +295,17 @@ def _projects_section(conn: sqlite3.Connection, user: User, today: date, facilit
 def _drivers_section(conn: sqlite3.Connection, user: User, today: date) -> str:
     rows = []
     for d in driver_list(conn, user, today):
-        revoke = (_button("Revoke Telegram", f"/v1/warehouse/drivers/{_segment(d['driver_id'])}/telegram/revoke",
-                          confirm=f"Revoke Telegram for {d['driver_name']}?") if d["telegram_status"] == "BOUND" else "")
+        base = f"/v1/warehouse/drivers/{_segment(d['driver_id'])}/telegram"
+        action = ""
+        # Revoke and allow re-link only where the server would allow them (admin, or the authority who onboarded the driver).
+        if telegram.may_manage_binding(conn, user, d["driver_id"]):
+            if d["telegram_status"] == "BOUND":
+                action = _button("Revoke Telegram", f"{base}/revoke", confirm=f"Revoke Telegram for {d['driver_name']}?")
+            elif d["telegram_status"] == "REVOKED":
+                action = _button("Allow re-link", f"{base}/allow-relink",
+                                 confirm=f"Let {d['driver_name']} link a Telegram account again?")
         rows.append([esc(d["driver_id"]), esc(d["driver_name"]), esc(d["phone"]), esc(d["approval_status"]),
-                     "Yes" if d["licence_valid"] else "No", esc(d["telegram_status"]), revoke])
+                     "Yes" if d["licence_valid"] else "No", esc(d["telegram_status"]), action])
     carriers = [(r["carrier_id"], f"{r['carrier_id']} - {r['carrier_name']}")
                 for r in conn.execute("select carrier_id, carrier_name from carriers where active_flag=1 order by carrier_id")]
     vehicles = conn.execute("select vehicle_id, carrier_id, registration_number from vehicles where active_flag=1 "

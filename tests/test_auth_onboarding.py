@@ -88,10 +88,12 @@ def test_reject_keeps_inactive_and_only_admin(tmp_path: Path, clock: FakeClock) 
     onboarding.reject(conn, actor=admin, driver_id=did, clock=clock)
     assert conn.execute("select driver_status from drivers where driver_id=?", (did,)).fetchone()[0] == "INACTIVE"
     assert conn.execute("select approval_status from driver_profiles where driver_id=?", (did,)).fetchone()[0] == "REJECTED"
-    # A decided driver cannot be decided again.
+    # A rejected driver cannot be rejected again; an admin may re-approve them (suspension is reversible).
     with pytest.raises(AuthError) as e:
-        onboarding.approve(conn, actor=admin, driver_id=did, clock=clock)
+        onboarding.reject(conn, actor=admin, driver_id=did, clock=clock)
     assert e.value.code == "NOT_PENDING"
+    onboarding.approve(conn, actor=admin, driver_id=did, clock=clock)
+    assert conn.execute("select driver_status from drivers where driver_id=?", (did,)).fetchone()[0] == "ACTIVE"
 
 
 def test_supplied_driver_rows_unchanged_by_onboarding(tmp_path: Path, clock: FakeClock) -> None:
@@ -229,8 +231,8 @@ def test_routes_full_flow(tmp_path: Path, clock: FakeClock) -> None:
     assert [d["driver_id"] for d in pend] == ["DRV016"] and pend[0]["licence_expiry"] == body["licence_expiry"]
     assert client.post("/v1/drivers/DRV016/approve").status_code == 200
     assert client.get("/v1/drivers/pending").json()["drivers"] == []
-    # Deciding again, or on a supplied driver, is a 409; an unknown id is a 404.
-    assert client.post("/v1/drivers/DRV016/reject").json()["reason_code"] == "NOT_PENDING"
+    # Approving again, or deciding a supplied driver, is a 409; an unknown id is a 404.
+    assert client.post("/v1/drivers/DRV016/approve").json()["reason_code"] == "NOT_PENDING"
     assert client.post("/v1/drivers/DRV001/approve").status_code == 409
     assert client.post("/v1/drivers/DRV999/approve").status_code == 404
 

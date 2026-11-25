@@ -132,18 +132,19 @@ def test_warehouse_page_driver_list_masks_phone_and_hides_licence_number(world: 
 
 
 def test_warehouse_can_revoke_telegram_binding_and_it_is_audited(world: World) -> None:
+    did = _add_driver(world)
     conn = open_connection(path=world.path)
-    conn.execute("insert into telegram_identities(telegram_user_id, chat_id, driver_id, bound_at) values ('777','777','DRV001','x')")
+    conn.execute("insert into telegram_identities(telegram_user_id, chat_id, driver_id, bound_at) values ('777','777',?,'x')", (did,))
     conn.commit()
     conn.close()
     c = world.client("wh_a")
     page = c.get("/warehouse").text
-    # A Revoke button for the bound driver only, carrying the API path the script calls.
-    assert "/v1/warehouse/drivers/DRV001/telegram/revoke" in page and "BOUND" in page
-    assert c.post("/v1/warehouse/drivers/DRV001/telegram/revoke", json={}).status_code == 200
-    assert "/v1/warehouse/drivers/DRV001/telegram/revoke" not in c.get("/warehouse").text
+    # A Revoke button for the bound driver they onboarded, carrying the API path the script calls.
+    assert f"/v1/warehouse/drivers/{did}/telegram/revoke" in page and "BOUND" in page
+    assert c.post(f"/v1/warehouse/drivers/{did}/telegram/revoke", json={}).status_code == 200
+    assert f"/v1/warehouse/drivers/{did}/telegram/revoke" not in c.get("/warehouse").text
     conn = open_connection(path=world.path, readonly=True)
-    assert [r["target_id"] for r in audit.query(conn, action="TELEGRAM_REVOKED", outcome="OK")] == ["DRV001"]
+    assert [r["target_id"] for r in audit.query(conn, action="TELEGRAM_REVOKED", outcome="OK")] == [did]
     conn.close()
 
 

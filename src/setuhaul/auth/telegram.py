@@ -121,25 +121,23 @@ def bind_from_contact(conn: sqlite3.Connection, *, telegram_user_id: int, chat_i
         driver_id = matches[0]
         if not driver_eligible(conn, driver_id, today):
             return refuse("NOT_ELIGIBLE", driver_id)
+        # A revoke is sticky: while the driver's binding row is revoked nobody (this account or another) may bind them,
+        # until an audited allow-relink clears the row.
+        existing = conn.execute("select telegram_user_id, revoked_at from telegram_identities where driver_id=?", (driver_id,)).fetchone()
+        if existing is not None and existing["revoked_at"] is not None:
+            return refuse("REVOKED", driver_id)
+        # An account revoked for another driver stays cut off; binding it elsewhere would have to erase that revoke.
+        if conn.execute("select 1 from telegram_identities where telegram_user_id=? and revoked_at is not null", (uid,)).fetchone():
+            return refuse("SENDER_REVOKED", driver_id)
         # This Telegram account may hold only one active binding.
         if conn.execute("select 1 from telegram_identities where telegram_user_id=? and revoked_at is null", (uid,)).fetchone():
             return refuse("SENDER_ALREADY_BOUND", driver_id)
         # The driver may have only one active binding too.
-        existing = conn.execute("select telegram_user_id, revoked_at from telegram_identities where driver_id=?", (driver_id,)).fetchone()
-        if existing is not None and existing["revoked_at"] is None:
-            return refuse("DRIVER_ALREADY_BOUND", driver_id)
-        now = clock.now().isoformat()
-        # This account's revoked row for ANOTHER driver would collide on the primary key: drop it, the audit log keeps the history.
-        # (Its revoked row for this same driver is the one updated below, so it must stay.)
-        conn.execute("delete from telegram_identities where telegram_user_id=? and revoked_at is not null and driver_id<>?",
-                     (uid, driver_id))
         if existing is not None:
-            # UNIQUE(driver_id): re-bind by replacing the revoked row's account.
-            conn.execute("update telegram_identities set telegram_user_id=?, chat_id=?, bound_at=?, revoked_at=null where driver_id=?",
-                         (uid, str(chat_id), now, driver_id))
-        else:
-            conn.execute("insert into telegram_identities(telegram_user_id, chat_id, driver_id, bound_at) values (?,?,?,?)",
-                         (uid, str(chat_id), driver_id, now))
+            return refuse("DRIVER_ALREADY_BOUND", driver_id)
+        # Neither the driver nor the account has any row now, so this is always a fresh insert.
+        conn.execute("insert into telegram_identities(telegram_user_id, chat_id, driver_id, bound_at) values (?,?,?,?)",
+                     (uid, str(chat_id), driver_id, clock.now().isoformat()))
         # Never report success unless the binding really exists now; raising rolls the transaction back.
         final = conn.execute("select 1 from telegram_identities where telegram_user_id=? and driver_id=? and revoked_at is null",
                              (uid, driver_id)).fetchone()
@@ -174,14 +172,46 @@ def trusted_context(conn: sqlite3.Connection, driver_id: str) -> TrustedDriverCo
     return _context_for(conn, driver_id)
 
 
-def revoke(conn: sqlite3.Connection, *, actor: User, driver_id: str, clock: Clock) -> None:
-    """Cut a driver's Telegram binding (admin or warehouse authority)."""
+# Longest caller-supplied driver id kept in a probe audit row.
+_MAX_TARGET = 64
+
+
+def may_manage_binding(conn: sqlite3.Connection, actor: User, driver_id: str) -> bool:
+    """True if the actor may revoke or allow re-linking this driver's Telegram binding.
+
+    An active admin: any existing driver. An active warehouse authority: only drivers they onboarded themselves
+    (allocation to their project does not count). Supplied drivers have no creator, so only an admin.
+    """
+    if actor.status != "ACTIVE":
+        return False
+    if actor.role == "ADMIN":
+        return conn.execute("select 1 from drivers where driver_id=?", (driver_id,)).fetchone() is not None
+    if actor.role != "WAREHOUSE_AUTHORITY":
+        return False
+    return conn.execute("select 1 from driver_profiles where driver_id=? and created_by_user_id=?",
+                        (driver_id, actor.user_id)).fetchone() is not None
+
+
+def _check_manage(conn: sqlite3.Connection, actor: User, driver_id: str, action: str, clock: Clock) -> None:
+    # A wrong role or a disabled account is an audited FORBIDDEN, committed before the error leaves.
     if actor.status != "ACTIVE" or actor.role not in ("ADMIN", "WAREHOUSE_AUTHORITY"):
-        # An audited refusal, committed before the error leaves.
-        audit.record(conn, actor_user_id=actor.user_id, actor_email=actor.email, action="TELEGRAM_REVOKED", target_type="driver",
-                     target_id=driver_id, outcome="FORBIDDEN", ip=None, detail={"role": actor.role}, clock=clock)
+        audit.record(conn, actor_user_id=actor.user_id, actor_email=actor.email, action=action, target_type="driver",
+                     target_id=driver_id[:_MAX_TARGET], outcome="FORBIDDEN", ip=None, detail={"role": actor.role}, clock=clock)
         conn.commit()
         raise AuthError("FORBIDDEN")
+    if may_manage_binding(conn, actor, driver_id):
+        return
+    # Out of scope looks exactly like a driver that does not exist; a probe of a real driver is audited.
+    if conn.execute("select 1 from drivers where driver_id=?", (driver_id,)).fetchone() is not None:
+        audit.record(conn, actor_user_id=actor.user_id, actor_email=actor.email, action=action, target_type="driver",
+                     target_id=driver_id, outcome="NOT_FOUND", ip=None, detail={"role": actor.role}, clock=clock)
+        conn.commit()
+    raise AuthError("DRIVER_NOT_FOUND")
+
+
+def revoke(conn: sqlite3.Connection, *, actor: User, driver_id: str, clock: Clock) -> None:
+    """Cut a driver's Telegram binding (admin, or the warehouse authority who onboarded the driver). The cut is sticky."""
+    _check_manage(conn, actor, driver_id, "TELEGRAM_REVOKED", clock)
     with immediate(conn):
         cur = conn.execute("update telegram_identities set revoked_at=? where driver_id=? and revoked_at is null",
                            (clock.now().isoformat(), driver_id))
@@ -189,3 +219,19 @@ def revoke(conn: sqlite3.Connection, *, actor: User, driver_id: str, clock: Cloc
             raise AuthError("NOT_BOUND")
         audit.record(conn, actor_user_id=actor.user_id, actor_email=actor.email, action="TELEGRAM_REVOKED", target_type="driver",
                      target_id=driver_id, outcome="OK", ip=None, detail=None, clock=clock)
+
+
+def allow_relink(conn: sqlite3.Connection, *, actor: User, driver_id: str, clock: Clock) -> None:
+    """Clear a driver's revoked binding so they may share their contact again (same scope rule as revoke)."""
+    _check_manage(conn, actor, driver_id, "TELEGRAM_RELINK_ALLOWED", clock)
+    with immediate(conn):
+        row = conn.execute("select telegram_user_id, revoked_at from telegram_identities where driver_id=?", (driver_id,)).fetchone()
+        if row is None:
+            raise AuthError("NOT_BOUND")
+        # Only a revoked binding is cleared; an active one stays as it is.
+        if row["revoked_at"] is None:
+            raise AuthError("NOT_REVOKED")
+        conn.execute("delete from telegram_identities where driver_id=? and revoked_at is not null", (driver_id,))
+        # The cleared account id is kept in the trail, so the history survives the delete.
+        audit.record(conn, actor_user_id=actor.user_id, actor_email=actor.email, action="TELEGRAM_RELINK_ALLOWED", target_type="driver",
+                     target_id=driver_id, outcome="OK", ip=None, detail={"telegram_user_id": row["telegram_user_id"]}, clock=clock)

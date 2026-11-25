@@ -29,7 +29,7 @@ MAX_MESSAGES = 100
 
 
 # Refusal code -> HTTP status for the writes below.
-_STATUS = {"FORBIDDEN": 403, "DRIVER_NOT_FOUND": 404, "NOT_BOUND": 404}
+_STATUS = {"FORBIDDEN": 403, "DRIVER_NOT_FOUND": 404, "NOT_BOUND": 404, "NOT_REVOKED": 409}
 
 
 def clamp(value: int, default: int, ceiling: int) -> int:
@@ -240,10 +240,20 @@ def register_warehouse_routes(app: FastAPI, deps: AppDeps) -> None:
         rid = request.state.request_id
 
         def write(conn: sqlite3.Connection) -> Response:
-            # A driver outside the caller's scope looks exactly like one that does not exist.
-            if not drivers_in_scope(conn, user, deps.clock.now().astimezone(IST).date(), driver_id):
-                raise AuthError("DRIVER_NOT_FOUND")
+            # Admin, or the authority who onboarded the driver; anyone else gets DRIVER_NOT_FOUND (checked in telegram.revoke).
             telegram.revoke(conn, actor=user, driver_id=driver_id, clock=deps.clock)
             return JSONResponse({"status": "OK", "driver_id": driver_id, "telegram_status": "REVOKED", "request_id": rid})
+
+        return await run_in_threadpool(with_conn, rid, write, False)
+
+    @app.post("/v1/warehouse/drivers/{driver_id}/telegram/allow-relink")
+    async def allow_relink(request: Request, driver_id: str,
+                           user: Annotated[User, Depends(require_role("WAREHOUSE_AUTHORITY", "ADMIN"))]) -> Response:
+        rid = request.state.request_id
+
+        def write(conn: sqlite3.Connection) -> Response:
+            # Same scope rule as revoke; clears the revoked row so the driver may share their contact again.
+            telegram.allow_relink(conn, actor=user, driver_id=driver_id, clock=deps.clock)
+            return JSONResponse({"status": "OK", "driver_id": driver_id, "telegram_status": "UNBOUND", "request_id": rid})
 
         return await run_in_threadpool(with_conn, rid, write, False)

@@ -47,6 +47,7 @@ ROLE_GUARDED: dict[tuple[str, str], frozenset[str]] = {
     ("GET", "/v1/warehouse/board"): BOTH,
     ("GET", "/v1/warehouse/drivers"): BOTH,
     ("POST", "/v1/warehouse/drivers/{driver_id}/telegram/revoke"): BOTH,
+    ("POST", "/v1/warehouse/drivers/{driver_id}/telegram/allow-relink"): BOTH,
     ("POST", "/v1/admin/users"): ADMIN,
     ("GET", "/v1/admin/users"): ADMIN,
     ("POST", "/v1/admin/users/{user_id}/disable"): ADMIN,
