@@ -70,8 +70,15 @@ def register_admin_routes(app: FastAPI, deps: AppDeps) -> None:
         except AuthError as exc:
             return _reject(rid, _STATUS.get(exc.code, 422), exc.code)
         except sqlite3.IntegrityError as exc:
-            # The UNIQUE constraints are the backstop for a race the up-front checks lost.
-            return _reject(rid, 409, "DUPLICATE_PHONE" if "phone" in str(exc) else "DUPLICATE_LICENCE")
+            # The UNIQUE constraints are the backstop for a race the up-front checks lost; the column name says which.
+            message = str(exc)
+            if "UNIQUE constraint failed" in message:
+                for needle, code in (("phone", "DUPLICATE_PHONE"), ("licence", "DUPLICATE_LICENCE"),
+                                     ("contract", "DUPLICATE_CONTRACT")):
+                    if needle in message:
+                        return _reject(rid, 409, code)
+            # Any other integrity failure (foreign key, not null, check) is a database fault, not a duplicate.
+            return _reject(rid, 503, "DATABASE_UNAVAILABLE")
         except sqlite3.Error:
             return _reject(rid, 503, "DATABASE_UNAVAILABLE")
         finally:

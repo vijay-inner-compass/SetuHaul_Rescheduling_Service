@@ -308,3 +308,19 @@ def test_unique_backstop_is_409(tmp_path: Path, clock: FakeClock, monkeypatch: p
     _as(client, tok["wh"])
     r = client.post("/v1/drivers", json=body)
     assert r.status_code == 409 and r.json()["reason_code"] == code
+
+
+# ---- hardening sweep (11c group C) ----
+
+@pytest.mark.parametrize("msg", ["FOREIGN KEY constraint failed", "NOT NULL constraint failed: drivers.name",
+                                 "CHECK constraint failed: x", "UNIQUE constraint failed: drivers.driver_id"])
+def test_other_integrity_errors_are_not_409(tmp_path: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch, msg: str) -> None:
+    client, tok, body = _client(tmp_path, clock)
+
+    def boom(*a: object, **k: object) -> str:
+        raise sqlite3.IntegrityError(msg)
+
+    monkeypatch.setattr(onboarding, "add_driver", boom)
+    _as(client, tok["wh"])
+    r = client.post("/v1/drivers", json=body)
+    assert r.status_code == 503 and r.json()["reason_code"] == "DATABASE_UNAVAILABLE"
