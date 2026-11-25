@@ -13,6 +13,10 @@
 
   // The words for a refused call: the API's reason code when it sent one.
   function reason(status, data) {
+    // The one refusal people meet often gets plain words. It reads the same whether or not the account is locked.
+    if (data && data.reason_code === "BAD_CREDENTIALS") {
+      return "The email or password is not correct. Repeated failures lock the password for a while.";
+    }
     if (data && typeof data.reason_code === "string") {
       return data.reason_code;
     }
@@ -64,8 +68,20 @@
     return body;
   }
 
+  // A "Show" button beside a password field switches it between hidden and readable.
+  function reveal(button) {
+    var field = document.getElementById(button.getAttribute("data-reveal"));
+    var show = field.type === "password";
+    field.type = show ? "text" : "password";
+    button.textContent = show ? "Hide" : "Show";
+    button.setAttribute("aria-pressed", String(show));
+  }
+
   // Wire every data-api form and button on the page.
   function init() {
+    Array.prototype.forEach.call(document.querySelectorAll("button[data-reveal]"), function (button) {
+      button.addEventListener("click", function () { reveal(button); });
+    });
     Array.prototype.forEach.call(document.querySelectorAll("form[data-api]"), function (form) {
       form.addEventListener("submit", function (event) {
         event.preventDefault();

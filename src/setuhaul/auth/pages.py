@@ -116,21 +116,61 @@ def _message_page(title: str, text: str, status: int, user: User | None = None) 
 
 
 # ---- sign-in ----------------------------------------------------------------------------------------------
+def _dock_drawing() -> str:
+    # Six numbered bay doors, as on the dock board: one is open with a truck backed in. Presentation only, no data.
+    bays = []
+    for n in range(1, 7):
+        x = 8 + (n - 1) * 64
+        slats = "".join(f'<line class="slat" x1="{x + 4}" y1="{y}" x2="{x + 48}" y2="{y}"/>' for y in range(52, 125, 12))
+        door = f'<rect class="opening" x="{x}" y="40" width="52" height="92"/>' if n == 4 else \
+               f'<rect class="door" x="{x}" y="40" width="52" height="92"/>{slats}'
+        bays.append(f'{door}<text x="{x + 26}" y="28">D{n}</text>'
+                    f'<rect class="bumper" x="{x - 2}" y="132" width="8" height="12"/><rect class="bumper" x="{x + 46}" y="132" width="8" height="12"/>')
+    truck = ('<rect class="trailer" x="204" y="68" width="44" height="64"/><line class="seam" x1="226" y1="68" x2="226" y2="132"/>'
+             '<rect class="wheel" x="206" y="132" width="10" height="14"/><rect class="wheel" x="236" y="132" width="10" height="14"/>')
+    return (f'<svg class="docks" viewBox="0 0 392 160" aria-hidden="true" focusable="false">{"".join(bays)}{truck}'
+            '<line class="yard" x1="0" y1="146" x2="392" y2="146"/></svg>')
+
+
+# Google's "G" mark, drawn inline so nothing is fetched from another site.
+_GOOGLE_MARK = (
+    '<svg class="mark" viewBox="0 0 18 18" aria-hidden="true" focusable="false">'
+    '<path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/>'
+    '<path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.33-1.58-5.04-3.71H.96v2.33A9 9 0 0 0 9 18z"/>'
+    '<path fill="#FBBC05" d="M3.96 10.71A5.41 5.41 0 0 1 3.68 9c0-.59.1-1.17.28-1.71V4.96H.96A9 9 0 0 0 0 9c0 1.45.35 2.83.96 4.04l3-2.33z"/>'
+    '<path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.96l3 2.33C4.67 5.16 6.66 3.58 9 3.58z"/>'
+    '</svg>')
+
+
 def _landing(google: bool, local_admin: bool) -> str:
-    # The sign-in page; the backup form exists only when the feature is switched on.
+    # The sign-in page. Only what is set up is offered: a button that can only fail is worse than none.
+    button = f'<a class="google" href="/auth/login">{_GOOGLE_MARK}<span>Sign in with Google</span></a>' if google else ""
     backup = ""
     if local_admin:
-        backup = ('<section class="backup"><h3>Backup sign-in</h3>'
-                  '<form data-api="/auth/local-admin"><label>Email <input name="email" type="email" required autocomplete="username"></label>'
-                  '<label>Password <input name="password" type="password" required autocomplete="current-password"></label>'
-                  '<button type="submit">Sign in</button></form></section>')
-    # Only what is set up is offered: a button that can only fail is worse than none.
-    button = '<p><a class="button" href="/auth/login">Sign in with Google</a></p>' if google else ""
+        # Folded away when Google is the normal way in; open when the password is the only way in.
+        state = "" if google else " open"
+        backup = (f'<details class="backup"{state}><summary>Administrator password</summary>'
+                  '<form data-api="/auth/local-admin">'
+                  '<label for="email">Email</label><input id="email" name="email" type="email" required autocomplete="username">'
+                  '<label for="password">Password</label><span class="secret">'
+                  '<input id="password" name="password" type="password" required autocomplete="current-password">'
+                  '<button type="button" data-reveal="password" aria-pressed="false">Show</button></span>'
+                  '<button type="submit">Sign in</button></form></details>')
     if not google and not local_admin:
         button = ('<p class="empty">No sign-in is configured. Set SETUHAUL_GOOGLE_CLIENT_ID and SETUHAUL_GOOGLE_CLIENT_SECRET (with '
                   'SETUHAUL_SESSION_SECRET), or SETUHAUL_LOCAL_ADMIN=1 with SETUHAUL_BOOTSTRAP_ADMIN_EMAIL, then restart.</p>')
-    body = f'<section class="landing"><h2>Sign in</h2>{button}{backup}</section>'
-    return _layout("Sign in", body, ("common.js",))
+    lead = "For administrators and warehouse teams." if google else "Administrator access."
+    return ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+            "<title>Sign in</title><link rel=\"stylesheet\" href=\"/app/assets/app.css\"></head><body class=\"login\">"
+            '<div class="brand"><p class="wordmark">SetuHaul</p>'
+            '<div class="pitch"><h1>Dock scheduling and rescheduling</h1>'
+            "<p>One place for warehouse teams to see bay bookings, driver messages and changes as they happen.</p></div>"
+            f"{_dock_drawing()}</div>"
+            f'<main class="signin"><div class="panel"><h2>Sign in</h2><p class="lead">{lead}</p>'
+            f'<p id="status" class="status" role="alert"></p>{button}{backup}'
+            '<p class="fine">Access is by invitation, and sign-ins are recorded. Drivers use Telegram and do not sign in here.</p>'
+            '</div></main><script src="/app/assets/common.js" defer></script></body></html>')
 
 
 # ---- admin screen -----------------------------------------------------------------------------------------
