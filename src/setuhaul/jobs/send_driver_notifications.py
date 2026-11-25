@@ -14,12 +14,14 @@ from datetime import datetime, timedelta
 from setuhaul.auth import telegram
 from setuhaul.auth.onboarding import driver_eligible
 from setuhaul.clock import Clock
-from setuhaul.config import load_settings
 from setuhaul.db import TimestampError, parse_operational_timestamp
 from setuhaul.notifications import DeliveryResult, _mark
 
 # A notice older than this is not sent: it would be about an offer that has long lapsed, and turning delivery on must not flush a backlog.
 NOTICE_MAX_AGE = timedelta(minutes=30)
+# The waits after each failed send: five attempts over about ten minutes, so a short outage loses nothing and a retried
+# offer still arrives within its 15-minute hold.
+RETRY_DELAYS = (timedelta(seconds=30), timedelta(minutes=1), timedelta(minutes=3), timedelta(minutes=5))
 _LOG = logging.getLogger(__name__)
 
 
@@ -45,9 +47,16 @@ def render_notice(payload: dict[str, object]) -> str:
 
 
 def send_driver_notifications(conn: sqlite3.Connection, clock: Clock, client: telegram.TelegramClient, limit: int = 100,
-                              max_age: timedelta = NOTICE_MAX_AGE) -> DeliveryResult:
-    """One pass over PENDING/FAILED driver notices. A driver with no active Telegram binding keeps theirs queued."""
-    max_attempts = load_settings().notification_max_attempts
+                              max_age: timedelta = NOTICE_MAX_AGE,
+                              not_before: dict[int, datetime] | None = None) -> DeliveryResult:
+    """One pass over PENDING/FAILED driver notices. A driver with no active Telegram binding keeps theirs queued.
+
+    ``not_before`` carries the retry waits from one pass to the next; without it every failed notice is due at once.
+    """
+    not_before = {} if not_before is None else not_before
+    # Drivers with an earlier notice still waiting: their later ones are held so messages arrive in order.
+    waiting: set[str] = set()
+    max_attempts = len(RETRY_DELAYS) + 1
     # Only drivers with an active binding are selected, so a backlog for unbound drivers cannot starve the batch.
     rows = conn.execute(
         "select o.* from notification_outbox o join telegram_identities t on t.driver_id=o.recipient_ref and t.revoked_at is null"
@@ -74,6 +83,12 @@ def send_driver_notifications(conn: sqlite3.Connection, clock: Clock, client: te
             _record(conn, r["outbox_id"], "PERMANENT_FAILURE", r["attempts"], "TOO_OLD", clock.now())
             permanent += 1
             continue
+        if r["recipient_ref"] in waiting:
+            continue
+        due = not_before.get(r["outbox_id"])
+        if due is not None and clock.now() < due:
+            waiting.add(r["recipient_ref"])
+            continue
         attempts = r["attempts"] + 1
         try:
             payload = json.loads(r["payload_json"])
@@ -90,6 +105,9 @@ def send_driver_notifications(conn: sqlite3.Connection, clock: Clock, client: te
             _record(conn, r["outbox_id"], status, attempts, str(exc)[:200], clock.now())
             permanent += status == "PERMANENT_FAILURE"
             failed += status == "FAILED"
+            if status == "FAILED":
+                not_before[r["outbox_id"]] = clock.now() + RETRY_DELAYS[attempts - 1]
+                waiting.add(r["recipient_ref"])
             continue
         _record(conn, r["outbox_id"], "SENT", attempts, None, clock.now())
         sent += 1
@@ -106,6 +124,8 @@ class DriverNoticeRunner:
         # SQLite connections cannot cross threads, so each pass opens its own.
         self._factory = conn_factory
         self._interval = interval_s
+        # When each failed notice may be tried again. Kept in memory: after a restart they are due at once.
+        self._not_before: dict[int, datetime] = {}
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -114,7 +134,7 @@ class DriverNoticeRunner:
         try:
             conn = self._factory()
             try:
-                return send_driver_notifications(conn, self._clock, self._client)
+                return send_driver_notifications(conn, self._clock, self._client, not_before=self._not_before)
             finally:
                 conn.close()
         except Exception as exc:  # noqa: BLE001 - a locked database or a client fault is retried on the next pass
