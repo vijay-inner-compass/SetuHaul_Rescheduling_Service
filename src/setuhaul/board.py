@@ -41,6 +41,8 @@ def build_board(conn: sqlite3.Connection, facility_id: str, now: datetime) -> di
             # One cell of the board.
             slots.append({"slot_id": slot.slot_id, "hour": slot.start.astimezone(IST).hour, "start": f"{slot.start.astimezone(IST):%H:%M}",
                           "end": f"{slot.end.astimezone(IST):%H:%M}", "status": status, "past": slot.start < now,
+                          # Full times: partner bookings can start partway through an hour.
+                          "start_ts": slot.start.astimezone(IST).isoformat(), "end_ts": slot.end.astimezone(IST).isoformat(),
                           "label": who[1] if who else (slot.block_reason or ""), "driver_id": who[0] if who else None,
                           "source": who[2] if who else None, "partner": bool(who and who[2] == "WAREHOUSE")})
         # One row of the board.

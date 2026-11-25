@@ -18,6 +18,7 @@ from setuhaul.api import claim_label
 from setuhaul.auth import audit, onboarding, projects, sessions, telegram, users
 from setuhaul.auth.admin_api import DEFAULT_AUDIT_LIMIT, parse_since
 from setuhaul.auth.authz import AuthzError, assert_facility, require_role
+from setuhaul.auth.signin_notice import NOTICES
 from setuhaul.auth.users import User
 from setuhaul.auth.warehouse_routes import (
     case_ids_in_scope,
@@ -28,7 +29,7 @@ from setuhaul.auth.warehouse_routes import (
     partner_requests_in_scope,
 )
 from setuhaul.board import build_board
-from setuhaul.db import open_connection
+from setuhaul.db import IST, open_connection
 from setuhaul.escalation import get_case
 from setuhaul.identity import AuthError
 
@@ -142,7 +143,7 @@ _GOOGLE_MARK = (
     '</svg>')
 
 
-def _landing(google: bool, local_admin: bool) -> str:
+def _landing(google: bool, local_admin: bool, notice: str = "") -> str:
     # The sign-in page. Only what is set up is offered: a button that can only fail is worse than none.
     button = f'<a class="google" href="/auth/login">{_GOOGLE_MARK}<span>Sign in with Google</span></a>' if google else ""
     backup = ""
@@ -168,7 +169,7 @@ def _landing(google: bool, local_admin: bool) -> str:
             "<p>One place for warehouse teams to see bay bookings, driver messages and changes as they happen.</p></div>"
             f"{_dock_drawing()}</div>"
             f'<main class="signin"><div class="panel"><h2>Sign in</h2><p class="lead">{lead}</p>'
-            f'<p id="status" class="status" role="alert"></p>{button}{backup}'
+            f'<p id="status" class="status" role="alert">{esc(notice)}</p>{button}{backup}'
             '<p class="fine">Access is by invitation, and sign-ins are recorded. Drivers use Telegram and do not sign in here.</p>'
             '</div></main><script src="/app/assets/common.js" defer></script></body></html>')
 
@@ -264,13 +265,45 @@ def render_admin(conn: sqlite3.Connection, me: User, query: dict[str, str]) -> s
 
 
 # ---- warehouse screen -------------------------------------------------------------------------------------
-def _board_section(board: dict[str, Any] | None, options: list[tuple[str, str]], selected: str | None) -> str:
+_STATUS_WORDS = {"AVAILABLE": "Free", "BOOKED": "Booked", "HELD": "Held", "BLOCKED": "Blocked"}
+
+
+def _who(label: str) -> str:
+    # A booking label is "driver · order": the name on one line, the order under it.
+    name, _, order = label.partition(" \u00b7 ")
+    return f"<strong>{esc(name)}</strong>" + (f"<span>{esc(order)}</span>" if order else "")
+
+
+def _bay_card(dock: dict[str, Any], moment: datetime) -> str:
+    # What a worker on the floor asks: what is on this bay now, and what comes next. Judged on real start and end times,
+    # not the clock hour, because a booking can start at half past.
+    spans = [(datetime.fromisoformat(s["start_ts"]), datetime.fromisoformat(s["end_ts"]), s) for s in dock["slots"]]
+    taken = ("BOOKED", "HELD")
+    # If slots overlap, an occupied one wins over a blocked one, and a blocked one over a free one.
+    covering = sorted((s for start, end, s in spans if start <= moment < end),
+                      key=lambda s: 0 if s["status"] in taken else 1 if s["status"] == "BLOCKED" else 2)
+    now = covering[0] if covering else None
+    today = moment.astimezone(IST).date()
+    ahead = sorted(((start, s) for start, _, s in spans
+                    if start > moment and start.astimezone(IST).date() == today and s["status"] in taken), key=lambda p: p[0])
+    later = ahead[0][1] if ahead else None
+    kind = _CELL_CLASSES.get(now["status"], "blocked") if now else "none"
+    state = _STATUS_WORDS.get(now["status"], "Blocked") if now else "No slot"
+    occupant = _who(now["label"]) if now and now["status"] in ("BOOKED", "HELD") else ""
+    upcoming = f"Next {esc(later['start'])} {esc(later['label'].partition(' \u00b7 ')[0])}" if later else "Nothing else booked"
+    return (f'<li class="bay cell-{kind}"><div class="bay-head"><b>{esc(dock["code"])}</b><span class="pill">{esc(state)}</span></div>'
+            f'<div class="occupant">{occupant}</div><div class="next">{upcoming}</div></li>')
+
+
+def _board_section(board: dict[str, Any] | None, options: list[tuple[str, str]], selected: str | None, moment: datetime) -> str:
     selector = ('<form method="get" action="/warehouse" class="filters"><label>Facility '
                 f'<select name="facility">{_options(options, selected)}</select></label><button type="submit">Show</button></form>')
     if board is None:
-        return f'<section id="board"><h2>Dock board</h2>{selector}<p class="empty">No facility to show.</p></section>'
-    hours = board["hours"]
-    head = "<th>Dock</th>" + "".join(f"<th>{esc(f'{h:02d}:00')}</th>" for h in hours)
+        return (f'<section id="board" data-panel="board"><h2>Dock board</h2>{selector}'
+                '<p class="empty">No facility to show.</p></section>')
+    hours, current = board["hours"], moment.astimezone(IST).hour
+    head = '<th scope="col">Dock</th>' + "".join(
+        f'<th scope="col"{" class=\"now\"" if h == current else ""}>{esc(f"{h:02d}:00")}</th>' for h in hours)
     rows = []
     for dock in board["docks"]:
         cells = []
@@ -279,35 +312,102 @@ def _board_section(board: dict[str, Any] | None, options: list[tuple[str, str]],
             # One cell per hour; its class comes from a fixed whitelist, never from data.
             kind = _CELL_CLASSES.get(slots[0]["status"], "blocked") if slots else "none"
             past = " past" if slots and all(s["past"] for s in slots) else ""
-            text = "; ".join(esc(s["label"] or s["status"].title()) for s in slots)
-            cells.append(f'<td class="cell cell-{kind}{past}">{text}</td>')
-        rows.append(f"<tr><th>{esc(dock['code'])} ({esc(dock['type'])})</th>{''.join(cells)}</tr>")
-    table = f"<table class=\"board\"><thead><tr>{head}</tr></thead><tbody>{''.join(rows)}</tbody></table>"
+            marker = " now" if hour == current else ""
+            text = "".join(_who(s["label"]) if s["status"] in ("BOOKED", "HELD") and s["label"]
+                           else f'<em>{esc(s["label"] or _STATUS_WORDS.get(s["status"], s["status"].title()))}</em>' for s in slots)
+            cells.append(f'<td class="cell cell-{kind}{past}{marker}">{text}</td>')
+        rows.append(f'<tr><th scope="row"><b>{esc(dock["code"])}</b><span>{esc(dock["type"])}</span></th>{"".join(cells)}</tr>')
+    table = f'<div class="scroll"><table class="board"><thead><tr>{head}</tr></thead><tbody>{"".join(rows)}</tbody></table></div>'
+    legend = "".join(f'<span class="legend-key cell-{c}">{w}</span>' for c, w in
+                     (("available", "Free"), ("booked", "Booked"), ("held", "Held, not yet confirmed"), ("blocked", "Blocked")))
+    bays = "".join(_bay_card(d, moment) for d in board["docks"])
     pend = [[esc(p["request_ref"]), esc(p["order_reference"]), esc(p["driver"]), esc(f"{p['start']}-{p['end']}")]
             for p in board["pending_partner"]]
     waiting = _table(("Request", "Order", "Driver", "Proposed"), pend, "No requests are waiting for a partner.")
-    return (f'<section id="board"><h2>Dock board</h2>{selector}<p class="legend">Facility {esc(board["facility"])}</p>{table}'
-            f"<h3>Waiting for partner reply</h3>{waiting}</section>")
+    return (f'<section id="board" data-panel="board"><h2>Dock board</h2>{selector}'
+            f'<p class="legend">Facility {esc(board["facility"])}, {esc(f"{moment.astimezone(IST):%a %d %b, %H:%M}")}</p>'
+            f'<h3>On the bays now</h3><ul class="bays">{bays}</ul>'
+            f'<h3>Today by hour</h3><p class="keys">{legend}</p>{table}<h3>Waiting for partner reply</h3>{waiting}</section>')
+
+
+def _clock(stamp: str) -> str:
+    # "04 Aug 09:35" for people; an unreadable value is shown as it is.
+    try:
+        return f"{datetime.fromisoformat(stamp).astimezone(IST):%d %b %H:%M}"
+    except ValueError:
+        return stamp
+
+
+def _short(text: str, limit: int = 90) -> str:
+    flat = " ".join(text.split())
+    return flat if len(flat) <= limit else flat[:limit].rstrip() + "\u2026"
+
+
+def _case_cards(cases: list[dict[str, str]]) -> str:
+    if not cases:
+        return '<p class="empty">No open cases.</p>'
+    cards = []
+    for c in cases:
+        # A long note is folded to one line; opening it shows the whole text.
+        summary = c["summary"]
+        note = (f'<details class="note-fold"><summary>{esc(_short(summary))}</summary><p>{esc(summary)}</p></details>'
+                if len(summary) > 90 else f"<p>{esc(summary)}</p>")
+        claimed = f"Claimed by {c['claimed']}" if c["claimed"] else "Not claimed"
+        cards.append(f'<li class="case"><div class="case-head"><b>{esc(c["id"])}</b><span class="pill">{esc(c["status"])}</span>'
+                     f'<span class="reason">{esc(c["reason"])}</span></div>{note}'
+                     f'<div class="meta"><span>Load {esc(c["load"] or "none")}</span><span>{esc(claimed)}</span></div></li>')
+    return f'<ul class="cases">{"".join(cards)}</ul>'
+
+
+def _chat_browser(chats: list[dict[str, Any]]) -> str:
+    # A list of drivers beside one conversation at a time, each in its own scrolling box, so long chats never stretch the page.
+    if not chats:
+        return '<p class="empty">No chats to show.</p>'
+    names, threads = [], []
+    roles = {"DRIVER": ("driver", "Driver"), "AGENT": ("agent", "Assistant")}
+    for number, d in enumerate(chats):
+        name = d["driver_name"] or d["driver_id"]
+        last = d["messages"][-1] if d["messages"] else {"text": "", "timestamp": ""}
+        names.append(f'<li><button type="button" data-thread="{number}"><span class="top"><b>{esc(name)}</b>'
+                     f'<time>{esc(_clock(last["timestamp"]))}</time></span><span class="preview">{esc(_short(last["text"]))}</span></button></li>')
+        bubbles = []
+        for m in d["messages"]:
+            css, who = roles.get(m["role"], ("operations", "Operations"))
+            bubbles.append(f'<li class="bubble {css}"><span class="role">{who}</span><p>{esc(m["text"])}</p>'
+                           f'<time>{esc(_clock(m["timestamp"]))}</time></li>')
+        threads.append(f'<div class="thread" id="thread-{number}"><h4>{esc(name)} <span>{esc(d["driver_id"])}</span></h4>'
+                       f'<ol>{"".join(bubbles)}</ol></div>')
+    return (f'<div class="chats"><ul class="chat-list">{"".join(names)}</ul><div class="threads">{"".join(threads)}</div></div>')
 
 
 def _messages_section(conn: sqlite3.Connection, user: User, now: datetime) -> str:
-    cases = [c for c in (get_case(conn, i) for i in case_ids_in_scope(conn, user, ("OPEN", "CLAIMED"))) if c is not None]
-    case_rows = [[esc(c.case_id), esc(c.status), esc(c.reason_code), esc(c.summary), esc(c.shipment_id or ""),
-                  esc(claim_label(conn, c.claimed_by) or "")] for c in cases]
+    found = [c for c in (get_case(conn, i) for i in case_ids_in_scope(conn, user, ("OPEN", "CLAIMED"))) if c is not None]
+    cases = [{"id": c.case_id, "status": c.status, "reason": c.reason_code, "summary": c.summary or "", "load": c.shipment_id or "",
+              "claimed": claim_label(conn, c.claimed_by) or ""} for c in found]
     reqs = [[esc(r["request_ref"]), esc(r["facility_id"]), esc(r["shipment_id"]), esc(r["status"]), esc(r["email_status"]),
              esc(f"{r['proposed_start']} - {r['proposed_end']}")] for r in partner_requests_in_scope(conn, user)]
-    chats = []
-    for d in driver_chats_in_scope(conn, user, now):
-        lines = "".join(f"<li><span class=\"role\">{esc(m['role'])}</span> {esc(m['text'])} <time>{esc(m['timestamp'])}</time></li>"
-                        for m in d["messages"])
-        chats.append(f"<div class=\"chat\"><h4>{esc(d['driver_name'])} ({esc(d['driver_id'])})</h4><ul>{lines}</ul></div>")
     note = ('<p class="note">Drivers on projects created by an administrator do not appear in a warehouse authority\'s chats; '
             "only drivers on projects you created are shown.</p>")
-    return ('<section id="messages"><h2>Messages</h2><h3>Open cases</h3>'
-            + _table(("Case", "Status", "Reason", "Summary", "Load", "Claimed by"), case_rows, "No open cases.")
+    return (f'<section id="messages" data-panel="messages" data-count="{len(cases)}"><h2>Messages</h2><h3>Open cases</h3>'
+            + _case_cards(cases)
+            + f"<h3>Driver chats</h3>{note}" + _chat_browser(driver_chats_in_scope(conn, user, now))
             + "<h3>Partner slot requests</h3>"
             + _table(("Request", "Facility", "Load", "Status", "Email", "Proposed"), reqs, "No partner requests.")
-            + f"<h3>Driver chats</h3>{note}" + ("".join(chats) or '<p class="empty">No chats to show.</p>') + "</section>")
+            + "</section>")
+
+
+def _attention(conn: sqlite3.Connection, user: User, today: date, board: dict[str, Any] | None) -> str:
+    # The supervisor's first question: is anything waiting for me?
+    drivers = driver_list(conn, user, today)
+    items = [
+        ("messages", "Open cases", len(case_ids_in_scope(conn, user, ("OPEN", "CLAIMED")))),
+        ("board", "Waiting for partner", len(board["pending_partner"]) if board else 0),
+        ("drivers", "Drivers awaiting approval", sum(1 for d in drivers if d["approval_status"] == "PENDING_APPROVAL")),
+        ("drivers", "Licences not valid", sum(1 for d in drivers if not d["licence_valid"])),
+    ]
+    cards = "".join(f'<li><a href="#{target}" class="{"hot" if n else "calm"}"><b>{n}</b><span>{label}</span></a></li>'
+                    for target, label, n in items)
+    return f'<ul class="attention" aria-label="Needs attention">{cards}</ul>'
 
 
 def _projects_section(conn: sqlite3.Connection, user: User, today: date, facility_options: list[tuple[str, str]]) -> str:
@@ -333,7 +433,7 @@ def _projects_section(conn: sqlite3.Connection, user: User, today: date, facilit
               f'<label>Starts on <input name="starts_on" type="date" value="{esc(today.isoformat())}" required></label>'
               '<label>Ends on <input name="ends_on" type="date"></label><button type="submit">Create</button></form>')
     table = _table(("Project", "Customer", "Contract", "Facility", "Status", "Dates", "Drivers"), rows, "No projects yet.")
-    return f'<section id="projects"><h2>Projects</h2>{table}{create}</section>'
+    return f'<section id="projects" data-panel="projects"><h2>Projects</h2><div class="scroll">{table}</div>{create}</section>'
 
 
 def _drivers_section(conn: sqlite3.Connection, user: User, today: date) -> str:
@@ -365,7 +465,7 @@ def _drivers_section(conn: sqlite3.Connection, user: User, today: date) -> str:
            f'<label>Vehicle <select name="vehicle_id" id="vehicle">{vehicle_options}</select></label>'
            '<button type="submit">Add driver</button></form>')
     table = _table(("Driver", "Name", "Phone", "Approval", "Licence valid", "Telegram", ""), rows, "No drivers yet.")
-    return f'<section id="drivers"><h2>Drivers</h2>{table}{add}</section>'
+    return f'<section id="drivers" data-panel="drivers"><h2>Drivers</h2><div class="scroll">{table}</div>{add}</section>'
 
 
 def render_warehouse(conn: sqlite3.Connection, user: User, now: Any, facility: str | None) -> HTMLResponse:
@@ -389,8 +489,11 @@ def render_warehouse(conn: sqlite3.Connection, user: User, now: Any, facility: s
         if board is None:
             return _message_page("Not found", "No such facility.", 404, user)
     today = now.date()
-    body = (_board_section(board, options, chosen) + _messages_section(conn, user, now) + _projects_section(conn, user, today, options)
-            + _drivers_section(conn, user, today))
+    tabs = "".join(f'<a href="#{key}" data-tab="{key}">{label}</a>' for key, label in
+                   (("board", "Dock board"), ("messages", "Messages"), ("projects", "Projects"), ("drivers", "Drivers")))
+    body = ('<div class="wh">' + _attention(conn, user, today, board) + f'<nav class="tabs" aria-label="Sections">{tabs}</nav>'
+            + _board_section(board, options, chosen, now) + _messages_section(conn, user, now)
+            + _projects_section(conn, user, today, options) + _drivers_section(conn, user, today) + "</div>")
     nav = '<a href="/warehouse">Warehouse</a>' + (' <a href="/admin">Admin</a>' if user.role == "ADMIN" else "")
     return _respond(_layout("Warehouse", body, ("common.js", "warehouse.js"), user, nav))
 
@@ -458,7 +561,9 @@ def register_pages(app: FastAPI, deps: AppDeps) -> None:
                 return _redirect("/admin" if user.role == "ADMIN" else "/warehouse")
         # The same condition the Google routes use (a client and a signing secret of at least 32 bytes).
         google = deps.google is not None and len(deps.session_secret) >= 32
-        return _respond(_landing(google, deps.local_admin_enabled))
+        # Only a listed category selects a message; the parameter itself is never shown.
+        notice = NOTICES.get(request.query_params.get("signin", ""), "")
+        return _respond(_landing(google, deps.local_admin_enabled, notice))
 
     @app.get("/admin", response_class=HTMLResponse)
     def admin_page(request: Request) -> Response:

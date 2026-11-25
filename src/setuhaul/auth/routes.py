@@ -22,6 +22,7 @@ from starlette.concurrency import run_in_threadpool
 from setuhaul.auth import audit, local_admin, sessions, users
 from setuhaul.auth.authz import AuthzError
 from setuhaul.auth.http import reject as _reject
+from setuhaul.auth.signin_notice import page_or_json
 from setuhaul.db import open_connection
 from setuhaul.identity import AuthError
 
@@ -156,8 +157,12 @@ def register_auth_routes(app: FastAPI, deps: AppDeps) -> None:
         resp.delete_cookie(STATE_COOKIE, path="/")
         return resp
 
+    # A browser is shown the login page with a message; an API caller gets the JSON refusal.
     @app.get("/auth/login")
     async def login(request: Request) -> Response:
+        return page_or_json(request, await _login(request))
+
+    async def _login(request: Request) -> Response:
         rid = request.state.request_id
         if deps.google is None or not google_on:
             return _reject(rid, 503, "GOOGLE_NOT_CONFIGURED")
@@ -176,6 +181,9 @@ def register_auth_routes(app: FastAPI, deps: AppDeps) -> None:
     @app.get("/auth/callback")
     async def callback(request: Request, code: str | None = None, state: str | None = None,
                        error: str | None = None) -> Response:
+        return page_or_json(request, await _callback(request, code, state, error))
+
+    async def _callback(request: Request, code: str | None, state: str | None, error: str | None) -> Response:
         rid = request.state.request_id
         if deps.google is None or not google_on:
             return _reject(rid, 503, "GOOGLE_NOT_CONFIGURED")
