@@ -24,14 +24,10 @@ def chat(db: sqlite3.Connection, clock: FakeClock, tmp_path: Path) -> Chat:
 
 
 def search_and_list(chat: Chat) -> None:
-    """Turn 1: the driver reports SHP1006 sixty minutes late; options are shown but not held."""
-    def list_options(msgs):  # type: ignore[no-untyped-def]
-        o = tool_json(msgs, "search_slot_options")["options"]
-        return say_text("Here are your options (none is held yet): " + "; ".join(f"{x['rank']}) {x['start']} dock {x['dock']}" for x in o))
-
+    """Turn 1: the driver reports SHP1006 sixty minutes late; the system holds the first slot itself."""
     r = chat.say("SHP1006 is running 60 minutes late",
-                 [tc("search_slot_options", shipment_id="SHP1006", report=LATE_60), list_options])
-    assert r.status == "REPLIED"
+                 [tc("search_slot_options", shipment_id="SHP1006", report=LATE_60), say_text("Done, it is all sorted!")])
+    assert r.status == "REPLIED" and r.verified_hold is True
 
 
 # --- clarification ---------------------------------------------------------------------------------
@@ -53,28 +49,22 @@ def test_two_active_shipments_the_driver_is_asked_which(chat: Chat) -> None:
 
 
 # --- options ---------------------------------------------------------------------------------------
-def test_the_numbered_menu_is_rendered_from_the_stored_option_set_not_the_models_wording(chat: Chat) -> None:
+def test_the_hold_message_is_rendered_from_the_stored_slot_not_the_models_wording(chat: Chat) -> None:
     r = chat.say("SHP1006 is running 60 minutes late", [
         tc("search_slot_options", shipment_id="SHP1006", report=LATE_60),
         say_text("Pehla 99:00 ya doosra 98:00 dock Z9 available hai, jo marzi lo.")])  # wrong, run-on wording
-    stored = chat.rows("select s.slot_start_ts, d.dock_code from option_set_items i join appointment_slots s using(slot_id) "
-                       "join docks d using(dock_id) order by i.displayed_rank")
-    lines = r.text.split("\n")
-    assert lines[0] == "These slots are available. Nothing is held yet:"
-    assert len(lines) == len(stored) + 2 == 5
-    for n, (row, line) in enumerate(zip(stored, lines[1:-1], strict=True), 1):
-        assert line.startswith(f"{n}. Dock {row[1]}, {row[0][11:16]}-")
-    assert lines[-1] == "Reply with the number (1, 2, 3) to hold one. These options are valid until 09:50."
-    assert "99:00" not in r.text and "Z9" not in r.text
-    assert chat.held() == 0
+    assert r.text.startswith("I am holding 12:00-13:00 at dock D2 on 04 Aug 2026, SetuHaul Jaipur Distribution Centre, for you until 09:38.")
+    assert r.text.endswith("Reply Yes to confirm, or No for the next slot.")
+    assert "99:00" not in r.text and "Z9" not in r.text and "1." not in r.text
+    assert chat.held() == 1
 
 
-def test_the_numbered_menu_follows_the_drivers_language(chat: Chat) -> None:
+def test_the_hold_message_follows_the_drivers_language(chat: Chat) -> None:
     r = chat.say("bhai meri gaadi 60 minute late hai, SHP1006", [
         tc("search_slot_options", shipment_id="SHP1006", report=LATE_60), say_text("Options ye hain pehla ya doosra")])
     assert r.language == "hinglish"
-    assert r.text.startswith("Ye slots available hain. Abhi kuch bhi hold nahi hai:\n1. Dock D2, 04 Aug 2026 ko 12:00-13:00\n2. Dock ")
-    assert "Hold karne ke liye number (1, 2, 3) bataiye." in r.text
+    assert r.text.startswith("Maine aapke liye SetuHaul Jaipur Distribution Centre mein 04 Aug 2026 ko dock D2 par 12:00-13:00")
+    assert "Yes likhein" in r.text and "doosra" not in r.text
 
 
 def test_a_number_in_the_drivers_reply_holds_the_line_they_saw(chat: Chat) -> None:
@@ -86,20 +76,22 @@ def test_a_number_in_the_drivers_reply_holds_the_line_they_saw(chat: Chat) -> No
     assert f"dock {shown} " in r.text and r.verified_hold
 
 
-def test_options_are_recorded_and_nothing_is_held(chat: Chat) -> None:
+def test_options_are_recorded_and_only_the_first_is_held(chat: Chat) -> None:
     search_and_list(chat)
     out = tool_json(chat.last_messages(), "search_slot_options")
-    assert out["status"] == "OK" and out["held"] is False and [o["rank"] for o in out["options"]] == [1, 2, 3]
+    assert out["status"] == "OK" and out["held"] is True and [o["rank"] for o in out["options"]] == [1, 2, 3]
     assert out["options"][0]["start"] == "12:00"
-    assert chat.held() == 0
+    assert chat.held() == 1
     state = chat.memory.load("DRV006", "THR001").state
     assert state.latest_option_set_id == out["option_set_id"]
     assert chat.rows("select count(*) from option_set_items where option_set_id=?", out["option_set_id"]) == [(3,)]
+    # Held is not booked: the original appointment is untouched.
+    assert chat.rows("select appointment_status, is_current from appointments where appointment_id='APT1006'") == [("CONFIRMED", 1)]
 
 
 def test_returning_driver_gets_a_comparison_against_what_they_actually_saw(chat: Chat) -> None:
     search_and_list(chat)
-    first_slot = chat.rows("select slot_id from option_set_items where displayed_rank=1")[0][0]
+    first_slot = chat.rows("select slot_id from option_set_items where displayed_rank=2")[0][0]
     chat.db.execute("insert into appointments (appointment_id, shipment_id, slot_id, appointment_status, booking_source, "
                     "is_current, booked_at, updated_at) values ('EXT-1','SHP1018',?, 'CONFIRMED','PLANNER',1, "
                     "'2026-08-04T09:40:00+05:30','2026-08-04T09:40:00+05:30')", (first_slot,))
@@ -112,22 +104,17 @@ def test_returning_driver_gets_a_comparison_against_what_they_actually_saw(chat:
         return {"option_set_id": seen["facts"]["latest_option_set_id"]}
 
     r = chat.say("I am back, are those options still good?",
-                 [tc_dyn("compare_option_set", compare), say_text("Option 1 was booked by someone else; options 2 and 3 remain.")])
+                 [tc_dyn("compare_option_set", compare), say_text("Option 2 was booked by someone else; options 1 and 3 remain.")])
     diff = tool_json(chat.last_messages(), "compare_option_set")
-    assert seen["facts"]["latest_option_set_id"] and diff["still_offerable_ranks"] == [2, 3]
-    assert diff["options"][0]["change"] == "NEWLY_OCCUPIED" and "booked by someone else" in diff["options"][0]["explanation"]
+    assert seen["facts"]["latest_option_set_id"] and diff["still_offerable_ranks"] == [1, 3]
+    assert diff["options"][1]["change"] == "NEWLY_OCCUPIED" and "booked by someone else" in diff["options"][1]["explanation"]
     assert r.status == "REPLIED" and "compare_option_set" in r.tools_executed
 
 
 # --- hold, then confirm (two messages) ---------------------------------------------------------------
 def pick_first(chat: Chat) -> None:
-    r = chat.say("I'll take the first option", [
-        tc_dyn("request_hold", lambda m: {"option_set_id": facts_from(m)["latest_option_set_id"], "rank": 1,
-                                          "driver_quote": "the first option"}),
-        say_text("Done, it is all sorted!")])  # the model's own wording is ignored for a committed hold
-    assert r.status == "REPLIED" and r.verified_hold is True
-    assert r.text.startswith("I am holding 12:00-13:00 at dock D2 on 04 Aug 2026 for you until 09:38.")
-    assert "all sorted" not in r.text
+    # Nothing left to pick: the first slot is already held, and only a later "yes" can book it.
+    assert chat.held() == 1
 
 
 def test_hold_wording_comes_from_the_committed_hold_not_the_model(chat: Chat) -> None:

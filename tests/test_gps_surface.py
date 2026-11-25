@@ -73,7 +73,7 @@ def test_without_a_ping_nothing_changes(chat: Chat) -> None:
     payload, reply = _search(chat)
     # No GPS evidence: today's payload keys and a reply without any GPS note.
     assert payload["status"] == "OK"
-    assert set(payload) == {"status", "option_set_id", "held", "options", "valid_until"}
+    assert set(payload) == {"status", "option_set_id", "held", "slot", "options", "valid_until", "note"}
     assert "GPS" not in reply.text
     # And the no-slot hand-off summary is today's plain sentence.
     _search(chat, latest_time="09:40")

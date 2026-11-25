@@ -72,13 +72,9 @@ class StubGateway:
         # If the last message is a tool result, we are mid-turn and must turn that result into words.
         if last.role == "tool":
             data = json.loads(last.content)
-            # A successful search: list the options (the system re-words this as a numbered menu anyway).
+            # A successful search: the system has held a slot and words it itself, so the model only acknowledges.
             if last.name == "search_slot_options" and data.get("status") == "OK":
-                opts = "; ".join(f"{o['rank']}) {o['start']} dock {o['dock']}" for o in data["options"])
-                # When GPS disagreed with the driver, add one neutral sentence (the key is absent otherwise).
-                note = (f" Note: your truck's GPS suggests your arrival differs from your report by about "
-                        f"{data['gps_discrepancy_minutes']} minutes.") if "gps_discrepancy_minutes" in data else ""
-                return ModelResponse(text=f"Here are your options (none is held yet): {opts}{note}")
+                return ModelResponse(text="One slot is held for you.")
             # The tool needs more information: pass its question straight through.
             if data.get("status") == "NEEDS_INPUT":
                 return ModelResponse(text=data.get("ask_the_driver", "Can you tell me more?"))
@@ -109,9 +105,10 @@ class StubGateway:
             return ModelResponse(tool_calls=(ToolCall(id="s1", name="cancel_appointment", arguments={
                 "shipment_id": target, "driver_quote": "cancel"}),))
         # "confirm" while a live hold exists: call the confirm tool with the driver's word as the quote.
-        if "confirm" in low and facts.get("live_hold"):
+        agreed = "confirm" if "confirm" in low else "yes" if re.match(r"yes\b", low.strip()) else None
+        if agreed and facts.get("live_hold"):
             return ModelResponse(tool_calls=(ToolCall(id="s1", name="confirm_reschedule", arguments={
-                "hold_appointment_id": facts["live_hold"]["appointment_id"], "driver_quote": "confirm"}),))
+                "hold_appointment_id": facts["live_hold"]["appointment_id"], "driver_quote": agreed}),))
         # A menu number ("3", "option 2", "number 1") after options were shown: hold that line, quoting the driver's own text.
         pick = _PICK.fullmatch(low.strip())
         if pick and facts.get("latest_option_set_id"):

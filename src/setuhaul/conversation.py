@@ -368,7 +368,10 @@ def _finalize(
         parts.append(say("cancelled", lang, ref=turn.cancelled_appointment_id))
     # A hold was placed: slot and expiry from the hold.
     elif turn.hold:
-        parts.append(say("hold_placed", lang, **{k: v for k, v in turn.hold.items() if k != "appointment_id"}))
+        parts.append(say("hold_placed", lang, **{k: v for k, v in turn.hold.items() if k not in ("appointment_id", "status", "note")}))
+        # GPS disagreed with the driver's report when this slot was searched: say so in the system's own wording.
+        if turn.gps_discrepancy_minutes is not None:
+            parts.append(say("gps_note", lang, minutes=str(turn.gps_discrepancy_minutes)))
     # A hold was released.
     elif turn.released:
         parts.append(say("hold_released", lang))

@@ -89,7 +89,7 @@ def test_a_fabricated_driver_quote_does_not_authorise_a_hold(chat: Chat) -> None
                                              "driver_quote": "yes please hold the first option"})
     chat.say("what are my options again?", [fake, say_text("ok")])
     assert tool_json(chat.last_messages(), "request_hold")["error"] == "APPROVAL_NOT_PRESENT"
-    assert chat.held() == 0
+    assert chat.held() == 1  # only the system's own hold; the fabricated request changed nothing
 
 
 def test_the_real_quote_does_authorise_it_even_with_odd_spacing_and_case(chat: Chat) -> None:
@@ -106,7 +106,7 @@ def test_only_the_latest_option_set_can_be_held(chat: Chat) -> None:
     chat.say("make it 90 minutes late", [tc("search_slot_options", shipment_id="SHP1006", report={"kind": "late_by", "minutes": 90}),
                                          say_text("new options")])
     chat.say("take the first one", [tc("request_hold", option_set_id=first, rank=1, driver_quote="take the first one"), say_text("x")])
-    assert tool_json(chat.last_messages(), "request_hold")["status"] == "NOT_LATEST_OPTION_SET" and chat.held() == 0
+    assert tool_json(chat.last_messages(), "request_hold")["status"] == "NOT_LATEST_OPTION_SET" and chat.held() == 1
 
 
 def test_only_one_write_per_message(chat: Chat) -> None:

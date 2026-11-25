@@ -356,12 +356,13 @@ def _handoff(ctx: ToolContext, reason: str, shipment_id: str | None, summary: st
 def _slot_facts(conn: sqlite3.Connection, slot_id: str) -> dict[str, str]:
     # Look up the slot and its dock.
     r = conn.execute(
-        "select s.slot_start_ts, s.slot_end_ts, d.dock_code from appointment_slots s join docks d using(dock_id) "
-        "where s.slot_id=?", (slot_id,)).fetchone()
+        "select s.slot_start_ts, s.slot_end_ts, d.dock_code, f.facility_name from appointment_slots s join docks d using(dock_id) "
+        "join facilities f on f.facility_id=d.facility_id where s.slot_id=?", (slot_id,)).fetchone()
     # Parse the stored times.
     start, end = parse_operational_timestamp(r["slot_start_ts"]), parse_operational_timestamp(r["slot_end_ts"])
     # Times as HH:MM and the date as '04 Aug 2026'.
-    return {"start": f"{start:%H:%M}", "end": f"{end:%H:%M}", "dock": r["dock_code"], "date": f"{start:%d %b %Y}"}
+    return {"start": f"{start:%H:%M}", "end": f"{end:%H:%M}", "dock": r["dock_code"], "date": f"{start:%d %b %Y}",
+            "facility": r["facility_name"]}
 
 
 # Turn a system error or lock timeout into ServiceUnavailable so nothing is promised.
@@ -498,14 +499,17 @@ def _search_slot_options(ctx: ToolContext, a: SearchArgs) -> dict[str, Any]:
     mem = ctx.memory.load(ctx.driver_id, ctx.thread_id).state
     # Remember this menu as the latest, so 'option 1' refers to it.
     ctx.memory.save_structured_state(ctx.driver_id, ctx.thread_id, mem.model_copy(update={"latest_option_set_id": shown.option_set_id}))
-    # Tell the reply renderer a menu was shown this turn.
-    ctx.turn.options_shown = True
-    ctx.turn.shown_options = [_slot_facts(ctx.conn, i.slot_id) for i in shown.items]
-    ctx.turn.options_valid_until = _hhmm(shown.expires_at)
-    return {"status": "OK", "option_set_id": shown.option_set_id, "held": False,
+    # Hold the first of them straight away.
+    held = _auto_hold(ctx, shown.option_set_id, [i.rank for i in shown.items])
+    # Every line was taken in the meantime: a person has to help, and nothing is promised.
+    if held is None:
+        _handoff(ctx, "NO_SLOT", a.shipment_id, f"Offered slots were taken before one could be held.{gps_note}", **summary)
+        return {"status": "NO_SLOT", "options": [], "note": "Do not promise any slot; operations will take over."}
+    return {"status": "OK", "option_set_id": shown.option_set_id, "held": True, "slot": held,
             "options": [{"rank": i.rank, **_slot_facts(ctx.conn, i.slot_id), "wait_minutes": i.decision.wait_minutes,
                          "warnings": list(i.decision.warnings)} for i in shown.items],
-            "valid_until": _hhmm(shown.expires_at), **gps_facts}
+            "valid_until": _hhmm(shown.expires_at),
+            "note": "One slot is held, not booked. The system words it; the driver replies yes or no.", **gps_facts}
 
 
 # Read tool: what changed in a previously shown menu.
@@ -543,25 +547,19 @@ def _offer_original_slot(ctx: ToolContext, a: ShipmentArgs) -> dict[str, Any]:
         mem = ctx.memory.load(ctx.driver_id, ctx.thread_id).state
         ctx.memory.save_structured_state(ctx.driver_id, ctx.thread_id,
                                          mem.model_copy(update={"latest_option_set_id": out.option_set.option_set_id}))
-        ctx.turn.options_shown = True
-        ctx.turn.shown_options = [_slot_facts(ctx.conn, i.slot_id) for i in out.option_set.items]
-        ctx.turn.options_valid_until = _hhmm(out.option_set.expires_at)
-    return {"status": out.status, "reason_codes": list(out.reason_codes), "held": False,
+    held = _auto_hold(ctx, out.option_set.option_set_id, [i.rank for i in out.option_set.items]) if out.option_set else None
+    return {"status": out.status, "reason_codes": list(out.reason_codes), "held": held is not None, "slot": held,
             "option_set_id": out.option_set.option_set_id if out.option_set else None,
             "options": [{"rank": i.rank, **_slot_facts(ctx.conn, i.slot_id)} for i in out.option_set.items] if out.option_set else []}
 
 
 # ---- write tools (checkpointed) -------------------------------------------------------------------------
-# WRITE tool: place a hold on a slot from the latest menu.
-def _request_hold(ctx: ToolContext, a: HoldArgs) -> dict[str, Any]:
-    state = _state(ctx)
-    # Only the most recently shown menu can be held.
-    if a.option_set_id != state.latest_option_set_id:
-        return {"status": "NOT_LATEST_OPTION_SET", "note": "Only the most recently shown options can be held."}
-    row = ctx.conn.execute("select shipment_id from option_sets where option_set_id=?", (a.option_set_id,)).fetchone()
+# Hold one line of a stored option set. Shared by the hold tool and the automatic hold after a search.
+def _hold_rank(ctx: ToolContext, option_set_id: str, rank: int) -> dict[str, Any]:
+    row = ctx.conn.execute("select shipment_id from option_sets where option_set_id=?", (option_set_id,)).fetchone()
     # The transactional hold (first commit wins).
     # supersede: picking another option while holding one switches the hold (the old one is released only if the new one succeeds).
-    r = acquire_hold(ctx.conn, ctx.driver_id, ctx.thread_id, row["shipment_id"], a.option_set_id, a.rank, ctx.clock, supersede=True)
+    r = acquire_hold(ctx.conn, ctx.driver_id, ctx.thread_id, row["shipment_id"], option_set_id, rank, ctx.clock, supersede=True)
     # A system error must not be reported as a normal answer.
     _check_system(r.status, r.outcome)
     # Not held: say so and let the model offer to search again.
@@ -583,6 +581,28 @@ def _request_hold(ctx: ToolContext, a: HoldArgs) -> dict[str, Any]:
     ctx.turn.committed.append("request_hold")
     return {"status": "HELD", "appointment_id": r.appointment_id, **facts,
             "note": "Tell the driver it is held until that time and ask them to confirm."}
+
+
+# WRITE tool: place a hold on a slot from the latest menu.
+def _request_hold(ctx: ToolContext, a: HoldArgs) -> dict[str, Any]:
+    # Only the most recently shown menu can be held.
+    if a.option_set_id != _state(ctx).latest_option_set_id:
+        return {"status": "NOT_LATEST_OPTION_SET", "note": "Only the most recently shown options can be held."}
+    return _hold_rank(ctx, a.option_set_id, a.rank)
+
+
+# After a search: hold the first line that can be held, in rank order, so the driver only has to say yes or no.
+# Python picks; the model never does. Nothing is booked until the driver confirms in a later message.
+def _auto_hold(ctx: ToolContext, option_set_id: str, ranks: list[int]) -> dict[str, Any] | None:
+    for rank in ranks:
+        out = _hold_rank(ctx, option_set_id, rank)
+        if out["status"] == "HELD":
+            # A refusal on an earlier line is not news once a later one is held.
+            ctx.turn.position_changed = False
+            # The system has made this message's one state change.
+            ctx.turn.writes_done += 1
+            return out
+    return None
 
 
 # WRITE tool: confirm a hold made in an EARLIER message.

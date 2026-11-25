@@ -155,12 +155,12 @@ T: dict[str, dict[str, str]] = {
     },
     # Told when a hold was placed: which slot, until when, and what to do next.
     "hold_placed": {
-        "en": "I am holding {start}-{end} at dock {dock} on {date} for you until {until}. "
-              "Reply to confirm this slot, or tell me if you would like another option.",
-        "hi": "मैंने आपके लिए {date} को डॉक {dock} पर {start}-{end} का स्लॉट {until} तक होल्ड किया है। "
-              "इसे कन्फर्म करने के लिए जवाब दें, या कोई और विकल्प बताइए।",
-        "hinglish": "Maine aapke liye {date} ko dock {dock} par {start}-{end} ka slot {until} tak hold kiya hai. "
-                    "Confirm karne ke liye reply karein, ya koi aur option bataiye.",
+        "en": "I am holding {start}-{end} at dock {dock} on {date}, {facility}, for you until {until}. "
+              "It is not booked yet. Reply Yes to confirm, or No for the next slot.",
+        "hi": "मैंने आपके लिए {facility} में {date} को डॉक {dock} पर {start}-{end} का स्लॉट {until} तक होल्ड किया है। "
+              "अभी बुक नहीं हुआ है। कन्फर्म करने के लिए Yes लिखें, या अगले स्लॉट के लिए No लिखें।",
+        "hinglish": "Maine aapke liye {facility} mein {date} ko dock {dock} par {start}-{end} ka slot {until} tak hold kiya hai. "
+                    "Abhi book nahi hua hai. Confirm karne ke liye Yes likhein, ya agle slot ke liye No likhein.",
     },
     # First line of the numbered option menu (D65). It says plainly that nothing is held.
     "options_intro": {
