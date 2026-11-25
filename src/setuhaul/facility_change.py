@@ -10,15 +10,27 @@ from __future__ import annotations
 import sqlite3
 import uuid
 from datetime import timedelta
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from setuhaul.allocation import rank_options
 from setuhaul.auth import audit
 from setuhaul.auth.authz import facility_ids
 from setuhaul.auth.users import User
+from setuhaul.booking import acquire_hold, make_hold_checker
+from setuhaul.capacity import build_facility_state
 from setuhaul.clock import Clock
-from setuhaul.db import immediate, parse_operational_timestamp
+from setuhaul.config import load_settings
+from setuhaul.db import IST, immediate, parse_operational_timestamp
+from setuhaul.escalation import HandoffRequest, SqlEscalationSink
+from setuhaul.eta import load_eta_records
+from setuhaul.feasibility import build_context, search_feasible_slots
+from setuhaul.gps import gps_arrival_floor
+from setuhaul.memory import ConversationMemoryStore, HoldRef
+from setuhaul.option_history import record_option_set
+from setuhaul.partner_booking import request_slot
+from setuhaul.schemas import BaselineType, EtaEvidence
 
 REQUEST_LIFE = timedelta(minutes=120)
 # A load in these states is no longer ours to move.
@@ -97,3 +109,88 @@ def decide(conn: sqlite3.Connection, clock: Clock, *, actor: User, request_id: s
                      target_type="shipment", target_id=row["shipment_id"], outcome="OK", ip=None,
                      detail={"request_id": request_id, "to": row["to_facility_id"]}, clock=clock)
     return ChangeResult(status=status, request_id=request_id)
+
+
+# ---- after approval -------------------------------------------------------------------------------------
+# A hold made on the driver's behalf has to last long enough for them to see the message (the usual hold is 180 s).
+APPROVAL_HOLD_SECONDS = 15 * 60
+
+Outcome = Literal["HELD", "PARTNER_REQUESTED", "NO_SLOT"]
+
+
+def after_approval(conn: sqlite3.Connection, redis: Any, clock: Clock, request_id: str) -> Outcome:
+    """Offer the driver something at the new facility, or put the load back. Tells the driver either way."""
+    req = conn.execute("select * from facility_change_requests where request_id=? and status='APPROVED'", (request_id,)).fetchone()
+    if req is None:
+        raise ValueError(f"no approved request {request_id}")
+    driver_id, shipment_id = req["driver_id"], req["shipment_id"]
+    new = conn.execute("select facility_name, is_partner from facilities where facility_id=?", (req["to_facility_id"],)).fetchone()
+    old_name = conn.execute("select facility_name from facilities where facility_id=?", (req["from_facility_id"],)).fetchone()[0]
+    memory = ConversationMemoryStore(conn, redis, clock, load_settings(), hold_checker=make_hold_checker(conn, clock))
+    row = conn.execute("select thread_id from chat_threads where driver_id=? and thread_status<>'CLOSED' order by opened_at desc, rowid desc limit 1",
+                       (driver_id,)).fetchone()
+    thread_id = row["thread_id"] if row else memory.open_thread(driver_id, shipment_id)
+    now = clock.now()
+    planned, current = load_eta_records(conn, shipment_id)
+    record = current or planned
+
+    def tell(text: str) -> None:
+        memory.append(driver_id, thread_id, "OPERATIONS", text)
+
+    def give_back(reason: str) -> Outcome:
+        # Never leave a load pointing at a site where nothing could be offered.
+        with immediate(conn):
+            conn.execute("update shipments set destination_facility_id=? where shipment_id=?", (req["from_facility_id"], shipment_id))
+            conn.execute("update facility_change_requests set status='REJECTED', reason=? where request_id=?", (reason, request_id))
+            audit.record(conn, actor_user_id=None, actor_email=None, action="FACILITY_CHANGE_REVERTED", target_type="shipment",
+                         target_id=shipment_id, outcome="OK", ip=None, detail={"request_id": request_id, "reason": reason}, clock=clock)
+        SqlEscalationSink(conn, clock).record(HandoffRequest(
+            reason_code="NO_SLOT", driver_id=driver_id, thread_id=thread_id, shipment_id=shipment_id,
+            summary=f"A move to {new['facility_name']} was approved but nothing could be offered there.", created_at=now))
+        tell(f"There is no free slot at {new['facility_name']}, so your load is still going to {old_name}. "
+             "Your booking there is unchanged. The operations team will help.")
+        return "NO_SLOT"
+
+    if record is None:
+        return give_back("NO_ETA")
+    if new["is_partner"]:
+        # The partner decides by email: ask for the next full hour after the arrival, and promise nothing.
+        arrival = max(record.eta, now).astimezone(IST)
+        start = (arrival + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+        asked = request_slot(conn, clock, shipment_id=shipment_id, proposed_start=start, proposed_end=start + timedelta(hours=1))
+        if asked.status not in ("REQUESTED", "ALREADY_PENDING"):
+            return give_back("NO_PARTNER_REQUEST")
+        tell(f"The move to {new['facility_name']} is approved. I have asked them for {start:%H:%M} on {start:%d %b}. "
+             "It is NOT booked until they reply.")
+        return "PARTNER_REQUESTED"
+
+    eta = EtaEvidence(eta=record.eta, source="DRIVER_DECLARED", confidence="MEDIUM", baseline_type=BaselineType.CURRENT_ETA)
+    # The same rule the chat search applies: a slot the truck cannot reach from where it is now is never offered.
+    floor = gps_arrival_floor(conn, shipment_id, clock, load_settings())
+    if floor is not None and floor > eta.eta:
+        eta = eta.model_copy(update={"eta": floor, "source": "GPS_ASSISTED"})
+    # Leave room for the whole hold: confirming re-checks reachability, and the truck keeps its distance while the driver reads.
+    context = build_context(conn, shipment_id, eta, now, eta_buffer_minutes=APPROVAL_HOLD_SECONDS // 60)
+    state = build_facility_state(conn, context.facility_id, now)
+    result = search_feasible_slots(context, state)
+    if result.status != "OK":
+        return give_back("NO_SLOT")
+    shown = record_option_set(conn, context, thread_id, rank_options(result.feasible, limit=3), state, clock)
+    for item in shown.items:
+        held = acquire_hold(conn, driver_id, thread_id, shipment_id, shown.option_set_id, item.rank, clock,
+                            ttl_seconds=APPROVAL_HOLD_SECONDS, supersede=True)
+        if held.status != "HELD" or held.appointment_id is None or held.expires_at is None:
+            continue
+        slot = conn.execute("select s.slot_start_ts, s.slot_end_ts, d.dock_code from appointment_slots s join docks d using(dock_id) "
+                            "where s.slot_id=?", (held.slot_id,)).fetchone()
+        start, end = parse_operational_timestamp(slot["slot_start_ts"]), parse_operational_timestamp(slot["slot_end_ts"])
+        memory_state = memory.load(driver_id, thread_id).state
+        # "SYSTEM" is no driver message, so the driver's next "Yes" counts as a later message and may confirm.
+        memory.save_structured_state(driver_id, thread_id, memory_state.model_copy(update={
+            "selected_shipment_id": shipment_id, "latest_option_set_id": shown.option_set_id, "offered_slot_ids": (),
+            "hold": HoldRef(appointment_id=held.appointment_id, expires_at=held.expires_at, created_message_id="SYSTEM")}))
+        tell(f"The move to {new['facility_name']} is approved. I am holding {start:%H:%M}-{end:%H:%M} at dock {slot['dock_code']} "
+             f"on {start:%d %b %Y} until {held.expires_at.astimezone(IST):%H:%M}. It is not booked yet. "
+             "Reply Yes to confirm, or No for the next slot.")
+        return "HELD"
+    return give_back("NO_SLOT")
