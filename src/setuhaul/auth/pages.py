@@ -18,6 +18,7 @@ from setuhaul.api import claim_label
 from setuhaul.auth import audit, onboarding, projects, sessions, telegram, users
 from setuhaul.auth.admin_api import DEFAULT_AUDIT_LIMIT, parse_since
 from setuhaul.auth.authz import AuthzError, assert_facility, require_role
+from setuhaul.auth.signin_notice import NOTICES
 from setuhaul.auth.users import User
 from setuhaul.auth.warehouse_routes import (
     case_ids_in_scope,
@@ -142,7 +143,7 @@ _GOOGLE_MARK = (
     '</svg>')
 
 
-def _landing(google: bool, local_admin: bool) -> str:
+def _landing(google: bool, local_admin: bool, notice: str = "") -> str:
     # The sign-in page. Only what is set up is offered: a button that can only fail is worse than none.
     button = f'<a class="google" href="/auth/login">{_GOOGLE_MARK}<span>Sign in with Google</span></a>' if google else ""
     backup = ""
@@ -168,7 +169,7 @@ def _landing(google: bool, local_admin: bool) -> str:
             "<p>One place for warehouse teams to see bay bookings, driver messages and changes as they happen.</p></div>"
             f"{_dock_drawing()}</div>"
             f'<main class="signin"><div class="panel"><h2>Sign in</h2><p class="lead">{lead}</p>'
-            f'<p id="status" class="status" role="alert"></p>{button}{backup}'
+            f'<p id="status" class="status" role="alert">{esc(notice)}</p>{button}{backup}'
             '<p class="fine">Access is by invitation, and sign-ins are recorded. Drivers use Telegram and do not sign in here.</p>'
             '</div></main><script src="/app/assets/common.js" defer></script></body></html>')
 
@@ -458,7 +459,9 @@ def register_pages(app: FastAPI, deps: AppDeps) -> None:
                 return _redirect("/admin" if user.role == "ADMIN" else "/warehouse")
         # The same condition the Google routes use (a client and a signing secret of at least 32 bytes).
         google = deps.google is not None and len(deps.session_secret) >= 32
-        return _respond(_landing(google, deps.local_admin_enabled))
+        # Only a listed category selects a message; the parameter itself is never shown.
+        notice = NOTICES.get(request.query_params.get("signin", ""), "")
+        return _respond(_landing(google, deps.local_admin_enabled, notice))
 
     @app.get("/admin", response_class=HTMLResponse)
     def admin_page(request: Request) -> Response:
