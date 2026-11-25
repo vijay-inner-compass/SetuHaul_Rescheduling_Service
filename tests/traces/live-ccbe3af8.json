@@ -1,0 +1,376 @@
+{
+  "schema_version": 1,
+  "trace_id": "live-ccbe3af8",
+  "source": "live",
+  "model": {
+    "provider": "openai",
+    "model_id": "gpt-6-luna"
+  },
+  "scenario": "repair-clarify-hold-decline-confirm-hinglish",
+  "world": "snapshot + TEST_FIXTURE labour/consignee evidence",
+  "driver_id": "DRV006",
+  "thread_id": "THR001",
+  "clock_start": "2026-08-04T09:35:00+05:30",
+  "turns": [
+    {
+      "turn": 1,
+      "message_id": "LIVE-1",
+      "advance_s": 20,
+      "driver_text": "SHP1006 ki gaadi kharab ho gayi hai, repair mein lagbhag 90 minute lagenge",
+      "rounds": [
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "offer_original_slot",
+            "request_facility_change",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "",
+          "model_error": null,
+          "tool_events": [
+            {
+              "call_id": "call_eFtwma99Ik8xjllqsi97ZHqy",
+              "name": "compute_eta",
+              "arguments": {
+                "shipment_id": "SHP1006",
+                "report": {
+                  "kind": "repair",
+                  "minutes": 90
+                }
+              },
+              "result": {
+                "status": "NEEDS_INPUT",
+                "code": "MISSING_TRAVEL_TIME",
+                "missing": [
+                  "travel_minutes"
+                ],
+                "ask_the_driver": "After the repair, how long will the drive to the facility take?"
+              },
+              "executed": true,
+              "error": null
+            }
+          ]
+        },
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "offer_original_slot",
+            "request_facility_change",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "Repair ke baad facility tak pahunchne mein drive kitni der lagegi?",
+          "model_error": null,
+          "tool_events": []
+        }
+      ],
+      "reply_text": "Repair ke baad facility tak pahunchne mein drive kitni der lagegi?",
+      "reply_status": "REPLIED",
+      "escalation_reason": null,
+      "handoff_context_keys": [],
+      "facts": {
+        "live_hold": false,
+        "has_option_set": false
+      },
+      "verified_hold": false,
+      "verified_confirmed": false,
+      "loop_status": "DONE"
+    },
+    {
+      "turn": 2,
+      "message_id": "LIVE-2",
+      "advance_s": 20,
+      "driver_text": "repair ke baad warehouse tak drive lagbhag 45 minute ka hai",
+      "rounds": [
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "offer_original_slot",
+            "request_facility_change",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "",
+          "model_error": null,
+          "tool_events": [
+            {
+              "call_id": "call_e9d5rSITOCOhbb37pRwa6pCL",
+              "name": "search_slot_options",
+              "arguments": {
+                "shipment_id": "SHP1006",
+                "report": {
+                  "kind": "repair",
+                  "minutes": 90,
+                  "travel_minutes": 45,
+                  "baseline": "planned"
+                }
+              },
+              "result": {
+                "status": "OK",
+                "option_set_id": "$OPT1",
+                "held": true,
+                "slot": {
+                  "status": "HELD",
+                  "appointment_id": "$HOLD1",
+                  "start": "12:00",
+                  "end": "13:00",
+                  "dock": "D2",
+                  "date": "04 Aug 2026",
+                  "facility": "SetuHaul Jaipur Distribution Centre",
+                  "until": "09:38",
+                  "note": "Tell the driver it is held until that time and ask them to confirm."
+                },
+                "options": [
+                  {
+                    "rank": 1,
+                    "start": "12:00",
+                    "end": "13:00",
+                    "dock": "D2",
+                    "date": "04 Aug 2026",
+                    "facility": "SetuHaul Jaipur Distribution Centre",
+                    "wait_minutes": 9,
+                    "warnings": []
+                  },
+                  {
+                    "rank": 2,
+                    "start": "12:00",
+                    "end": "13:00",
+                    "dock": "D4",
+                    "date": "04 Aug 2026",
+                    "facility": "SetuHaul Jaipur Distribution Centre",
+                    "wait_minutes": 9,
+                    "warnings": []
+                  },
+                  {
+                    "rank": 3,
+                    "start": "13:00",
+                    "end": "14:00",
+                    "dock": "D1",
+                    "date": "04 Aug 2026",
+                    "facility": "SetuHaul Jaipur Distribution Centre",
+                    "wait_minutes": 69,
+                    "warnings": []
+                  }
+                ],
+                "valid_until": "09:50",
+                "note": "One slot is held, not booked. The system words it; the driver replies yes or no."
+              },
+              "executed": true,
+              "error": null
+            }
+          ]
+        },
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "offer_original_slot",
+            "request_facility_change",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "12:00–13:00 ka slot, Dock D2, Jaipur Distribution Centre mein aapke liye hold hai, 09:38 tak. Kya aap confirm karte hain?",
+          "model_error": null,
+          "tool_events": []
+        }
+      ],
+      "reply_text": "Maine aapke liye SetuHaul Jaipur Distribution Centre mein 04 Aug 2026 ko dock D2 par 12:00-13:00 ka slot 09:38 tak hold kiya hai. Abhi book nahi hua hai. Confirm karne ke liye Yes likhein, ya agle slot ke liye No likhein.",
+      "reply_status": "REPLIED",
+      "escalation_reason": null,
+      "handoff_context_keys": [],
+      "facts": {
+        "live_hold": false,
+        "has_option_set": false
+      },
+      "verified_hold": true,
+      "verified_confirmed": false,
+      "loop_status": "DONE"
+    },
+    {
+      "turn": 3,
+      "message_id": "LIVE-3",
+      "advance_s": 20,
+      "driver_text": "nahi, yeh slot nahi chalega, agla slot dijiye",
+      "rounds": [
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "compare_option_set",
+            "offer_original_slot",
+            "request_hold",
+            "confirm_reschedule",
+            "decline_held_slot",
+            "request_facility_change",
+            "release_pending_change",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "",
+          "model_error": null,
+          "tool_events": [
+            {
+              "call_id": "call_pPXLtshbPK685yUGjPxOXi9u",
+              "name": "decline_held_slot",
+              "arguments": {
+                "driver_quote": "nahi, yeh slot nahi chalega, agla slot dijiye"
+              },
+              "result": {
+                "status": "HELD",
+                "appointment_id": "$HOLD2",
+                "start": "12:00",
+                "end": "13:00",
+                "dock": "D4",
+                "date": "04 Aug 2026",
+                "facility": "SetuHaul Jaipur Distribution Centre",
+                "until": "09:39",
+                "note": "Tell the driver it is held until that time and ask them to confirm."
+              },
+              "executed": true,
+              "error": null
+            }
+          ]
+        },
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "compare_option_set",
+            "offer_original_slot",
+            "request_hold",
+            "confirm_reschedule",
+            "decline_held_slot",
+            "request_facility_change",
+            "release_pending_change",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "",
+          "model_error": "ModelTimeout: _ssl.c:993: The handshake operation timed out",
+          "tool_events": []
+        },
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "compare_option_set",
+            "offer_original_slot",
+            "request_hold",
+            "confirm_reschedule",
+            "decline_held_slot",
+            "request_facility_change",
+            "release_pending_change",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "System ke mutabik agla slot bhi 12:00–13:00 hai, dock D4 par. Yeh 09:39 tak hold hai—confirm karna hai?",
+          "model_error": null,
+          "tool_events": []
+        }
+      ],
+      "reply_text": "Maine aapke liye SetuHaul Jaipur Distribution Centre mein 04 Aug 2026 ko dock D4 par 12:00-13:00 ka slot 09:39 tak hold kiya hai. Abhi book nahi hua hai. Confirm karne ke liye Yes likhein, ya agle slot ke liye No likhein.",
+      "reply_status": "REPLIED",
+      "escalation_reason": null,
+      "handoff_context_keys": [],
+      "facts": {
+        "live_hold": true,
+        "has_option_set": true
+      },
+      "verified_hold": true,
+      "verified_confirmed": false,
+      "loop_status": "DONE"
+    },
+    {
+      "turn": 4,
+      "message_id": "LIVE-4",
+      "advance_s": 20,
+      "driver_text": "haan, confirm kar do",
+      "rounds": [
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "compare_option_set",
+            "offer_original_slot",
+            "request_hold",
+            "confirm_reschedule",
+            "decline_held_slot",
+            "request_facility_change",
+            "release_pending_change",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "",
+          "model_error": null,
+          "tool_events": [
+            {
+              "call_id": "call_377ziupfvm84pqWqClNZwRh3",
+              "name": "confirm_reschedule",
+              "arguments": {
+                "hold_appointment_id": "$HOLD2",
+                "driver_quote": "haan, confirm kar do"
+              },
+              "result": {
+                "status": "CONFIRMED",
+                "note": "The system will word the confirmation itself."
+              },
+              "executed": true,
+              "error": null
+            }
+          ]
+        },
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "compare_option_set",
+            "offer_original_slot",
+            "request_hold",
+            "confirm_reschedule",
+            "decline_held_slot",
+            "request_facility_change",
+            "release_pending_change",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "Aapka reschedule confirm ho gaya hai.",
+          "model_error": null,
+          "tool_events": []
+        }
+      ],
+      "reply_text": "Aapki appointment confirm ho gayi hai: dock D4, 04 Aug 2026 ko 12:00-13:00. Reference $HOLD2. Warehouse: SetuHaul Jaipur Distribution Centre.",
+      "reply_status": "REPLIED",
+      "escalation_reason": null,
+      "handoff_context_keys": [],
+      "facts": {
+        "live_hold": true,
+        "has_option_set": true
+      },
+      "verified_hold": false,
+      "verified_confirmed": true,
+      "loop_status": "DONE"
+    }
+  ]
+}

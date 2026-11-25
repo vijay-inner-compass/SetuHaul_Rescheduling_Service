@@ -39,24 +39,24 @@ sys.path.insert(0, str(ROOT / "src"))
 # Model configuration helpers.
 from setuhaul.model_gateway import ModelUnavailable, build_gateway, load_model_policy
 
-# The four driver messages for each language. Same story: breakdown, drive time, pick option 1, confirm.
+# The four driver messages for each language. Same story: breakdown, drive time (a slot is then held), turn it down, confirm the next.
 SCENARIOS = {
     "english": [
         "SHP1006 has broken down, the repair will take about 90 minutes",
         "after the repair the drive to the warehouse is about 45 minutes",
-        "I will take the first option",
+        "no, that one does not suit me, give me the next slot",
         "yes please confirm that slot",
     ],
     "hinglish": [
         "SHP1006 ki gaadi kharab ho gayi hai, repair mein lagbhag 90 minute lagenge",
         "repair ke baad warehouse tak drive lagbhag 45 minute ka hai",
-        "pehla option theek hai, wahi le lo",
+        "nahi, yeh slot nahi chalega, agla slot dijiye",
         "haan, confirm kar do",
     ],
     "hindi": [
         "SHP1006 का ट्रक खराब हो गया है, मरम्मत में करीब 90 मिनट लगेंगे",
         "मरम्मत के बाद गोदाम तक ड्राइव करीब 45 मिनट की है",
-        "पहला विकल्प ठीक है",
+        "नहीं, यह स्लॉट नहीं चलेगा, अगला स्लॉट दीजिए",
         "हाँ, कन्फर्म कर दीजिए",
     ],
 }
@@ -182,7 +182,7 @@ def main() -> int:
     sink = InMemoryEscalationSink()
     # The trace being recorded.
     trace = Trace(trace_id=f"live-{uuid.uuid4().hex[:8]}", source="live", model={"provider": policy.provider, "model_id": policy.model_id},
-                  scenario=f"repair-clarify-options-hold-confirm-{lang}", driver_id="DRV006", thread_id="THR001",
+                  scenario=f"repair-clarify-hold-decline-confirm-{lang}", driver_id="DRV006", thread_id="THR001",
                   clock_start=clock.now().isoformat())
     # Send each driver message.
     for n, text in enumerate(turns, start=1):

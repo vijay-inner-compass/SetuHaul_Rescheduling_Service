@@ -1,0 +1,355 @@
+{
+  "schema_version": 1,
+  "trace_id": "live-d9762e12",
+  "source": "live",
+  "model": {
+    "provider": "openai",
+    "model_id": "gpt-6-luna"
+  },
+  "scenario": "repair-clarify-hold-decline-confirm-hindi",
+  "world": "snapshot + TEST_FIXTURE labour/consignee evidence",
+  "driver_id": "DRV006",
+  "thread_id": "THR001",
+  "clock_start": "2026-08-04T09:35:00+05:30",
+  "turns": [
+    {
+      "turn": 1,
+      "message_id": "LIVE-1",
+      "advance_s": 20,
+      "driver_text": "SHP1006 का ट्रक खराब हो गया है, मरम्मत में करीब 90 मिनट लगेंगे",
+      "rounds": [
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "offer_original_slot",
+            "request_facility_change",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "",
+          "model_error": null,
+          "tool_events": [
+            {
+              "call_id": "call_6fgsCgqKnD1C24Vk48WCO043",
+              "name": "compute_eta",
+              "arguments": {
+                "shipment_id": "SHP1006",
+                "report": {
+                  "kind": "repair",
+                  "minutes": 90
+                }
+              },
+              "result": {
+                "status": "NEEDS_INPUT",
+                "code": "MISSING_TRAVEL_TIME",
+                "missing": [
+                  "travel_minutes"
+                ],
+                "ask_the_driver": "After the repair, how long will the drive to the facility take?"
+              },
+              "executed": true,
+              "error": null
+            }
+          ]
+        },
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "offer_original_slot",
+            "request_facility_change",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "मरम्मत के बाद सुविधा तक पहुँचने में ड्राइव कितने मिनट लगेगी?",
+          "model_error": null,
+          "tool_events": []
+        }
+      ],
+      "reply_text": "मरम्मत के बाद सुविधा तक पहुँचने में ड्राइव कितने मिनट लगेगी?",
+      "reply_status": "REPLIED",
+      "escalation_reason": null,
+      "handoff_context_keys": [],
+      "facts": {
+        "live_hold": false,
+        "has_option_set": false
+      },
+      "verified_hold": false,
+      "verified_confirmed": false,
+      "loop_status": "DONE"
+    },
+    {
+      "turn": 2,
+      "message_id": "LIVE-2",
+      "advance_s": 20,
+      "driver_text": "मरम्मत के बाद गोदाम तक ड्राइव करीब 45 मिनट की है",
+      "rounds": [
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "offer_original_slot",
+            "request_facility_change",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "",
+          "model_error": null,
+          "tool_events": [
+            {
+              "call_id": "call_9NMhLqeuUbHbaNcAcO3JWUsT",
+              "name": "search_slot_options",
+              "arguments": {
+                "shipment_id": "SHP1006",
+                "report": {
+                  "kind": "repair",
+                  "minutes": 90,
+                  "travel_minutes": 45
+                }
+              },
+              "result": {
+                "status": "OK",
+                "option_set_id": "$OPT1",
+                "held": true,
+                "slot": {
+                  "status": "HELD",
+                  "appointment_id": "$HOLD1",
+                  "start": "12:00",
+                  "end": "13:00",
+                  "dock": "D2",
+                  "date": "04 Aug 2026",
+                  "facility": "SetuHaul Jaipur Distribution Centre",
+                  "until": "09:38",
+                  "note": "Tell the driver it is held until that time and ask them to confirm."
+                },
+                "options": [
+                  {
+                    "rank": 1,
+                    "start": "12:00",
+                    "end": "13:00",
+                    "dock": "D2",
+                    "date": "04 Aug 2026",
+                    "facility": "SetuHaul Jaipur Distribution Centre",
+                    "wait_minutes": 9,
+                    "warnings": []
+                  },
+                  {
+                    "rank": 2,
+                    "start": "12:00",
+                    "end": "13:00",
+                    "dock": "D4",
+                    "date": "04 Aug 2026",
+                    "facility": "SetuHaul Jaipur Distribution Centre",
+                    "wait_minutes": 9,
+                    "warnings": []
+                  },
+                  {
+                    "rank": 3,
+                    "start": "13:00",
+                    "end": "14:00",
+                    "dock": "D1",
+                    "date": "04 Aug 2026",
+                    "facility": "SetuHaul Jaipur Distribution Centre",
+                    "wait_minutes": 69,
+                    "warnings": []
+                  }
+                ],
+                "valid_until": "09:50",
+                "note": "One slot is held, not booked. The system words it; the driver replies yes or no."
+              },
+              "executed": true,
+              "error": null
+            }
+          ]
+        },
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "offer_original_slot",
+            "request_facility_change",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "आपके लिए आज जयपुर वितरण केंद्र में 12:00–13:00 का स्लॉट रखा गया है। कृपया हाँ या ना बताएं।",
+          "model_error": null,
+          "tool_events": []
+        }
+      ],
+      "reply_text": "मैंने आपके लिए SetuHaul Jaipur Distribution Centre में 04 Aug 2026 को डॉक D2 पर 12:00-13:00 का स्लॉट 09:38 तक होल्ड किया है। अभी बुक नहीं हुआ है। कन्फर्म करने के लिए Yes लिखें, या अगले स्लॉट के लिए No लिखें।",
+      "reply_status": "REPLIED",
+      "escalation_reason": null,
+      "handoff_context_keys": [],
+      "facts": {
+        "live_hold": false,
+        "has_option_set": false
+      },
+      "verified_hold": true,
+      "verified_confirmed": false,
+      "loop_status": "DONE"
+    },
+    {
+      "turn": 3,
+      "message_id": "LIVE-3",
+      "advance_s": 20,
+      "driver_text": "नहीं, यह स्लॉट नहीं चलेगा, अगला स्लॉट दीजिए",
+      "rounds": [
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "compare_option_set",
+            "offer_original_slot",
+            "request_hold",
+            "confirm_reschedule",
+            "decline_held_slot",
+            "request_facility_change",
+            "release_pending_change",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "",
+          "model_error": null,
+          "tool_events": [
+            {
+              "call_id": "call_GBTQ5qZgvDObZWTZskXQiOrk",
+              "name": "decline_held_slot",
+              "arguments": {
+                "driver_quote": "नहीं, यह स्लॉट नहीं चलेगा, अगला स्लॉट दीजिए"
+              },
+              "result": {
+                "status": "HELD",
+                "appointment_id": "$HOLD2",
+                "start": "12:00",
+                "end": "13:00",
+                "dock": "D4",
+                "date": "04 Aug 2026",
+                "facility": "SetuHaul Jaipur Distribution Centre",
+                "until": "09:39",
+                "note": "Tell the driver it is held until that time and ask them to confirm."
+              },
+              "executed": true,
+              "error": null
+            }
+          ]
+        },
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "compare_option_set",
+            "offer_original_slot",
+            "request_hold",
+            "confirm_reschedule",
+            "decline_held_slot",
+            "request_facility_change",
+            "release_pending_change",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "अगला स्लॉट भी 04 Aug को 12:00–13:00, डॉक D4 पर है। यह 09:39 तक होल्ड है। कन्फर्म करने के लिए “हाँ” लिखें।",
+          "model_error": null,
+          "tool_events": []
+        }
+      ],
+      "reply_text": "मैंने आपके लिए SetuHaul Jaipur Distribution Centre में 04 Aug 2026 को डॉक D4 पर 12:00-13:00 का स्लॉट 09:39 तक होल्ड किया है। अभी बुक नहीं हुआ है। कन्फर्म करने के लिए Yes लिखें, या अगले स्लॉट के लिए No लिखें।",
+      "reply_status": "REPLIED",
+      "escalation_reason": null,
+      "handoff_context_keys": [],
+      "facts": {
+        "live_hold": true,
+        "has_option_set": true
+      },
+      "verified_hold": true,
+      "verified_confirmed": false,
+      "loop_status": "DONE"
+    },
+    {
+      "turn": 4,
+      "message_id": "LIVE-4",
+      "advance_s": 20,
+      "driver_text": "हाँ, कन्फर्म कर दीजिए",
+      "rounds": [
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "compare_option_set",
+            "offer_original_slot",
+            "request_hold",
+            "confirm_reschedule",
+            "decline_held_slot",
+            "request_facility_change",
+            "release_pending_change",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "",
+          "model_error": null,
+          "tool_events": [
+            {
+              "call_id": "call_uKRBuu2z9EDjJ9KK7V7RWFE8",
+              "name": "confirm_reschedule",
+              "arguments": {
+                "hold_appointment_id": "$HOLD2",
+                "driver_quote": "हाँ, कन्फर्म कर दीजिए"
+              },
+              "result": {
+                "status": "CONFIRMED",
+                "note": "The system will word the confirmation itself."
+              },
+              "executed": true,
+              "error": null
+            }
+          ]
+        },
+        {
+          "offered_tools": [
+            "list_my_shipments",
+            "get_shipment_status",
+            "compute_eta",
+            "search_slot_options",
+            "compare_option_set",
+            "offer_original_slot",
+            "request_hold",
+            "confirm_reschedule",
+            "decline_held_slot",
+            "request_facility_change",
+            "release_pending_change",
+            "cancel_appointment",
+            "escalate_to_operations"
+          ],
+          "assistant_text": "आपका नया स्लॉट कन्फर्म हो गया है।",
+          "model_error": null,
+          "tool_events": []
+        }
+      ],
+      "reply_text": "आपकी अपॉइंटमेंट कन्फर्म हो गई है: डॉक D4, 04 Aug 2026 को 12:00-13:00। रेफरेंस $HOLD2। वेयरहाउस: SetuHaul Jaipur Distribution Centre।",
+      "reply_status": "REPLIED",
+      "escalation_reason": null,
+      "handoff_context_keys": [],
+      "facts": {
+        "live_hold": true,
+        "has_option_set": true
+      },
+      "verified_hold": false,
+      "verified_confirmed": true,
+      "loop_status": "DONE"
+    }
+  ]
+}
