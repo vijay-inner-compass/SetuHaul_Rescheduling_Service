@@ -274,12 +274,21 @@ def _who(label: str) -> str:
     return f"<strong>{esc(name)}</strong>" + (f"<span>{esc(order)}</span>" if order else "")
 
 
-def _bay_card(dock: dict[str, Any], hour: int) -> str:
-    # What a worker on the floor asks: what is on this bay now, and what comes next.
-    now = next((s for s in dock["slots"] if s["hour"] == hour), None)
-    later = next((s for s in dock["slots"] if s["hour"] > hour and s["status"] in ("BOOKED", "HELD")), None)
+def _bay_card(dock: dict[str, Any], moment: datetime) -> str:
+    # What a worker on the floor asks: what is on this bay now, and what comes next. Judged on real start and end times,
+    # not the clock hour, because a booking can start at half past.
+    spans = [(datetime.fromisoformat(s["start_ts"]), datetime.fromisoformat(s["end_ts"]), s) for s in dock["slots"]]
+    taken = ("BOOKED", "HELD")
+    # If slots overlap, an occupied one wins over a blocked one, and a blocked one over a free one.
+    covering = sorted((s for start, end, s in spans if start <= moment < end),
+                      key=lambda s: 0 if s["status"] in taken else 1 if s["status"] == "BLOCKED" else 2)
+    now = covering[0] if covering else None
+    today = moment.astimezone(IST).date()
+    ahead = sorted(((start, s) for start, _, s in spans
+                    if start > moment and start.astimezone(IST).date() == today and s["status"] in taken), key=lambda p: p[0])
+    later = ahead[0][1] if ahead else None
     kind = _CELL_CLASSES.get(now["status"], "blocked") if now else "none"
-    state = _STATUS_WORDS.get(now["status"], "Blocked") if now else "Closed"
+    state = _STATUS_WORDS.get(now["status"], "Blocked") if now else "No slot"
     occupant = _who(now["label"]) if now and now["status"] in ("BOOKED", "HELD") else ""
     upcoming = f"Next {esc(later['start'])} {esc(later['label'].partition(' \u00b7 ')[0])}" if later else "Nothing else booked"
     return (f'<li class="bay cell-{kind}"><div class="bay-head"><b>{esc(dock["code"])}</b><span class="pill">{esc(state)}</span></div>'
@@ -311,7 +320,7 @@ def _board_section(board: dict[str, Any] | None, options: list[tuple[str, str]],
     table = f'<div class="scroll"><table class="board"><thead><tr>{head}</tr></thead><tbody>{"".join(rows)}</tbody></table></div>'
     legend = "".join(f'<span class="legend-key cell-{c}">{w}</span>' for c, w in
                      (("available", "Free"), ("booked", "Booked"), ("held", "Held, not yet confirmed"), ("blocked", "Blocked")))
-    bays = "".join(_bay_card(d, current) for d in board["docks"])
+    bays = "".join(_bay_card(d, moment) for d in board["docks"])
     pend = [[esc(p["request_ref"]), esc(p["order_reference"]), esc(p["driver"]), esc(f"{p['start']}-{p['end']}")]
             for p in board["pending_partner"]]
     waiting = _table(("Request", "Order", "Driver", "Proposed"), pend, "No requests are waiting for a partner.")

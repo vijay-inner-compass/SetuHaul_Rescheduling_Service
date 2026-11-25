@@ -6,13 +6,15 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from setuhaul.auth.pages import _board_section, _case_cards, _chat_browser
+from setuhaul.auth.pages import _bay_card, _board_section, _case_cards, _chat_browser
 
 NOW = datetime.fromisoformat("2026-08-04T10:15:00+05:30")
 
 
-def _slot(hour: int, status: str, label: str = "", past: bool = False) -> dict[str, Any]:
-    return {"hour": hour, "status": status, "label": label, "past": past, "start": f"{hour:02d}:00", "end": f"{hour + 1:02d}:00"}
+def _slot(hour: int, status: str, label: str = "", past: bool = False, minute: int = 0) -> dict[str, Any]:
+    start, end = f"{hour:02d}:{minute:02d}", f"{hour + 1:02d}:{minute:02d}"
+    return {"hour": hour, "status": status, "label": label, "past": past, "start": start, "end": end,
+            "start_ts": f"2026-08-04T{start}:00+05:30", "end_ts": f"2026-08-04T{end}:00+05:30"}
 
 
 BOARD = {"facility": "FAC-JAI-01", "hours": [9, 10, 11], "pending_partner": [], "docks": [
@@ -50,3 +52,20 @@ def test_long_case_notes_are_folded() -> None:
     page = _case_cards([{"id": "CAS1", "status": "OPEN", "reason": "NO_SLOT", "summary": "late " * 100, "load": "SHP1", "claimed": ""}])
     assert "<details" in page and "CAS1" in page
     assert "No open cases." in _case_cards([])
+
+
+def test_a_booking_that_starts_mid_hour_is_judged_by_its_real_times() -> None:
+    dock = {"code": "P1", "type": "Standard", "slots": [_slot(10, "BOOKED", "Asha Rao · ORD-9", minute=30)]}
+
+    def card(clock: str) -> str:
+        return _bay_card(dock, datetime.fromisoformat(f"2026-08-04T{clock}:00+05:30"))
+
+    # Before it starts: nothing is on the bay, and the booking is what comes next.
+    before = card("10:15")
+    assert '<div class="occupant"></div>' in before and "Next 10:30 Asha Rao" in before
+    # While it runs, including after the clock hour has changed: it is on the bay.
+    for clock in ("10:30", "11:15"):
+        during = card(clock)
+        assert "ORD-9" in during and "Booked" in during and "Nothing else booked" in during
+    # The end time is exclusive.
+    assert "ORD-9" not in card("11:30")
