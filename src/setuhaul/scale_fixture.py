@@ -11,9 +11,6 @@ from __future__ import annotations
 # random with a fixed seed makes the generated data identical every run.
 import random
 
-# sqlite3 for the Connection type.
-import sqlite3
-
 # Time types.
 from datetime import datetime, timedelta
 
@@ -33,7 +30,6 @@ from setuhaul.identity import provision_identities
 DAY = datetime(2026, 8, 4, tzinfo=IST)
 # Label on generated labour and consignee rows, so they can never be mistaken for real data.
 SOURCE = "GENERATED_SCALE_FIXTURE"
-BURST_ETA = "10:00"
 
 
 # ISO text for a datetime.
@@ -170,8 +166,3 @@ def make_scale_fixture(dest: Path, loads: int = 360, seed: int = 7, burst_group:
 # The phone number of generated driver number i.
 def generated_driver_phone(i: int) -> str:
     return f"+91-91{i:08d}"
-
-
-# Open a read-only connection to a fixture database.
-def open_ro(path: Path) -> sqlite3.Connection:
-    return open_connection(path=path, readonly=True)
