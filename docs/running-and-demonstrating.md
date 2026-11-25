@@ -359,7 +359,7 @@ Below, `<base>` is the public origin of your service, for example `https://haul.
 | `SETUHAUL_TELEGRAM_BOT_TOKEN` | the bot's token; used to send replies |
 | `SETUHAUL_TELEGRAM_WEBHOOK_SECRET` | checked against Telegram's `X-Telegram-Bot-Api-Secret-Token` header; at least 16 characters. If either Telegram value is missing or the secret is short, `/v1/telegram/webhook` answers 503 |
 | `SETUHAUL_COORDINATOR_TOKENS` | JSON map `{"<token>": "<name>"}`: bearer access to `/v1/coordinator/cases...` for services. Not limited to facilities; names may not start with `web:` |
-| `SETUHAUL_WEBHOOK_SECRET` | HMAC key of the signed driver and GPS channel (not Telegram) |
+| `SETUHAUL_WEBHOOK_SECRET` | HMAC key of the signed driver and GPS channel (not Telegram); when unset, that channel refuses every request (401) |
 
 ### Database
 
