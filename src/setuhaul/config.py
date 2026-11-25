@@ -72,6 +72,16 @@ class Settings:
     gps_reoffer_gain_minutes: int = 30
 
 
+def sample_database_problem(path: Path) -> str | None:
+    """Why ``path`` must not be used as a live database, or None. The demo and tests only copy the sample, so they never ask."""
+    seed = REPO_ROOT / "data" / "setuhaul.sqlite3"
+    # samefile also catches another spelling of the same file (letter case on Windows, a link).
+    if path.resolve() != seed.resolve() and not (path.exists() and seed.exists() and path.samefile(seed)):
+        return None
+    return ("SETUHAUL_DB_PATH is not set to a working copy: this would use the sample database data/setuhaul.sqlite3, "
+            "which must not change. Make a working copy and set SETUHAUL_DB_PATH to it (see README, 'Run the service').")
+
+
 def load_settings() -> Settings:
     # Database location from the environment, with a default under the repo's data/ folder.
     raw = os.environ.get("SETUHAUL_DB_PATH", "data/setuhaul.sqlite3")

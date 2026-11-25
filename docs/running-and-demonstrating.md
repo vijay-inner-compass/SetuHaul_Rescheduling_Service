@@ -350,7 +350,7 @@ Below, `<base>` is the public origin of your service, for example `https://haul.
 
 | Variable | Effect |
 |---|---|
-| `SETUHAUL_DB_PATH` | the migrated working database (also used by `set_admin_password.py`) |
+| `SETUHAUL_DB_PATH` | the migrated working database (also used by `set_admin_password.py`). Unset, or pointing at the sample `data/setuhaul.sqlite3`, the server and that script refuse to run |
 | `SETUHAUL_REDIS_URL` | also holds the single-use sign-in state; if Redis is down the sign-in callback answers 503 `STATE_STORE_UNAVAILABLE` |
 | `SETUHAUL_GOOGLE_CLIENT_ID`, `SETUHAUL_GOOGLE_CLIENT_SECRET` | Google sign-in; without both, `/auth/login` answers 503 `GOOGLE_NOT_CONFIGURED` |
 | `SETUHAUL_SESSION_SECRET` | signs the sign-in state cookie; at least 32 bytes, otherwise Google sign-in stays off (a warning is logged) |

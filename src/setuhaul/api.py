@@ -79,7 +79,7 @@ from setuhaul.booking import make_hold_checker
 from setuhaul.clock import Clock, SystemClock
 
 # Settings.
-from setuhaul.config import load_settings
+from setuhaul.config import load_settings, sample_database_problem
 
 # The conversation workflow.
 from setuhaul.conversation import (
@@ -852,6 +852,10 @@ def create_app_from_env() -> FastAPI:
     """``uvicorn --factory setuhaul.api:create_app_from_env``. Secrets come from the environment only."""
     # Central settings.
     s = load_settings()
+    # Stop before anything opens the sample database: it is the pristine source that working copies are made from.
+    problem = sample_database_problem(s.db_path)
+    if problem:
+        raise SystemExit(problem)
     # Coordinator tokens as a JSON map in an environment variable.
     tokens = json.loads(os.environ.get("SETUHAUL_COORDINATOR_TOKENS", "{}"))
     from setuhaul.model_gateway import build_gateway, load_model_policy
