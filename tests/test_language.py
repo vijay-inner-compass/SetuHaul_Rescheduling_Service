@@ -122,12 +122,8 @@ def test_hindi_conversation_end_to_end(chat: Chat) -> None:
     r1 = chat.say("मेरा ट्रक 60 मिनट लेट है, शिपमेंट SHP1006", [
         tc("search_slot_options", shipment_id="SHP1006", report=LATE_60),
         lambda m: say_text("ये विकल्प हैं (अभी कोई होल्ड नहीं है): " + options_text(m))])
-    assert r1.language == "hi" and r1.text.startswith("ये स्लॉट उपलब्ध हैं। अभी कुछ भी होल्ड नहीं है:\n1. डॉक ")
-    r2 = chat.say("पहला विकल्प ठीक है", [
-        tc_dyn("request_hold", lambda m: {"option_set_id": facts_from(m)["latest_option_set_id"], "rank": 1,
-                                          "driver_quote": "पहला विकल्प"}), say_text("ठीक है")])
-    assert r2.text == "मैंने आपके लिए 04 Aug 2026 को डॉक D2 पर 12:00-13:00 का स्लॉट 09:38 तक होल्ड किया है। " \
-                      "इसे कन्फर्म करने के लिए जवाब दें, या कोई और विकल्प बताइए।"
+    assert r1.language == "hi" and r1.text.startswith("मैंने आपके लिए SetuHaul Jaipur Distribution Centre में 04 Aug 2026 को डॉक D2 पर 12:00-13:00")
+    assert "अभी बुक नहीं हुआ है" in r1.text and chat.held() == 1
     r3 = chat.say("कन्फर्म करें", [
         tc_dyn("confirm_reschedule", lambda m: {"hold_appointment_id": facts_from(m)["live_hold"]["appointment_id"],
                                                 "driver_quote": "कन्फर्म करें"}), say_text("हो गया")])
@@ -144,11 +140,8 @@ def test_hinglish_conversation_with_clarification_then_options(chat: Chat) -> No
     r2 = chat.say("phir 45 minute ka drive hai", [
         tc("search_slot_options", shipment_id="SHP1006", report={"kind": "repair", "minutes": 90, "travel_minutes": 45}),
         lambda m: say_text("Ye options hain (abhi koi hold nahi hai): " + options_text(m))])
-    assert r2.language == "hinglish" and chat.held() == 0
-    r3 = chat.say("pehla option theek hai", [
-        tc_dyn("request_hold", lambda m: {"option_set_id": facts_from(m)["latest_option_set_id"], "rank": 1,
-                                          "driver_quote": "pehla option"}), say_text("ok")])
-    assert r3.text.startswith("Maine aapke liye 04 Aug 2026 ko dock") and "tak hold kiya hai" in r3.text
+    assert r2.language == "hinglish" and chat.held() == 1
+    assert r2.text.startswith("Maine aapke liye SetuHaul Jaipur Distribution Centre mein 04 Aug 2026 ko dock") and "Yes likhein" in r2.text
 
 
 def test_hinglish_hold_expiry_notice_is_in_hinglish(chat: Chat) -> None:

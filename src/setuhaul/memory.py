@@ -97,6 +97,8 @@ class ConversationState(BaseModel):
     active_shipment_ids: tuple[str, ...] = ()
     # The most recent menu shown; "take option 1" refers to this one.
     latest_option_set_id: str | None = None
+    # Slots already held for this driver in the current search, so declining never offers one twice.
+    offered_slot_ids: tuple[str, ...] = ()
     # The live hold, if any.
     hold: HoldRef | None = None
     # Events the driver has not been told about yet.

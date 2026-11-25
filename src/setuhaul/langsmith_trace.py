@@ -1,6 +1,7 @@
 """Opt-in LangSmith tracing of the LangGraph loop, with redaction on the way out.
 
-Off by default and off in tests, scripts and load runs. It switches on only when BOTH are set:
+Off by default and off in tests, scripts and load runs. It switches on only when ALL THREE are set:
+    SETUHAUL_LANGSMITH_ENABLED=true  (the on/off switch; false when not set)
     SETUHAUL_LANGSMITH=approved      (the owner's explicit approval, decision Q9 / D13)
     LANGSMITH_API_KEY=<key>          (from the environment or the git-ignored .env, never the repository)
 Optional: LANGSMITH_PROJECT (default "setuhaul"), LANGSMITH_ENDPOINT (for example the EU endpoint),
@@ -16,11 +17,17 @@ from __future__ import annotations
 # json round-trips values into plain data before scrubbing.
 import json
 
+# logging: repeated upload failures from the LangSmith client are collapsed.
+import logging
+
 # os reads the environment.
 import os
 
 # re finds secrets, phone numbers and emails.
 import re
+
+# A monotonic clock spaces out the repeated upload warnings.
+import time
 
 # Typing helpers.
 from collections.abc import Callable, Mapping
@@ -31,6 +38,11 @@ from dataclasses import dataclass
 # Typing helper.
 from typing import Any
 
+# The on/off switch. Anything but one of these values means off.
+ENABLED_ENV = "SETUHAUL_LANGSMITH_ENABLED"
+_ON = frozenset({"true", "1", "yes", "on"})
+# How often one kind of upload failure may be logged again.
+_QUIET_SECONDS = 600.0
 # The environment variable the owner must set to approve tracing.
 APPROVAL_ENV = "SETUHAUL_LANGSMITH"
 # The only value that counts as approval.
@@ -128,10 +140,32 @@ class TracingStatus:
     hide_text: bool = False
 
 
-# Decide whether tracing is on. It needs BOTH the owner's approval and an API key.
+class _UploadFailureFilter(logging.Filter):
+    """The client retries in the background and warns for every failed batch (a rate limit does that for hours)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._last: float | None = None
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        # Everything that is not an upload failure is logged as usual.
+        if "Failed to send" not in message and "Rate limit" not in message:
+            return True
+        now = time.monotonic()
+        if self._last is not None and now - self._last < _QUIET_SECONDS:
+            return False
+        self._last = now
+        return True
+
+
+# Decide whether tracing is on. It needs the switch, the owner's approval and an API key.
 def tracing_status(env: Mapping[str, str] | None = None) -> TracingStatus:
     # Use the real environment unless a test supplies one.
     e = os.environ if env is None else env
+    # The switch is off unless set: nothing is sent, whatever else is configured.
+    if e.get(ENABLED_ENV, "").strip().lower() not in _ON:
+        return TracingStatus(False, f"switched off ({ENABLED_ENV}=true is not set)")
     # No approval: off, whatever else is set.
     if e.get(APPROVAL_ENV, "").strip().lower() != APPROVED:
         return TracingStatus(False, f"not opted in ({APPROVAL_ENV}=approved is not set)")
@@ -156,6 +190,10 @@ def build_tracer(env: Mapping[str, str] | None = None, client_factory: Callable[
     if not status.enabled:
         # No tracer.
         return None
+    # One filter for the process: a rate limit or outage is reported once, not for every batch.
+    log = logging.getLogger("langsmith.client")
+    if not any(isinstance(f, _UploadFailureFilter) for f in log.filters):
+        log.addFilter(_UploadFailureFilter())
     try:
         # Imported only when tracing is actually used.
         from langchain_core.tracers.langchain import LangChainTracer

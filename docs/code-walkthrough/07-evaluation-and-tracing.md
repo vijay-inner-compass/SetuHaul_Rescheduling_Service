@@ -40,7 +40,7 @@ database invariants. It never calls a live model. `python scripts/replay_traces.
 
 ## LangSmith (`langsmith_trace.py`)
 
-Off by default. It switches on only when **both** `SETUHAUL_LANGSMITH=approved` and `LANGSMITH_API_KEY` are set. Global LangChain
+Off by default. It switches on only when **all of** `SETUHAUL_LANGSMITH_ENABLED=true` (default false), `SETUHAUL_LANGSMITH=approved` and `LANGSMITH_API_KEY` are set. Global LangChain
 tracing is forced off on every run; when enabled, an explicit tracer is attached whose client **scrubs inputs, outputs and
 metadata** before anything leaves the machine. `SETUHAUL_LANGSMITH_HIDE_TEXT=1` replaces all message text with a length marker.
 A tracing failure never breaks a turn.

@@ -9,6 +9,8 @@ if it claims a hold or confirmation the database does not back.
 # Lazy annotations.
 from __future__ import annotations
 
+import contextlib
+
 # re finds clock times in model text for the output guard.
 import re
 
@@ -25,6 +27,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 # Reads facts of committed holds and confirmations.
+from setuhaul import facility_change
 from setuhaul.booking import confirmed_appointment_facts, get_hold
 
 # Injectable clock.
@@ -145,7 +148,14 @@ def handle_message(
         # Run the turn. Database failures and service outages are caught here and turned into a safe reply.
         try:
             # The normal path.
+            # An approved move that can no longer be booked goes back before the message is read.
+            if facility_change.settle(services.conn, clock, trusted.driver.driver_id):
+                services.memory.invalidate(trusted.driver.driver_id, trusted.thread_id)
             reply = _handle(message, trusted, clock, services, rctx)
+            # And again afterwards: this message may have declined the last slot on offer. The reply already stands.
+            with contextlib.suppress(sqlite3.Error):
+                if facility_change.settle(services.conn, clock, trusted.driver.driver_id):
+                    services.memory.invalidate(trusted.driver.driver_id, trusted.thread_id)
         # A failing database or service: reply that nothing can be promised, and record a hand-off.
         except (sqlite3.Error, ServiceUnavailable) as exc:
             # Mark the span with the reason.
@@ -227,6 +237,9 @@ def _facts(ctx: ConversationContext, services: ConversationServices, clock: Cloc
         "selected_shipment_id": state.selected_shipment_id,
         "active_shipment_ids": list(state.active_shipment_ids),
         "latest_option_set_id": state.latest_option_set_id,
+        # The facilities a driver can ask to move to (ids and names only).
+        "other_facilities": {r["facility_id"]: r["facility_name"] for r in services.conn.execute(
+            "select facility_id, facility_name from facilities where active_flag=1 order by facility_id")},
         "system_already_told_driver_hold_expired": any(e.type == "HOLD_EXPIRED" for e in ctx.events),
         "note": "If latest_option_set_id is set and the driver is returning, call compare_option_set before re-offering it.",
     }
@@ -368,10 +381,17 @@ def _finalize(
         parts.append(say("cancelled", lang, ref=turn.cancelled_appointment_id))
     # A hold was placed: slot and expiry from the hold.
     elif turn.hold:
-        parts.append(say("hold_placed", lang, **{k: v for k, v in turn.hold.items() if k != "appointment_id"}))
+        parts.append(say("hold_placed", lang, **{k: v for k, v in turn.hold.items() if k not in ("appointment_id", "status", "note")}))
+        # GPS disagreed with the driver's report when this slot was searched: say so in the system's own wording.
+        if turn.gps_discrepancy_minutes is not None:
+            parts.append(say("gps_note", lang, minutes=str(turn.gps_discrepancy_minutes)))
     # A hold was released.
     elif turn.released:
         parts.append(say("hold_released", lang))
+    # A facility change was asked for: worded from the stored request.
+    elif turn.facility_change:
+        key, origin, to = turn.facility_change
+        parts.append(say(key, lang, origin=origin, to=to))
     # A partner-warehouse request was made: worded from the stored request, never from the model.
     elif turn.partner_shipment_id:
         partner_text = render_partner_status(conn, turn.partner_shipment_id, lang)
@@ -402,20 +422,6 @@ def _finalize(
     elif not parts and turn.position_changed:
         # The truck moved too far away to reach the slot: said by the system, from the database result, not by the model.
         parts.append(say("position_changed", lang))
-    elif not parts and turn.shown_options:
-        # a menu is a stored fact too: the numbered list comes from the saved option set, never from the model's wording,
-        # so "option 1" in the driver's reply always means the line the driver saw
-        # How many lines the menu has.
-        n = len(turn.shown_options)
-        # Heading: says nothing is held.
-        parts.append(say("options_intro", lang))
-        # One numbered line per stored option.
-        parts.extend(say("options_line", lang, n=str(i), **o) for i, o in enumerate(turn.shown_options, 1))
-        # Closing line: which numbers can be chosen and until when.
-        parts.append(say("options_outro", lang, choices=", ".join(str(i) for i in range(1, n + 1)), until=turn.options_valid_until))
-        # GPS disagreed with the driver's report: say so in the system's own wording (only then, so other replies are unchanged).
-        if turn.gps_discrepancy_minutes is not None:
-            parts.append(say("gps_note", lang, minutes=str(turn.gps_discrepancy_minutes)))
     elif parts:
         pass  # something was committed: the system's wording stands alone, the model's text is not used
     # Nothing committed and no hand-off: use the model's text, but only after the output guard.

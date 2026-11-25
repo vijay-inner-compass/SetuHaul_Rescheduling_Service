@@ -57,6 +57,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 # Runs blocking database code in a worker thread.
 from starlette.concurrency import run_in_threadpool
 
+from setuhaul import facility_change
+
 # Web sign-in: the role guard, sessions and the seeded demo user.
 from setuhaul.auth import audit, local_admin, sessions, users
 from setuhaul.auth.authz import AuthzError, require_role
@@ -751,6 +753,7 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
                     # Expire holds whose time has passed.
                     swept = expire_due_holds(conn, demo.clock).expired
                     expire_partner_requests(conn, demo.clock)
+                    facility_change.settle(conn, demo.clock)
                 finally:
                     conn.close()
             return {"clock": clock_info(), "swept": swept}

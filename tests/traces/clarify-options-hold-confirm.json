@@ -111,7 +111,18 @@
               "result": {
                 "status": "OK",
                 "option_set_id": "$OPT1",
-                "held": false,
+                "held": true,
+                "slot": {
+                  "status": "HELD",
+                  "appointment_id": "$HOLD1",
+                  "start": "12:00",
+                  "end": "13:00",
+                  "dock": "D2",
+                  "date": "04 Aug 2026",
+                  "facility": "SetuHaul Jaipur Distribution Centre",
+                  "until": "09:38",
+                  "note": "Tell the driver it is held until that time and ask them to confirm."
+                },
                 "options": [
                   {
                     "rank": 1,
@@ -119,6 +130,7 @@
                     "end": "13:00",
                     "dock": "D2",
                     "date": "04 Aug 2026",
+                    "facility": "SetuHaul Jaipur Distribution Centre",
                     "wait_minutes": 10,
                     "warnings": []
                   },
@@ -128,6 +140,7 @@
                     "end": "13:00",
                     "dock": "D4",
                     "date": "04 Aug 2026",
+                    "facility": "SetuHaul Jaipur Distribution Centre",
                     "wait_minutes": 10,
                     "warnings": []
                   },
@@ -137,11 +150,13 @@
                     "end": "14:00",
                     "dock": "D1",
                     "date": "04 Aug 2026",
+                    "facility": "SetuHaul Jaipur Distribution Centre",
                     "wait_minutes": 70,
                     "warnings": []
                   }
                 ],
-                "valid_until": "09:50"
+                "valid_until": "09:50",
+                "note": "One slot is held, not booked. The system words it; the driver replies yes or no."
               },
               "executed": true,
               "error": null
@@ -163,7 +178,7 @@
           "tool_events": []
         }
       ],
-      "reply_text": "These slots are available. Nothing is held yet:\n1. Dock D2, 12:00-13:00 on 04 Aug 2026\n2. Dock D4, 12:00-13:00 on 04 Aug 2026\n3. Dock D1, 13:00-14:00 on 04 Aug 2026\nReply with the number (1, 2, 3) to hold one. These options are valid until 09:50.",
+      "reply_text": "I am holding 12:00-13:00 at dock D2 on 04 Aug 2026, SetuHaul Jaipur Distribution Centre, for you until 09:38. It is not booked yet. Reply Yes to confirm, or No for the next slot.",
       "reply_status": "REPLIED",
       "escalation_reason": null,
       "handoff_context_keys": [],
@@ -171,86 +186,13 @@
         "live_hold": false,
         "has_option_set": false
       },
-      "verified_hold": false,
+      "verified_hold": true,
       "verified_confirmed": false,
       "loop_status": "DONE"
     },
     {
       "turn": 3,
       "message_id": "MSG-DRV006-3",
-      "advance_s": 0,
-      "driver_text": "I'll take the first option",
-      "rounds": [
-        {
-          "offered_tools": [
-            "list_my_shipments",
-            "get_shipment_status",
-            "compute_eta",
-            "search_slot_options",
-            "compare_option_set",
-            "offer_original_slot",
-            "request_hold",
-            "cancel_appointment",
-            "escalate_to_operations"
-          ],
-          "assistant_text": "",
-          "model_error": null,
-          "tool_events": [
-            {
-              "call_id": "t1",
-              "name": "request_hold",
-              "arguments": {
-                "option_set_id": "$OPT1",
-                "rank": 1,
-                "driver_quote": "the first option"
-              },
-              "result": {
-                "status": "HELD",
-                "appointment_id": "$HOLD1",
-                "start": "12:00",
-                "end": "13:00",
-                "dock": "D2",
-                "date": "04 Aug 2026",
-                "until": "09:38",
-                "note": "Tell the driver it is held until that time and ask them to confirm."
-              },
-              "executed": true,
-              "error": null
-            }
-          ]
-        },
-        {
-          "offered_tools": [
-            "list_my_shipments",
-            "get_shipment_status",
-            "compute_eta",
-            "search_slot_options",
-            "compare_option_set",
-            "offer_original_slot",
-            "request_hold",
-            "cancel_appointment",
-            "escalate_to_operations"
-          ],
-          "assistant_text": "ok",
-          "model_error": null,
-          "tool_events": []
-        }
-      ],
-      "reply_text": "I am holding 12:00-13:00 at dock D2 on 04 Aug 2026 for you until 09:38. Reply to confirm this slot, or tell me if you would like another option.",
-      "reply_status": "REPLIED",
-      "escalation_reason": null,
-      "handoff_context_keys": [],
-      "facts": {
-        "live_hold": false,
-        "has_option_set": true
-      },
-      "verified_hold": true,
-      "verified_confirmed": false,
-      "loop_status": "DONE"
-    },
-    {
-      "turn": 4,
-      "message_id": "MSG-DRV006-4",
       "advance_s": 0,
       "driver_text": "yes, confirm it",
       "rounds": [
@@ -264,6 +206,7 @@
             "offer_original_slot",
             "request_hold",
             "confirm_reschedule",
+            "decline_held_slot",
             "release_pending_change",
             "cancel_appointment",
             "escalate_to_operations"
@@ -297,6 +240,7 @@
             "offer_original_slot",
             "request_hold",
             "confirm_reschedule",
+            "decline_held_slot",
             "release_pending_change",
             "cancel_appointment",
             "escalate_to_operations"
@@ -306,7 +250,7 @@
           "tool_events": []
         }
       ],
-      "reply_text": "Your appointment is confirmed: dock D2, 12:00-13:00 on 04 Aug 2026. Reference $HOLD1.",
+      "reply_text": "Your appointment is confirmed: dock D2, 12:00-13:00 on 04 Aug 2026. Reference $HOLD1. Warehouse: SetuHaul Jaipur Distribution Centre.",
       "reply_status": "REPLIED",
       "escalation_reason": null,
       "handoff_context_keys": [],

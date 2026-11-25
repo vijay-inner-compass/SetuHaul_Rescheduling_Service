@@ -13,6 +13,8 @@ The audit and all Phase 1 code are read-only. The table below names what the pro
 | `operational_messages` | not written directly; downstream notices go through the new outbox | 6 |
 
 ## Supplied tables that are read-only
+One exception (decision D93): `shipments.destination_facility_id` may be updated, only when a facility change request is approved; the original is kept in `facility_change_requests` (migration 013). No other shipment column is written.
+
 `shipments`, `vehicle_types`, `facilities`, `docks`, `dock_status_events`, `appointment_slots`, `facility_rules`, `facility_contacts`, `facility_checkins`. Slot blocking stays an operations action.
 
 ## New extension tables (named separately)

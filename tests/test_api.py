@@ -121,7 +121,7 @@ def test_a_message_gets_a_structured_reply_with_a_request_id(env) -> None:  # ty
     r = post(client, msg("my truck is 60 minutes late"))
     body = r.json()
     assert r.status_code == 200 and set(body) == {"status", "reply", "language", "reason_code", "case_id", "duplicate", "request_id"}
-    assert body["status"] == "REPLIED" and body["duplicate"] is False and body["reply"].startswith("These slots are available. Nothing is held yet:\n1. Dock ")
+    assert body["status"] == "REPLIED" and body["duplicate"] is False and body["reply"].startswith("I am holding ")
     assert r.headers["x-request-id"] == body["request_id"] and calls.n == 1
 
 

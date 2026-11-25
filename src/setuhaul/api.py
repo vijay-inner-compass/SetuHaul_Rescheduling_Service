@@ -794,6 +794,10 @@ def create_app(deps: AppDeps) -> FastAPI:
     from setuhaul.auth.pages import register_pages
 
     register_pages(app, deps)
+    # Facility change requests: list, approve, reject.
+    from setuhaul.auth.facility_routes import register_facility_routes
+
+    register_facility_routes(app, deps)
     # The Telegram driver channel reuses the driver pipeline above.
     from setuhaul.auth.telegram_routes import register_telegram_routes
 

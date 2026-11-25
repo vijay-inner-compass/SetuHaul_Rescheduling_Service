@@ -544,6 +544,11 @@ def confirm_reschedule(conn: sqlite3.Connection, cmd: ConfirmCommand, clock: Clo
 
             # Re-judge the held slot against the facility as it is right now, inside the lock.
             opt = get_option_set(conn, cmd.driver_id, cmd.thread_id, cmd.shipment_id, row["option_set_id"])
+            # The load was moved to another facility after this slot was held: booking it would send the truck to the wrong site.
+            bound_for = conn.execute("select destination_facility_id from shipments where shipment_id=?", (cmd.shipment_id,)).fetchone()[0]
+            if bound_for != opt.facility_id:
+                release_hold_in_txn(conn, cmd.hold_appointment_id, cmd.shipment_id, "SYSTEM", now, "SYSTEM", None, "DESTINATION_CHANGED")
+                return _store_result(conn, cmd, _result("FEASIBILITY_CHANGED", reason_codes=("DESTINATION_CHANGED",)), now)
             state = build_facility_state(conn, opt.facility_id, now)
             # Judged from where the truck is now: if it moved so far away that it cannot reach the slot, the hold is released.
             floor = gps_arrival_floor(conn, cmd.shipment_id, clock, load_settings())
@@ -631,8 +636,9 @@ def confirmed_appointment_facts(conn: sqlite3.Connection, appointment_id: str) -
     """Facts of a committed CONFIRMED appointment. Raises ValueError for anything else."""
     # Read the facts back from the database, so wording shown to the driver comes from committed state only.
     r = conn.execute(
-        "select a.appointment_id, a.appointment_status, s.slot_start_ts, s.slot_end_ts, d.dock_code "
+        "select a.appointment_id, a.appointment_status, s.slot_start_ts, s.slot_end_ts, d.dock_code, f.facility_name "
         "from appointments a join appointment_slots s using(slot_id) join docks d on d.dock_id = s.dock_id "
+        "join facilities f on f.facility_id = d.facility_id "
         "where a.appointment_id=?", (appointment_id,),
     ).fetchone()
     if r is None:
@@ -644,7 +650,7 @@ def confirmed_appointment_facts(conn: sqlite3.Connection, appointment_id: str) -
     end = parse_operational_timestamp(r["slot_end_ts"])
     # Times as "HH:MM", date as "04 Aug 2026", plus the dock and the appointment reference.
     return {"dock": r["dock_code"], "start": f"{start:%H:%M}", "end": f"{end:%H:%M}",
-            "date": f"{start:%d %b %Y}", "ref": r["appointment_id"]}
+            "date": f"{start:%d %b %Y}", "ref": r["appointment_id"], "facility": r["facility_name"]}
 
 
 def render_confirmation_text(conn: sqlite3.Connection, appointment_id: str) -> str:

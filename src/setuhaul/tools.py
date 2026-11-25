@@ -10,6 +10,7 @@ from __future__ import annotations
 
 # json encodes tool results for the model.
 import json
+import re
 
 # sqlite3 for the Connection type.
 import sqlite3
@@ -29,6 +30,8 @@ from typing import Any, Literal
 # Pydantic validates every tool's arguments.
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from setuhaul import facility_change
+
 # Ranks feasible slots into a menu.
 from setuhaul.allocation import rank_options
 
@@ -39,6 +42,7 @@ from setuhaul.booking import (
     acquire_hold,
     confirm_reschedule,
     get_hold,
+    release_hold,
 )
 
 # Release, cancel and return-to-original operations.
@@ -84,7 +88,12 @@ from setuhaul.model_gateway import ToolCall, ToolResult, tool_schema
 from setuhaul.observability import InMemoryExporter, RequestContext, start_span
 
 # Stored menus.
-from setuhaul.option_history import get_option_set, reconcile_option_set, record_option_set
+from setuhaul.option_history import (
+    context_now,
+    get_option_set,
+    reconcile_option_set,
+    record_option_set,
+)
 from setuhaul.partner_booking import request_slot
 
 # ETA and constraint contracts.
@@ -155,6 +164,18 @@ class HoldArgs(_Args):
     driver_quote: str = Field(min_length=1, description="The driver's own words, copied from their current message.")
 
 
+# A write that needs only the driver's own words.
+class QuoteArgs(_Args):
+    driver_quote: str = Field(min_length=1)
+
+
+# Arguments for request_facility_change.
+class FacilityChangeArgs(_Args):
+    shipment_id: str
+    facility_id: str
+    driver_quote: str = Field(min_length=1)
+
+
 # Arguments for confirm_reschedule.
 class ConfirmArgs(_Args):
     hold_appointment_id: str
@@ -203,9 +224,6 @@ class TurnState:
     status_read_confirmed: bool = False
     status_confirmed_times: set[str] = field(default_factory=set)  # HH:MM values of confirmed appointments read this turn
     # True if a menu was recorded this turn.
-    options_shown: bool = False
-    shown_options: list[dict[str, str]] = field(default_factory=list)  # the latest option set shown this turn, as stored (rank order)
-    options_valid_until: str = ""
     # Minutes by which the driver's ETA and the GPS ETA disagree, when a search found them far apart (else None).
     gps_discrepancy_minutes: int | None = None
     # True when a hold or confirmation was refused because the truck can no longer reach the slot from its current position.
@@ -213,6 +231,8 @@ class TurnState:
     committed: list[str] = field(default_factory=list)  # names of write tools that changed state
     # Set when a partner-warehouse request was made (or already open) this turn: the reply then states its stored state.
     partner_shipment_id: str | None = None
+    # A facility change asked for this turn: (message key, from name, to name), worded from stored rows.
+    facility_change: tuple[str, str, str] | None = None
 
 
 @dataclass
@@ -356,12 +376,13 @@ def _handoff(ctx: ToolContext, reason: str, shipment_id: str | None, summary: st
 def _slot_facts(conn: sqlite3.Connection, slot_id: str) -> dict[str, str]:
     # Look up the slot and its dock.
     r = conn.execute(
-        "select s.slot_start_ts, s.slot_end_ts, d.dock_code from appointment_slots s join docks d using(dock_id) "
-        "where s.slot_id=?", (slot_id,)).fetchone()
+        "select s.slot_start_ts, s.slot_end_ts, d.dock_code, f.facility_name from appointment_slots s join docks d using(dock_id) "
+        "join facilities f on f.facility_id=d.facility_id where s.slot_id=?", (slot_id,)).fetchone()
     # Parse the stored times.
     start, end = parse_operational_timestamp(r["slot_start_ts"]), parse_operational_timestamp(r["slot_end_ts"])
     # Times as HH:MM and the date as '04 Aug 2026'.
-    return {"start": f"{start:%H:%M}", "end": f"{end:%H:%M}", "dock": r["dock_code"], "date": f"{start:%d %b %Y}"}
+    return {"start": f"{start:%H:%M}", "end": f"{end:%H:%M}", "dock": r["dock_code"], "date": f"{start:%d %b %Y}",
+            "facility": r["facility_name"]}
 
 
 # Turn a system error or lock timeout into ServiceUnavailable so nothing is promised.
@@ -497,15 +518,19 @@ def _search_slot_options(ctx: ToolContext, a: SearchArgs) -> dict[str, Any]:
     # Current state.
     mem = ctx.memory.load(ctx.driver_id, ctx.thread_id).state
     # Remember this menu as the latest, so 'option 1' refers to it.
-    ctx.memory.save_structured_state(ctx.driver_id, ctx.thread_id, mem.model_copy(update={"latest_option_set_id": shown.option_set_id}))
-    # Tell the reply renderer a menu was shown this turn.
-    ctx.turn.options_shown = True
-    ctx.turn.shown_options = [_slot_facts(ctx.conn, i.slot_id) for i in shown.items]
-    ctx.turn.options_valid_until = _hhmm(shown.expires_at)
-    return {"status": "OK", "option_set_id": shown.option_set_id, "held": False,
+    ctx.memory.save_structured_state(ctx.driver_id, ctx.thread_id,
+                                     mem.model_copy(update={"latest_option_set_id": shown.option_set_id, "offered_slot_ids": ()}))
+    # Hold the first of them straight away.
+    held = _auto_hold(ctx, shown.option_set_id, [i.rank for i in shown.items])
+    # Every line was taken in the meantime: a person has to help, and nothing is promised.
+    if held is None:
+        _handoff(ctx, "NO_SLOT", a.shipment_id, f"Offered slots were taken before one could be held.{gps_note}", **summary)
+        return {"status": "NO_SLOT", "options": [], "note": "Do not promise any slot; operations will take over."}
+    return {"status": "OK", "option_set_id": shown.option_set_id, "held": True, "slot": held,
             "options": [{"rank": i.rank, **_slot_facts(ctx.conn, i.slot_id), "wait_minutes": i.decision.wait_minutes,
                          "warnings": list(i.decision.warnings)} for i in shown.items],
-            "valid_until": _hhmm(shown.expires_at), **gps_facts}
+            "valid_until": _hhmm(shown.expires_at),
+            "note": "One slot is held, not booked. The system words it; the driver replies yes or no.", **gps_facts}
 
 
 # Read tool: what changed in a previously shown menu.
@@ -543,25 +568,19 @@ def _offer_original_slot(ctx: ToolContext, a: ShipmentArgs) -> dict[str, Any]:
         mem = ctx.memory.load(ctx.driver_id, ctx.thread_id).state
         ctx.memory.save_structured_state(ctx.driver_id, ctx.thread_id,
                                          mem.model_copy(update={"latest_option_set_id": out.option_set.option_set_id}))
-        ctx.turn.options_shown = True
-        ctx.turn.shown_options = [_slot_facts(ctx.conn, i.slot_id) for i in out.option_set.items]
-        ctx.turn.options_valid_until = _hhmm(out.option_set.expires_at)
-    return {"status": out.status, "reason_codes": list(out.reason_codes), "held": False,
+    held = _auto_hold(ctx, out.option_set.option_set_id, [i.rank for i in out.option_set.items]) if out.option_set else None
+    return {"status": out.status, "reason_codes": list(out.reason_codes), "held": held is not None, "slot": held,
             "option_set_id": out.option_set.option_set_id if out.option_set else None,
             "options": [{"rank": i.rank, **_slot_facts(ctx.conn, i.slot_id)} for i in out.option_set.items] if out.option_set else []}
 
 
 # ---- write tools (checkpointed) -------------------------------------------------------------------------
-# WRITE tool: place a hold on a slot from the latest menu.
-def _request_hold(ctx: ToolContext, a: HoldArgs) -> dict[str, Any]:
-    state = _state(ctx)
-    # Only the most recently shown menu can be held.
-    if a.option_set_id != state.latest_option_set_id:
-        return {"status": "NOT_LATEST_OPTION_SET", "note": "Only the most recently shown options can be held."}
-    row = ctx.conn.execute("select shipment_id from option_sets where option_set_id=?", (a.option_set_id,)).fetchone()
+# Hold one line of a stored option set. Shared by the hold tool and the automatic hold after a search.
+def _hold_rank(ctx: ToolContext, option_set_id: str, rank: int) -> dict[str, Any]:
+    row = ctx.conn.execute("select shipment_id from option_sets where option_set_id=?", (option_set_id,)).fetchone()
     # The transactional hold (first commit wins).
     # supersede: picking another option while holding one switches the hold (the old one is released only if the new one succeeds).
-    r = acquire_hold(ctx.conn, ctx.driver_id, ctx.thread_id, row["shipment_id"], a.option_set_id, a.rank, ctx.clock, supersede=True)
+    r = acquire_hold(ctx.conn, ctx.driver_id, ctx.thread_id, row["shipment_id"], option_set_id, rank, ctx.clock, supersede=True)
     # A system error must not be reported as a normal answer.
     _check_system(r.status, r.outcome)
     # Not held: say so and let the model offer to search again.
@@ -583,6 +602,78 @@ def _request_hold(ctx: ToolContext, a: HoldArgs) -> dict[str, Any]:
     ctx.turn.committed.append("request_hold")
     return {"status": "HELD", "appointment_id": r.appointment_id, **facts,
             "note": "Tell the driver it is held until that time and ask them to confirm."}
+
+
+# WRITE tool: place a hold on a slot from the latest menu.
+def _request_hold(ctx: ToolContext, a: HoldArgs) -> dict[str, Any]:
+    # Only the most recently shown menu can be held.
+    if a.option_set_id != _state(ctx).latest_option_set_id:
+        return {"status": "NOT_LATEST_OPTION_SET", "note": "Only the most recently shown options can be held."}
+    return _hold_rank(ctx, a.option_set_id, a.rank)
+
+
+# After a search: hold the first line that can be held, in rank order, so the driver only has to say yes or no.
+# Python picks; the model never does. Nothing is booked until the driver confirms in a later message.
+def _auto_hold(ctx: ToolContext, option_set_id: str, ranks: list[int]) -> dict[str, Any] | None:
+    for rank in ranks:
+        out = _hold_rank(ctx, option_set_id, rank)
+        if out["status"] == "HELD":
+            # A refusal on an earlier line is not news once a later one is held.
+            ctx.turn.position_changed = False
+            # The system has made this message's one state change.
+            ctx.turn.writes_done += 1
+            return out
+    return None
+
+
+# Words that mean agreement. A message carrying one is never read as declining, whatever else it says.
+_AGREE = re.compile(r"(?<!\w)(yes|yeah|ok(ay)?|confirm\w*|haan?|fine|sure|good|correct|th?eek|thik|chaleg[ai]|ac?cha|achha|"
+                    r"no\s+(problem|issue|worries)|हाँ|हां|कन्फर्म|ठीक|अच्छा|चलेगा)(?!\w)", re.IGNORECASE)
+
+
+def sounds_like_agreement(text: str) -> bool:
+    return _AGREE.search(text) is not None
+
+
+# WRITE tool: the driver says no to the held slot. Release it and hold the next one they have not been offered.
+def _decline_held_slot(ctx: ToolContext, a: QuoteArgs) -> dict[str, Any]:
+    if sounds_like_agreement(ctx.message_text):
+        return {"status": "AMBIGUOUS", "note": "The message also agrees. Ask the driver to reply Yes or No; nothing changed."}
+    hold = _state(ctx).hold
+    view = get_hold(ctx.conn, hold.appointment_id, ctx.clock) if hold else None
+    if view is None or view.driver_id != ctx.driver_id or view.thread_id != ctx.thread_id:
+        raise AuthError("FOREIGN_HOLD")
+    release_hold(ctx.conn, ctx.driver_id, ctx.thread_id, view.appointment_id, "DRIVER_CANCELLED", ctx.clock)
+    mem = ctx.memory.load(ctx.driver_id, ctx.thread_id).state
+    offered = tuple(dict.fromkeys((*mem.offered_slot_ids, view.slot_id)))
+    ctx.memory.save_structured_state(ctx.driver_id, ctx.thread_id, mem.model_copy(update={"hold": None, "offered_slot_ids": offered}))
+    latest = mem.latest_option_set_id
+    opt = get_option_set(ctx.conn, ctx.driver_id, ctx.thread_id, view.shipment_id, latest) if latest else None
+    # First the rest of the stored list.
+    if opt is not None:
+        for item in sorted(opt.items, key=lambda i: i.rank):
+            if item.slot_id not in offered:
+                out = _hold_rank(ctx, opt.option_set_id, item.rank)
+                if out["status"] == "HELD":
+                    return out
+        # Then search again with the same arrival, leaving out everything already offered.
+        now = ctx.clock.now()
+        fctx = context_now(opt, now)
+        state = build_facility_state(ctx.conn, fctx.facility_id, now)
+        result = search_feasible_slots(fctx, state)
+        fresh = tuple(d for d in result.feasible if d.slot_id not in offered) if result.status == "OK" else ()
+        if fresh:
+            shown = record_option_set(ctx.conn, fctx, ctx.thread_id, rank_options(fresh, limit=3), state, ctx.clock)
+            mem = ctx.memory.load(ctx.driver_id, ctx.thread_id).state
+            ctx.memory.save_structured_state(ctx.driver_id, ctx.thread_id,
+                                             mem.model_copy(update={"latest_option_set_id": shown.option_set_id}))
+            for item in shown.items:
+                out = _hold_rank(ctx, shown.option_set_id, item.rank)
+                if out["status"] == "HELD":
+                    return out
+    # Nothing left: a person helps, and the original booking stands.
+    _handoff(ctx, "NO_SLOT", view.shipment_id, "The driver declined every slot that could be offered.", offered=len(offered))
+    return {"status": "RELEASED", "note": "No other slot is available; operations will take over. The original booking is unchanged."}
 
 
 # WRITE tool: confirm a hold made in an EARLIER message.
@@ -638,6 +729,22 @@ def _cancel_appointment(ctx: ToolContext, a: ShipmentQuoteArgs) -> dict[str, Any
         _handoff(ctx, r.escalation_code or "POLICY_CONFLICT", a.shipment_id, "Cancellation needs a person.",
                  appointment_id=r.appointment_id)
     return {"status": r.status, "escalation": r.escalation_code, "note": "Nothing was cancelled unless status is CANCELLED."}
+
+
+# WRITE tool: ask to move this load to another facility. Only a request; the destination warehouse decides.
+def _request_facility_change(ctx: ToolContext, a: FacilityChangeArgs) -> dict[str, Any]:
+    authorize_shipment(ctx.conn, ctx.trusted, a.shipment_id)
+    r = facility_change.request_change(ctx.conn, ctx.clock, driver_id=ctx.driver_id, shipment_id=a.shipment_id, to_facility_id=a.facility_id)
+    if r.request_id is None:
+        ctx.turn.facility_change = ("change_refused", "", "")
+        return {"status": r.status, "note": "Nothing was requested."}
+    names = ctx.conn.execute(
+        "select f.facility_name, t.facility_name from facility_change_requests q join facilities f on f.facility_id=q.from_facility_id "
+        "join facilities t on t.facility_id=q.to_facility_id where q.request_id=?", (r.request_id,)).fetchone()
+    key = "change_requested" if r.status == "REQUESTED" else "change_pending"
+    ctx.turn.facility_change = (key, names[0], names[1])
+    ctx.turn.committed.append("request_facility_change")
+    return {"status": r.status, "request_id": r.request_id, "note": "Only a request. The system words the state."}
 
 
 # Tool: the model asks for a human for safety, regulated loads or genuine uncertainty.
@@ -743,6 +850,16 @@ REGISTRY: dict[str, ToolSpec] = {t.name: t for t in [
         returns="CONFIRMED (the system words the confirmation) or why not.",
         fails="APPROVAL_NOT_PRESENT, ONE_WRITE_PER_MESSAGE, FOREIGN_HOLD."),
         ConfirmArgs, _confirm_reschedule, write=True, available=_can_confirm),
+    ToolSpec("decline_held_slot", _JOB.format(
+        use="when the driver says no to the held slot, or asks for the next or another slot.",
+        dont="when the message agrees in any way, or to keep the original appointment (use release_pending_change).",
+        args="driver_quote.", returns="HELD with the next slot (the system words it), or RELEASED when none is left.",
+        fails="APPROVAL_NOT_PRESENT, FOREIGN_HOLD."), QuoteArgs, _decline_held_slot, write=True, available=_can_confirm),
+    ToolSpec("request_facility_change", _JOB.format(
+        use="ONLY when the driver asks to deliver to a different facility. facility_id is from the facts' other_facilities.",
+        dont="to pick a facility yourself, or to promise the move: the destination warehouse must approve.",
+        args="shipment_id, facility_id, driver_quote.", returns="REQUESTED, ALREADY_PENDING, or why not.",
+        fails="APPROVAL_NOT_PRESENT, FOREIGN_SHIPMENT."), FacilityChangeArgs, _request_facility_change, write=True),
     ToolSpec("release_pending_change", _JOB.format(
         use="when the driver says never mind / keep my original slot while a hold exists.",
         dont="to cancel a confirmed appointment.", args="shipment_id, driver_quote.",

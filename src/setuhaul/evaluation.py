@@ -86,7 +86,7 @@ from setuhaul.model_gateway import (
 # Version of the trace file format.
 SCHEMA_VERSION = 1
 # Tools that change state.
-WRITE_TOOLS = {"request_hold", "confirm_reschedule", "release_pending_change", "cancel_appointment"}
+WRITE_TOOLS = {"request_hold", "confirm_reschedule", "release_pending_change", "cancel_appointment", "decline_held_slot"}
 # Result statuses that mean a write really happened.
 COMMITTED = {"HELD", "CONFIRMED", "RELEASED", "CANCELLED"}
 # Error codes meaning a call was refused before it ran.
@@ -366,9 +366,15 @@ def eval_tool_order(trace: Trace) -> list[Finding]:
             # Remember when options were shown.
             if e.executed and e.name in ("search_slot_options", "offer_original_slot") and isinstance(e.result, dict) and e.result.get("option_set_id"):
                 searched = t.turn
+                # The system holds a slot itself after a search: that hold counts for the later confirmation.
+                if e.result.get("held") is True:
+                    held_turn = t.turn
             # A hold requires options to have been shown earlier.
             if e.executed and e.name == "request_hold" and isinstance(e.result, dict) and e.result.get("status") == "HELD":
                 out.append(Finding("tool_order", t.turn, searched is not None, "hold needs options shown first"))
+                held_turn = t.turn
+            # Declining holds the next slot: that hold counts for a later confirmation too.
+            if e.executed and e.name == "decline_held_slot" and isinstance(e.result, dict) and e.result.get("status") == "HELD":
                 held_turn = t.turn
             # A confirmation requires a hold from an EARLIER turn.
             if e.executed and e.name == "confirm_reschedule" and isinstance(e.result, dict) and e.result.get("status") == "CONFIRMED":

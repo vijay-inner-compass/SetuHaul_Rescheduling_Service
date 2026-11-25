@@ -17,11 +17,14 @@ SQLite is the system of record for the prototype.
 * [Demonstration guide](docs/demonstration-guide.md): what to run, what to type and what you should see.
 * [Scenario catalogue](docs/scenario-catalogue.md): edge cases and failure scenarios, each with the test that proves it.
 
+**How a slot is offered:** the service holds the first feasible slot and the driver replies Yes or No; a driver may ask to change
+facility, which the destination warehouse approves (see `docs/running-and-demonstrating.md`, section 11).
+
 ## Quick start (Windows PowerShell; Python 3.12)
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\python -m pip install -e ".[dev]"
-.\.venv\Scripts\python -m pytest -q          # 1158 tests
+.\.venv\Scripts\python -m pytest -q          # 1302 tests
 .\.venv\Scripts\python -m ruff check .
 .\.venv\Scripts\python -m mypy src
 ```
@@ -54,7 +57,7 @@ Coordinators can also use the CLI: `python -m setuhaul.coordinator --db data/wor
 
 Model configuration comes from the environment only: `SETUHAUL_MODEL_PROVIDER`, `SETUHAUL_MODEL_ID`, `SETUHAUL_MODEL_API_KEY`
 (`SETUHAUL_MODEL_PROVIDER` is `openai` or `anthropic`; optionally a git-ignored `.env`, see `.env.example`). With none set, every turn takes the safe "cannot check bookings right now"
-path and opens an escalation case. Optional LangSmith tracing is off unless `SETUHAUL_LANGSMITH=approved` and `LANGSMITH_API_KEY` are set (scrubbed first; see `.env.example`). Load-test-only switches (`SETUHAUL_USE_STUB_MODEL`, `fakeredis://`, `SETUHAUL_FAKE_NOW`) are not for production.
+path and opens an escalation case. Optional LangSmith tracing is off by default; it needs `SETUHAUL_LANGSMITH_ENABLED=true`, `SETUHAUL_LANGSMITH=approved` and `LANGSMITH_API_KEY` (scrubbed first; see `.env.example`). Load-test-only switches (`SETUHAUL_USE_STUB_MODEL`, `fakeredis://`, `SETUHAUL_FAKE_NOW`) are not for production.
 
 ## Partner warehouses by email
 For a load bound for a partner warehouse (a facility whose docks we do not control) the service emails the warehouse and books

@@ -154,31 +154,29 @@ T: dict[str, dict[str, str]] = {
         "hinglish": "Maine hold hata diya hai. Aapki original appointment waisi hi hai.",
     },
     # Told when a hold was placed: which slot, until when, and what to do next.
+    # A facility change is only ever a request until the destination warehouse approves it.
+    "change_requested": {
+        "en": "I have asked {to} to take this load. Your destination has not changed yet: it is still {origin} until they approve.",
+        "hi": "मैंने {to} से यह लोड लेने का अनुरोध किया है। आपकी मंज़िल अभी नहीं बदली है: उनकी मंज़ूरी तक {origin} ही है।",
+        "hinglish": "Maine {to} se yeh load lene ki request ki hai. Aapki destination abhi nahi badli hai: unki approval tak {origin} hi hai.",
+    },
+    "change_pending": {
+        "en": "A request to move to {to} is already waiting for approval. Your destination is still {origin}.",
+        "hi": "{to} में बदलने का अनुरोध पहले से मंज़ूरी का इंतज़ार कर रहा है। आपकी मंज़िल अभी {origin} ही है।",
+        "hinglish": "{to} mein badalne ki request pehle se approval ka wait kar rahi hai. Aapki destination abhi {origin} hi hai.",
+    },
+    "change_refused": {
+        "en": "That change cannot be requested for this load.",
+        "hi": "इस लोड के लिए यह बदलाव नहीं माँगा जा सकता।",
+        "hinglish": "Is load ke liye yeh change request nahi ho sakta.",
+    },
     "hold_placed": {
-        "en": "I am holding {start}-{end} at dock {dock} on {date} for you until {until}. "
-              "Reply to confirm this slot, or tell me if you would like another option.",
-        "hi": "मैंने आपके लिए {date} को डॉक {dock} पर {start}-{end} का स्लॉट {until} तक होल्ड किया है। "
-              "इसे कन्फर्म करने के लिए जवाब दें, या कोई और विकल्प बताइए।",
-        "hinglish": "Maine aapke liye {date} ko dock {dock} par {start}-{end} ka slot {until} tak hold kiya hai. "
-                    "Confirm karne ke liye reply karein, ya koi aur option bataiye.",
-    },
-    # First line of the numbered option menu (D65). It says plainly that nothing is held.
-    "options_intro": {
-        "en": "These slots are available. Nothing is held yet:",
-        "hi": "ये स्लॉट उपलब्ध हैं। अभी कुछ भी होल्ड नहीं है:",
-        "hinglish": "Ye slots available hain. Abhi kuch bhi hold nahi hai:",
-    },
-    # One numbered line of the menu: number, dock, times and date.
-    "options_line": {
-        "en": "{n}. Dock {dock}, {start}-{end} on {date}",
-        "hi": "{n}. डॉक {dock}, {date} को {start}-{end}",
-        "hinglish": "{n}. Dock {dock}, {date} ko {start}-{end}",
-    },
-    # Last line of the menu: which numbers can be chosen and until when the options are valid.
-    "options_outro": {
-        "en": "Reply with the number ({choices}) to hold one. These options are valid until {until}.",
-        "hi": "होल्ड करने के लिए नंबर ({choices}) बताइए। ये विकल्प {until} तक मान्य हैं।",
-        "hinglish": "Hold karne ke liye number ({choices}) bataiye. Ye options {until} tak valid hain.",
+        "en": "I am holding {start}-{end} at dock {dock} on {date}, {facility}, for you until {until}. "
+              "It is not booked yet. Reply Yes to confirm, or No for the next slot.",
+        "hi": "मैंने आपके लिए {facility} में {date} को डॉक {dock} पर {start}-{end} का स्लॉट {until} तक होल्ड किया है। "
+              "अभी बुक नहीं हुआ है। कन्फर्म करने के लिए Yes लिखें, या अगले स्लॉट के लिए No लिखें।",
+        "hinglish": "Maine aapke liye {facility} mein {date} ko dock {dock} par {start}-{end} ka slot {until} tak hold kiya hai. "
+                    "Abhi book nahi hua hai. Confirm karne ke liye Yes likhein, ya agle slot ke liye No likhein.",
     },
     # The driver's request was refused because the truck's position changed and the slot can no longer be reached in time.
     "position_changed": {
@@ -196,11 +194,52 @@ T: dict[str, dict[str, str]] = {
         "hinglish": "Thanks, mujhe aapki nayi position mil gayi hai: dock se lagbhag {km} km door, lagbhag {minutes} minute ki doori, yaani aap "
                     "lagbhag {eta} tak pahunch sakte hain.",
     },
-    # First line of an offer of earlier slots when the truck has come closer; the numbered lines and closing line follow (options_line, options_outro).
-    "earlier_intro": {
-        "en": "For order {order}: your truck is closer now, so earlier slots than your current one are available. Nothing is held yet:",
-        "hi": "ऑर्डर {order} के लिए: आपका ट्रक अब पास है, इसलिए आपके मौजूदा स्लॉट से पहले के स्लॉट उपलब्ध हैं। अभी कुछ भी होल्ड नहीं है:",
-        "hinglish": "Order {order} ke liye: aapka truck ab paas hai, isliye aapke maujooda slot se pehle ke slots available hain. Abhi kuch bhi hold nahi hai:",
+    # A move to another facility was approved and a slot there is held.
+    "move_held": {
+        "en": "The move to {facility} is approved. I am holding {start}-{end} at dock {dock} on {date} until {until}. It is not "
+              "booked yet. Reply Yes to confirm, or No for the next slot.",
+        "hi": "{facility} में जाना मंज़ूर हो गया है। मैंने {date} को डॉक {dock} पर {start}-{end} का स्लॉट {until} तक होल्ड किया है। "
+              "अभी बुक नहीं हुआ है। कन्फर्म करने के लिए Yes लिखें, या अगले स्लॉट के लिए No।",
+        "hinglish": "{facility} mein jaana manzoor ho gaya hai. Maine {date} ko dock {dock} par {start}-{end} ka slot {until} tak hold "
+                    "kiya hai. Abhi book nahi hua hai. Confirm karne ke liye Yes likhein, ya agle slot ke liye No.",
+    },
+    # Approved, but the new facility is a partner who decides by email.
+    "move_partner": {
+        "en": "The move to {facility} is approved. I have asked them for {time} on {date}. It is NOT booked until they reply.",
+        "hi": "{facility} में जाना मंज़ूर हो गया है। मैंने उनसे {date} को {time} का समय मांगा है। उनके जवाब तक यह बुक नहीं है।",
+        "hinglish": "{facility} mein jaana manzoor ho gaya hai. Maine unse {date} ko {time} ka time maanga hai. Unke jawab tak yeh book NAHI hai.",
+    },
+    # Approved, but nothing could be offered there.
+    "move_no_slot": {
+        "en": "There is no free slot at {facility}, so your load is still going to {origin}. Your booking there is unchanged. "
+              "The operations team will help.",
+        "hi": "{facility} में कोई खाली स्लॉट नहीं है, इसलिए आपका लोड {origin} ही जाएगा। वहां की आपकी बुकिंग वैसी ही है। ऑपरेशन टीम मदद करेगी।",
+        "hinglish": "{facility} mein koi free slot nahi hai, isliye aapka load {origin} hi jayega. Wahan ki aapki booking waisi hi hai. "
+                    "Operations team madad karegi.",
+    },
+    # The warehouse refused the move.
+    "move_rejected": {
+        "en": "The move to {facility} was not approved. Your load is still going to {origin}; your booking is unchanged.",
+        "hi": "{facility} में जाना मंज़ूर नहीं हुआ। आपका लोड {origin} ही जाएगा; आपकी बुकिंग वैसी ही है।",
+        "hinglish": "{facility} mein jaana manzoor nahi hua. Aapka load {origin} hi jayega; aapki booking waisi hi hai.",
+    },
+    # Approved, but no booking came of it (not confirmed, every slot declined, or the partner did not accept).
+    "move_lapsed": {
+        "en": "No slot was booked at {facility}, so your load is still going to {origin}; your booking is unchanged. "
+              "Ask again if you still want to move.",
+        "hi": "{facility} में कोई स्लॉट बुक नहीं हुआ, इसलिए आपका लोड {origin} ही जाएगा; आपकी बुकिंग वैसी ही है। अब भी बदलना हो तो दोबारा कहें।",
+        "hinglish": "{facility} mein koi slot book nahi hua, isliye aapka load {origin} hi jayega; aapki booking waisi hi hai. "
+                    "Ab bhi badalna ho toh dobara bataiye.",
+    },
+    # One earlier slot, held because the truck has come closer. The current booking stays unless the driver says yes.
+    "earlier_hold": {
+        "en": "For order {order}: your truck is closer now, so I am holding an earlier slot at {facility}: {start}-{end} at dock "
+              "{dock} on {date}, until {until}. Your current booking stays until you confirm. Reply Yes to move to it, or No for the next one.",
+        "hi": "ऑर्डर {order} के लिए: आपका ट्रक अब पास है, इसलिए मैंने {facility} में पहले का स्लॉट होल्ड किया है: {date} को डॉक {dock} पर "
+              "{start}-{end}, {until} तक। कन्फर्म करने तक आपकी मौजूदा बुकिंग बनी रहेगी। इसे लेने के लिए Yes लिखें, या अगले के लिए No।",
+        "hinglish": "Order {order} ke liye: aapka truck ab paas hai, isliye maine {facility} mein pehle ka slot hold kiya hai: {date} ko "
+                    "dock {dock} par {start}-{end}, {until} tak. Confirm karne tak aapki maujooda booking bani rahegi. Ise lene ke "
+                    "liye Yes likhein, ya agle ke liye No.",
     },
     # Told to the driver when a new GPS ping showed the held slot is out of reach and the hold was released at once.
     "position_released": {
@@ -220,9 +259,9 @@ T: dict[str, dict[str, str]] = {
     },
     # Told when a reschedule is confirmed. Built from the committed appointment row.
     "confirmed": {
-        "en": "Your appointment is confirmed: dock {dock}, {start}-{end} on {date}. Reference {ref}.",
-        "hi": "आपकी अपॉइंटमेंट कन्फर्म हो गई है: डॉक {dock}, {date} को {start}-{end}। रेफरेंस {ref}।",
-        "hinglish": "Aapki appointment confirm ho gayi hai: dock {dock}, {date} ko {start}-{end}. Reference {ref}.",
+        "en": "Your appointment is confirmed: dock {dock}, {start}-{end} on {date}. Reference {ref}. Warehouse: {facility}.",
+        "hi": "आपकी अपॉइंटमेंट कन्फर्म हो गई है: डॉक {dock}, {date} को {start}-{end}। रेफरेंस {ref}। वेयरहाउस: {facility}।",
+        "hinglish": "Aapki appointment confirm ho gayi hai: dock {dock}, {date} ko {start}-{end}. Reference {ref}. Warehouse: {facility}.",
     },
     # Told when an appointment was cancelled.
     "cancelled": {

@@ -5,6 +5,7 @@ Each test names one situation a reader might ask "what if...?" about and pins th
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from pathlib import Path
 
@@ -40,25 +41,27 @@ def test_when_nothing_fits_there_is_a_hand_off_and_no_menu(db: sqlite3.Connectio
     assert c.rows("select count(*) from option_sets") == [(0,)]
 
 
-def test_two_searches_in_one_message_show_only_the_latest_menu(chat: Chat) -> None:
-    # The model searches twice in one turn; the driver must see (and be able to pick from) the latest menu only.
+def test_two_searches_in_one_message_leave_one_hold_from_the_latest_search(chat: Chat) -> None:
+    # The model searches twice in one turn; the driver ends with exactly one hold, taken from the latest search.
     r = chat.say("SHP1006 is running 60 minutes late", [
         tc("search_slot_options", shipment_id="SHP1006", report=LATE_60, call_id="a"),
         tc("search_slot_options", shipment_id="SHP1006", report=LATE_60, call_id="b"),
         say_text("whatever")])
     latest = chat.rows("select option_set_id from option_sets order by rowid desc limit 1")[0][0]
-    items = chat.rows("select count(*) from option_set_items where option_set_id=?", latest)[0][0]
-    assert len([ln for ln in r.text.split("\n") if ln[:2] in ("1.", "2.", "3.")]) == items
+    offered = [row[0] for row in chat.rows("select slot_id from option_set_items where option_set_id=?", latest)]
+    held = chat.rows("select slot_id from appointments where appointment_status='HELD'")
+    assert len(held) == 1 and held[0][0] in offered and r.text.count("I am holding") == 1
 
 
-def test_a_rank_outside_the_menu_is_rejected_and_holds_nothing(chat: Chat) -> None:
+def test_a_rank_outside_the_offer_is_rejected_and_changes_no_hold(chat: Chat) -> None:
     # Option 5 does not exist (the schema allows 1 to 3): the call is refused before any service runs.
     chat.say("SHP1006 is running 60 minutes late", [tc("search_slot_options", shipment_id="SHP1006", report=LATE_60), say_text("x")])
     chat.say("option 5 please", [
         tc_dyn("request_hold", lambda m: {"option_set_id": facts_from(m)["latest_option_set_id"], "rank": 5, "driver_quote": "option 5"}),
         say_text("sorry")])
     assert tool_json(chat.last_messages(), "request_hold")["error"] == "INVALID_ARGUMENTS"
-    assert chat.held() == 0
+    # Only the system's own hold from the search: the refused call changed nothing.
+    assert chat.held() == 1
 
 
 def test_a_new_search_replaces_the_menu_a_number_refers_to(chat: Chat) -> None:
@@ -70,7 +73,7 @@ def test_a_new_search_replaces_the_menu_a_number_refers_to(chat: Chat) -> None:
     chat.say("take option 1", [
         tc_dyn("request_hold", lambda m: {"option_set_id": first, "rank": 1, "driver_quote": "option 1"}), say_text("ok")])
     assert tool_json(chat.last_messages(), "request_hold")["status"] == "NOT_LATEST_OPTION_SET"
-    assert chat.held() == 0
+    assert chat.held() == 1  # the newer search's own hold, not the stale line
 
 
 # --- the HTTP door ------------------------------------------------------------------------------------------
@@ -105,15 +108,16 @@ def test_a_one_character_quote_inside_a_longer_message_is_not_approval(chat: Cha
         tc_dyn("request_hold", lambda m: {"option_set_id": facts_from(m)["latest_option_set_id"], "rank": 3, "driver_quote": "3"}),
         say_text("ok")])
     assert tool_json(chat.last_messages(), "request_hold")["error"] == "APPROVAL_NOT_PRESENT"
-    assert chat.held() == 0
+    # Only the system's own hold from the search: the refused call changed nothing.
+    assert chat.held() == 1
 
 
-def test_the_rule_based_assistant_understands_a_menu_number(env) -> None:  # type: ignore[no-untyped-def]  # noqa: F811
-    # The demo's stand-in assistant must follow its own menu instruction: "3" after the menu places a hold.
+def test_the_rule_based_assistant_books_on_a_plain_yes(env) -> None:  # type: ignore[no-untyped-def]  # noqa: F811
+    # The demo's stand-in assistant must follow the hold message: "Yes" books the held slot.
     _, client, *_ = env
-    assert "These slots are available" in post(client, msg("my truck is 60 minutes late", mid="N-1")).json()["reply"]
-    r = post(client, msg("3", mid="N-2")).json()
-    assert "holding" in r["reply"].lower() and r["status"] == "REPLIED"
+    assert "I am holding" in post(client, msg("my truck is 60 minutes late", mid="N-1")).json()["reply"]
+    r = post(client, msg("Yes", mid="N-2")).json()
+    assert r["reply"].startswith("Your appointment is confirmed") and r["status"] == "REPLIED"
 
 
 # --- delays written as hours --------------------------------------------------------------------------------
@@ -132,7 +136,7 @@ def test_a_delay_given_in_hours_gets_an_answer_not_the_generic_question(env) -> 
     _, client, *_ = env
     body = post(client, msg("book my slot after 2 hours as i am running late", mid="H-1")).json()
     assert body["reply"] != "How late are you, and which shipment is it?" and body["status"] in ("REPLIED", "HANDOFF")
-    assert "These slots are available" in body["reply"] or body["status"] == "HANDOFF"
+    assert "I am holding" in body["reply"] or body["status"] == "HANDOFF"
 
 
 # --- cancelling and releasing with the rule-based assistant; the dock board must follow ------------------------
@@ -285,35 +289,49 @@ def test_every_ping_is_confirmed_to_the_driver_with_distance_and_drive_time(tmp_
     assert len(msgs) == 1 and "about 24 km" in msgs[0] and "minutes away" in msgs[0] and "arrive around" in msgs[0]
 
 
-def test_a_closer_truck_is_offered_earlier_slots_and_can_switch_its_booking(tmp_path: Path) -> None:
+def test_a_closer_truck_is_offered_one_held_earlier_slot_and_can_switch_its_booking(tmp_path: Path) -> None:
     # Far away (165 km) the earliest reachable slot is mid-afternoon; at 24 km much earlier slots open up.
+    client, ping, say, held, chat = _gps_demo(tmp_path)
+    ping(165)
+    say("my truck is 60 minutes late")
+    assert "confirmed" in say("yes confirm").lower()
+    late = _booked_or_held_starts(client)[0]
+    ping(24)  # the truck is now much closer
+    offer = [t for t in chat() if "earlier slot" in t]
+    # One slot, already held, answered with Yes or No: never a numbered list.
+    assert len(offer) == 1 and held()
+    assert "Reply Yes" in offer[0] and "No for the next" in offer[0] and "1. Dock" not in offer[0]
+    assert "SetuHaul Jaipur Distribution Centre" in offer[0]
+    first_offered = re.search(r"(\d\d:\d\d)-\d\d:\d\d", offer[0]).group(1)  # type: ignore[union-attr]
+    assert first_offered < late  # genuinely earlier than the slot it had
+    # The confirmed booking stays until the driver agrees; agreeing swaps them.
+    assert late in _booked_or_held_starts(client)
+    assert "confirmed" in say("yes confirm").lower()
+    assert _booked_or_held_starts(client) == [first_offered]  # the old late slot is free again, only the new one is booked
+
+
+def test_a_declined_earlier_offer_keeps_the_booking_and_is_not_repeated(tmp_path: Path) -> None:
     client, ping, say, _held, chat = _gps_demo(tmp_path)
     ping(165)
     say("my truck is 60 minutes late")
-    say("1")
-    assert "confirmed" in say("confirm").lower()
+    say("yes confirm")
     late = _booked_or_held_starts(client)[0]
-    ping(24)  # the truck is now much closer
-    offer = [t for t in chat() if "earlier slots than your current one" in t]
-    assert len(offer) == 1 and "1. Dock" in offer[0] and "Reply with the number" in offer[0]
-    first_offered = offer[0].split("\n")[1].split(", ")[1].split("-")[0]
-    assert first_offered < late  # genuinely earlier than the slot it had
-    # Picking by number holds the earlier slot (the confirmed one stays until the swap is confirmed), then confirming swaps them.
-    assert "holding" in say("1").lower()
-    assert "confirmed" in say("confirm").lower()
-    assert _booked_or_held_starts(client) == [first_offered]  # the old late slot is free again, only the new one is booked
+    ping(24)
+    say("No")
+    assert late in _booked_or_held_starts(client)
+    ping(23)
+    assert len([t for t in chat() if "earlier slot" in t]) == 1
 
 
 def test_the_same_offer_is_not_repeated_for_every_ping(tmp_path: Path) -> None:
     _client, ping, say, _, chat = _gps_demo(tmp_path)
     ping(165)
     say("my truck is 60 minutes late")
-    say("1")
-    say("confirm")
+    say("yes confirm")
     ping(24)
     ping(23)
     ping(22)
-    assert len([t for t in chat() if "earlier slots than your current one" in t]) == 1  # one offer, three confirmations
+    assert len([t for t in chat() if "earlier slot" in t]) == 1  # one offer, three confirmations
     assert len([t for t in chat() if "your new position" in t]) == 4  # 165, 24, 23, 22
 
 
@@ -321,10 +339,9 @@ def test_no_offer_when_the_current_slot_is_already_as_early_as_it_gets(tmp_path:
     _, ping, say, _, chat = _gps_demo(tmp_path)
     ping(20)
     say("my truck is 60 minutes late")
-    say("1")
-    say("confirm")
+    say("yes confirm")
     ping(5)  # closer, but there is nothing at least 30 minutes earlier than the slot it already has
-    assert not any("earlier slots than your current one" in t for t in chat())
+    assert not any("earlier slot" in t for t in chat())
 
 
 def test_a_search_from_far_away_does_not_offer_slots_the_truck_cannot_reach(tmp_path: Path) -> None:
@@ -332,8 +349,8 @@ def test_a_search_from_far_away_does_not_offer_slots_the_truck_cannot_reach(tmp_
     _, ping, say, _, _ = _gps_demo(tmp_path)
     ping(300)
     reply = say("my truck is 60 minutes late")
-    starts = [ln.split(", ")[1].split("-")[0] for ln in reply.split("\n") if ln[:2] in ("1.", "2.", "3.")]
-    assert all(s >= "19:00" for s in starts) or "operations" in reply.lower()
+    starts = re.findall(r"(\d\d:\d\d)-\d\d:\d\d", reply)
+    assert (starts and all(s >= "19:00" for s in starts)) or "operations" in reply.lower()
 
 
 def test_a_position_update_reaches_the_load_with_the_late_booking_even_when_it_is_not_the_first_load(tmp_path: Path) -> None:
@@ -350,9 +367,8 @@ def test_a_position_update_reaches_the_load_with_the_late_booking_even_when_it_i
         r = client.post("/demo/api/gps", json={"driver_id": sandeep["id"], "lat": fac["lat"] + km / 111.2, "lon": fac["lon"], "age_minutes": 0})
         assert r.status_code == 200
     texts = [m["text"] for m in client.get(f"/demo/api/driver/{sandeep['id']}/state").json()["messages"]]
-    offers = [t for t in texts if "earlier slots than your current one" in t]
-    # At 165 km the 15:00 slots already beat 18:00; at 24 km much earlier ones open up, so the second offer starts earlier than the first.
-    assert len(offers) == 2 and all(o.startswith(f"For order {late['order']}:") and "1. Dock" in o for o in offers)
-    first_start = [o.split("\n")[1].split(", ")[1].split("-")[0] for o in offers]
-    assert first_start[1] < first_start[0] < "18:00"
+    offers = [t for t in texts if "earlier slot" in t]
+    # One question at a time: while the first earlier slot is held, a closer ping does not swap it under the driver.
+    assert len(offers) == 1 and offers[0].startswith(f"For order {late['order']}:") and "Reply Yes" in offers[0]
+    assert re.search(r"(\d\d:\d\d)-\d\d:\d\d", offers[0]).group(1) < "18:00"  # type: ignore[union-attr]
     assert len([t for t in texts if "your new position" in t]) == 2  # each ping confirmed once, not once per load

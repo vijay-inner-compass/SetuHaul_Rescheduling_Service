@@ -69,6 +69,21 @@ def enqueue_notification(
     return cur.rowcount == 1
 
 
+def queue_driver_notice(conn: sqlite3.Connection, driver_id: str, shipment_id: str, text: str, now: datetime) -> bool:
+    """Queue a message for the driver's phone: one written outside their turn reaches Telegram only through the outbox."""
+    # The outbox hangs off an appointment event; a load with no appointment at all has nothing to hang it on.
+    row = conn.execute("select appointment_id from appointments where shipment_id=? order by is_current desc, rowid desc limit 1",
+                       (shipment_id,)).fetchone()
+    if row is None:
+        return False
+    event_id = append_appointment_event(conn, row[0], shipment_id, "DRIVER_NOTICE", from_status=None, to_status=None,
+                                        actor_type="SYSTEM", actor_id=None, reason=None, occurred_at=now)
+    queued = enqueue_notification(conn, f"DRIVER_NOTICE:{event_id}", "DRIVER", driver_id, event_id, {"kind": "notice", "text": text}, now)
+    # Called outside any wider transaction: commit, so the write lock is not left open.
+    conn.commit()
+    return queued
+
+
 def get_appointment_history(conn: sqlite3.Connection, shipment_id: str) -> list[dict[str, Any]]:
     """Who changed what, when and why, oldest first, for one shipment."""
     # Join to appointments to include the slot each event concerned; order by event_id for oldest-first.

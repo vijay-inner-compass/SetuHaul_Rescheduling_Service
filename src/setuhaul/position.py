@@ -21,11 +21,13 @@ from datetime import datetime, timedelta
 from setuhaul.allocation import rank_options
 
 # Releases a hold the truck can no longer reach.
-from setuhaul.booking import reassess_hold_after_position_change
+# Holding the offered slot, and checking whether one is already waiting for an answer.
+from setuhaul.booking import acquire_hold, get_hold, reassess_hold_after_position_change
 
 # Facility snapshot for the slot search.
 from setuhaul.capacity import build_facility_state
 
+# Clock times in messages are shown in India time.
 # The injectable clock.
 from setuhaul.clock import Clock
 
@@ -33,7 +35,10 @@ from setuhaul.clock import Clock
 from setuhaul.config import load_settings
 
 # Stored times are parsed into aware datetimes.
-from setuhaul.db import parse_operational_timestamp
+from setuhaul.db import IST, parse_operational_timestamp
+
+# The offer is also queued for the driver's phone.
+from setuhaul.events import queue_driver_notice
 
 # Feasibility context and slot search (the same rules as any other search).
 from setuhaul.feasibility import build_context, search_feasible_slots
@@ -45,7 +50,8 @@ from setuhaul.gps import load_latest_driver_ping, open_shipments_for_driver
 from setuhaul.language import say
 
 # Conversation memory: the driver's thread, language and latest menu.
-from setuhaul.memory import ConversationMemoryStore
+# The remembered hold, so the driver's Yes or No applies to it.
+from setuhaul.memory import ConversationMemoryStore, HoldRef
 
 # Stored menus, so an offer can be held by number and a repeat of the same offer is not sent twice.
 from setuhaul.option_history import get_latest_option_set, record_option_set
@@ -55,6 +61,9 @@ from setuhaul.schemas import BaselineType, EtaEvidence
 
 # Distance and drive time from the ping to the dock.
 from setuhaul.travel import StraightLineEstimator, haversine_km
+
+# How long an offer the driver did not ask for stays held: they are driving and need time to see it.
+UNPROMPTED_HOLD_SECONDS = 15 * 60
 
 
 def _current_slot(conn: sqlite3.Connection, shipment_id: str, now: datetime) -> tuple[datetime, str] | None:
@@ -132,7 +141,7 @@ def handle_new_position(conn: sqlite3.Connection, shipment_id: str, clock: Clock
         release, source = latest.context.release_time, "DRIVER_DECLARED"
     # Search from the earliest the truck can really arrive.
     evidence = EtaEvidence(eta=release, source=source, confidence="MEDIUM", baseline_type=BaselineType.CURRENT_ETA)  # type: ignore[arg-type]
-    ctx = build_context(conn, shipment_id, evidence, now)
+    ctx = build_context(conn, shipment_id, evidence, now, eta_buffer_minutes=UNPROMPTED_HOLD_SECONDS // 60)
     state = build_facility_state(conn, ctx.facility_id, now)
     result = search_feasible_slots(ctx, state)
     # Only slots that start clearly earlier than the current one (by the configured gain), and never the held slot itself.
@@ -141,24 +150,37 @@ def handle_new_position(conn: sqlite3.Connection, shipment_id: str, clock: Clock
     ranked = rank_options(better, limit=3)
     if not ranked:
         return
-    # Do not send the same offer again for every ping: skip if the latest unexpired menu already starts with this slot.
-    if latest is not None and latest.expires_at > now and latest.items and latest.items[0].slot_id == ranked[0].decision.slot_id:
+    # One question at a time: a driver who still has a held slot to answer keeps it; it is never swapped under them.
+    state_now = memory.load(driver_id, thread_id).state
+    if state_now.hold is not None:
+        view = get_hold(conn, state_now.hold.appointment_id, clock)
+        if view is not None and view.state == "LIVE":
+            return
+    # Do not offer the same slot again for every ping, including after the driver declined it or let it lapse.
+    if latest is not None and latest.items and latest.items[0].slot_id == ranked[0].decision.slot_id:
         return
-    # Store the menu exactly as it will be shown, and make it the one a number reply refers to.
+    # Store the list the slot comes from, so "No" can move on to the next one.
     shown = record_option_set(conn, ctx, thread_id, ranked, state, clock)
-    memory.save_structured_state(driver_id, thread_id, memory.load(driver_id, thread_id).state.model_copy(
-        update={"latest_option_set_id": shown.option_set_id}))
-    # The numbered list, written from the stored options.
-    # Name the order: a driver with two loads must know which one the offer is about.
-    order = conn.execute("select order_reference from shipments where shipment_id=?", (shipment_id,)).fetchone()["order_reference"]
-    lines = [say("earlier_intro", lang, order=order)]
-    for i, o in enumerate(ranked, 1):
-        d = o.decision
-        lines.append(say("options_line", lang, n=str(i), dock=d.dock_code, start=f"{d.slot_start:%H:%M}",
-                         end=f"{d.slot_end:%H:%M}", date=f"{d.slot_start:%d %b %Y}"))
-    lines.append(say("options_outro", lang, choices=", ".join(str(i) for i in range(1, len(ranked) + 1)),
-                     until=f"{shown.expires_at:%H:%M}"))
-    memory.append(driver_id, thread_id, "AGENT", "\n".join(lines))
+    for item in shown.items:
+        held = acquire_hold(conn, driver_id, thread_id, shipment_id, shown.option_set_id, item.rank, clock,
+                            ttl_seconds=UNPROMPTED_HOLD_SECONDS, supersede=True)
+        if held.status != "HELD" or held.appointment_id is None or held.expires_at is None:
+            continue
+        # "SYSTEM" is no driver message, so the driver's next "Yes" counts as a later message and may confirm.
+        memory.save_structured_state(driver_id, thread_id, memory.load(driver_id, thread_id).state.model_copy(update={
+            "selected_shipment_id": shipment_id, "latest_option_set_id": shown.option_set_id, "offered_slot_ids": (),
+            "hold": HoldRef(appointment_id=held.appointment_id, expires_at=held.expires_at, created_message_id="SYSTEM")}))
+        # Worded from the stored rows. The order is named: a driver with two loads must know which one this is about.
+        slot = conn.execute(
+            "select s.slot_start_ts, s.slot_end_ts, d.dock_code, f.facility_name from appointment_slots s "
+            "join docks d using(dock_id) join facilities f on f.facility_id = d.facility_id where s.slot_id=?", (held.slot_id,)).fetchone()
+        order = conn.execute("select order_reference from shipments where shipment_id=?", (shipment_id,)).fetchone()["order_reference"]
+        start, end = parse_operational_timestamp(slot["slot_start_ts"]), parse_operational_timestamp(slot["slot_end_ts"])
+        offer = say("earlier_hold", lang, order=order, facility=slot["facility_name"], dock=slot["dock_code"], start=f"{start:%H:%M}",
+                    end=f"{end:%H:%M}", date=f"{start:%d %b %Y}", until=f"{held.expires_at.astimezone(IST):%H:%M}")
+        memory.append(driver_id, thread_id, "AGENT", offer)
+        queue_driver_notice(conn, driver_id, shipment_id, offer, clock.now())
+        return
 
 
 def handle_driver_position(conn: sqlite3.Connection, driver_id: str, clock: Clock, memory: ConversationMemoryStore) -> None:

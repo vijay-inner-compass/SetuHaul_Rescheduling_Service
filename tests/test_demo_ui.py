@@ -97,11 +97,9 @@ def test_chat_hold_confirm_updates_transcript_board_and_history(demo) -> None:  
     client, _ = demo
     manoj = driver_id(client, "Manoj Sharma")
     first = say(client, manoj, "my truck is 60 minutes late")
-    assert first["status"] == "REPLIED" and first["reply"].startswith("These slots are available. Nothing is held yet:\n1. Dock ") and first["http_status"] == 200
-    held = say(client, manoj, "I will take the first one")
-    assert "holding" in held["reply"]
+    assert first["status"] == "REPLIED" and first["reply"].startswith("I am holding ") and first["http_status"] == 200
     state = client.get(f"/demo/api/driver/{manoj}/state").json()
-    assert [m["who"] for m in state["messages"]] == ["driver", "assistant", "driver", "assistant"]
+    assert [m["who"] for m in state["messages"]] == ["driver", "assistant"]
     assert state["hold"] and "dock" in state["hold"]["slot"] and state["hold"]["seconds_left"] > 0
     slot = cell(client, "Manoj Sharma")
     assert slot is not None and slot["status"] in ("HELD", "BOOKED")
@@ -247,8 +245,7 @@ def test_a_driver_can_book_from_an_empty_board(tmp_path: Path) -> None:
     app, _ = build_demo_app(tmp_path / "fresh2", fresh=True, live_factory=StubGateway, driver_simulation=True)
     client = demo_client(app)
     manoj = driver_id(client, "Manoj Sharma")
-    assert "These slots are available" in say(client, manoj, "my truck is 60 minutes late")["reply"]
-    assert "holding" in say(client, manoj, "1")["reply"].lower()
+    assert "I am holding" in say(client, manoj, "my truck is 60 minutes late")["reply"]
     assert "confirmed" in say(client, manoj, "confirm")["reply"].lower()
     assert "BOOKED" in statuses(client)
 
