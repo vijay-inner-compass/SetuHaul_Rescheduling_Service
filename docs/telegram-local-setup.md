@@ -104,8 +104,8 @@ $env:ADMIN_EMAIL = Read-Host "Admin email"
 Clear-Host
 ```
 
-These settings exist only in this window. **Run every later command here.** Without `SETUHAUL_DB_PATH` the application uses
-`data/setuhaul.sqlite3`, the sample database that must not change.
+These settings exist only in this window. **Run every later command here.** Without `SETUHAUL_DB_PATH` the server and the
+password script refuse to run, to protect the sample database `data/setuhaul.sqlite3`.
 
 ### B5. Create the test database (once)
 
@@ -266,7 +266,7 @@ Invoke-RestMethod -Method Post -Uri "https://api.telegram.org/bot$($env:SETUHAUL
 | Webhook answers 503 / 401 in the server log | 503: token or secret missing. 401: the server restarted with a new secret; run B7 again |
 | `[Errno 10048]` when starting | port 8000 is taken; stop the earlier server |
 | `404 Not Found` for addresses such as `/v1/telemetry/stats` | another program on your computer is polling port 8000; ignore |
-| `git status` shows `data/setuhaul.sqlite3` modified | a command ran without `SETUHAUL_DB_PATH`. Run `git restore data/setuhaul.sqlite3` |
+| `SETUHAUL_DB_PATH is not set to a working copy` | this window has no settings. Run B4 here |
 
 ## F. Limits of this setup
 

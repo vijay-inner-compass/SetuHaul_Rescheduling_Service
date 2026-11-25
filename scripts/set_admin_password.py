@@ -11,7 +11,7 @@ import getpass
 import sys
 
 from setuhaul.auth import local_admin, users
-from setuhaul.config import load_settings
+from setuhaul.config import load_settings, sample_database_problem
 from setuhaul.db import open_connection
 from setuhaul.identity import AuthError
 
@@ -21,6 +21,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("email")
     args = parser.parse_args(argv)
+    # Checked first, so nobody types a password only to be refused.
+    db_path = load_settings().db_path
+    problem = sample_database_problem(db_path)
+    if problem:
+        print(f"Refused: {problem}", file=sys.stderr)
+        return 1
     password = getpass.getpass("New password: ")
     if len(password) < local_admin.MIN_LENGTH:
         print(f"Refused: the password must be at least {local_admin.MIN_LENGTH} characters.", file=sys.stderr)
@@ -28,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
     if getpass.getpass("Repeat password: ") != password:
         print("Refused: the passwords do not match.", file=sys.stderr)
         return 1
-    conn = open_connection(path=load_settings().db_path)
+    conn = open_connection(path=db_path)
     try:
         user = users.find_by_email(conn, args.email)
         # Only an active admin may hold a break-glass password.
