@@ -194,3 +194,17 @@ def after_approval(conn: sqlite3.Connection, redis: Any, clock: Clock, request_i
              "Reply Yes to confirm, or No for the next slot.")
         return "HELD"
     return give_back("NO_SLOT")
+
+
+def tell_rejected(conn: sqlite3.Connection, redis: Any, clock: Clock, request_id: str) -> None:
+    """Tell the driver a request was refused; nothing about their booking changed."""
+    req = conn.execute(
+        "select q.driver_id, q.shipment_id, t.facility_name as destination, f.facility_name as origin from facility_change_requests q "
+        "join facilities t on t.facility_id=q.to_facility_id join facilities f on f.facility_id=q.from_facility_id where q.request_id=?",
+        (request_id,)).fetchone()
+    memory = ConversationMemoryStore(conn, redis, clock, load_settings(), hold_checker=make_hold_checker(conn, clock))
+    row = conn.execute("select thread_id from chat_threads where driver_id=? and thread_status<>'CLOSED' order by opened_at desc, rowid desc limit 1",
+                       (req["driver_id"],)).fetchone()
+    thread_id = row["thread_id"] if row else memory.open_thread(req["driver_id"], req["shipment_id"])
+    memory.append(req["driver_id"], thread_id, "OPERATIONS",
+                  f"The move to {req['destination']} was not approved. Your load is still going to {req['origin']}; your booking is unchanged.")

@@ -18,6 +18,7 @@ from setuhaul.api import claim_label
 from setuhaul.auth import audit, onboarding, projects, sessions, telegram, users
 from setuhaul.auth.admin_api import DEFAULT_AUDIT_LIMIT, parse_since
 from setuhaul.auth.authz import AuthzError, assert_facility, require_role
+from setuhaul.auth.facility_routes import pending_changes_in_scope
 from setuhaul.auth.signin_notice import NOTICES
 from setuhaul.auth.users import User
 from setuhaul.auth.warehouse_routes import (
@@ -380,6 +381,18 @@ def _chat_browser(chats: list[dict[str, Any]]) -> str:
     return (f'<div class="chats"><ul class="chat-list">{"".join(names)}</ul><div class="threads">{"".join(threads)}</div></div>')
 
 
+def _facility_requests(conn: sqlite3.Connection, user: User) -> str:
+    # Requests to move a load HERE: approving moves it and offers the driver a slot.
+    rows = []
+    for r in pending_changes_in_scope(conn, user):
+        base = f"/v1/warehouse/facility-changes/{_segment(r['request_id'])}"
+        actions = (_button("Approve", f"{base}/approve", confirm=f"Move {r['order_reference']} to {r['destination']}?")
+                   + _button("Reject", f"{base}/reject", confirm=f"Refuse the move of {r['order_reference']}?"))
+        rows.append([esc(r["request_id"]), esc(r["driver_name"]), esc(r["order_reference"]), esc(r["origin"]), esc(r["destination"]), actions])
+    table = _table(("Request", "Driver", "Order", "From", "To", ""), rows, "No requests are waiting.")
+    return f'<h3>Facility change requests</h3><div class="scroll">{table}</div>'
+
+
 def _messages_section(conn: sqlite3.Connection, user: User, now: datetime) -> str:
     found = [c for c in (get_case(conn, i) for i in case_ids_in_scope(conn, user, ("OPEN", "CLAIMED"))) if c is not None]
     cases = [{"id": c.case_id, "status": c.status, "reason": c.reason_code, "summary": c.summary or "", "load": c.shipment_id or "",
@@ -388,7 +401,7 @@ def _messages_section(conn: sqlite3.Connection, user: User, now: datetime) -> st
              esc(f"{r['proposed_start']} - {r['proposed_end']}")] for r in partner_requests_in_scope(conn, user)]
     note = ('<p class="note">Drivers on projects created by an administrator do not appear in a warehouse authority\'s chats; '
             "only drivers on projects you created are shown.</p>")
-    return (f'<section id="messages" data-panel="messages" data-count="{len(cases)}"><h2>Messages</h2><h3>Open cases</h3>'
+    return (f'<section id="messages" data-panel="messages" data-count="{len(cases)}"><h2>Messages</h2>' + _facility_requests(conn, user) + '<h3>Open cases</h3>'
             + _case_cards(cases)
             + f"<h3>Driver chats</h3>{note}" + _chat_browser(driver_chats_in_scope(conn, user, now))
             + "<h3>Partner slot requests</h3>"
@@ -404,6 +417,7 @@ def _attention(conn: sqlite3.Connection, user: User, today: date, board: dict[st
         ("board", "Waiting for partner", len(board["pending_partner"]) if board else 0),
         ("drivers", "Drivers awaiting approval", sum(1 for d in drivers if d["approval_status"] == "PENDING_APPROVAL")),
         ("drivers", "Licences not valid", sum(1 for d in drivers if not d["licence_valid"])),
+        ("messages", "Facility requests", len(pending_changes_in_scope(conn, user))),
     ]
     cards = "".join(f'<li><a href="#{target}" class="{"hot" if n else "calm"}"><b>{n}</b><span>{label}</span></a></li>'
                     for target, label, n in items)

@@ -95,6 +95,8 @@ def register_demo_driver(app: FastAPI, deps: Any, send: Callable[[str, str, str]
                 "and a.is_current=1 and a.appointment_status in ('PENDING_CONFIRMATION','CONFIRMED','IN_PROGRESS') "
                 "left join appointment_slots sl on sl.slot_id=a.slot_id left join docks dk on dk.dock_id=sl.dock_id where s.shipment_id=?",
                 (shipment,)).fetchone()
+            pending = conn.execute("select t.facility_name from facility_change_requests q join facilities t on t.facility_id=q.to_facility_id "
+                                   "where q.shipment_id=? and q.status='PENDING'", (shipment,)).fetchone()
         finally:
             conn.close()
         if row is None:
@@ -104,7 +106,8 @@ def register_demo_driver(app: FastAPI, deps: Any, send: Callable[[str, str, str]
             start = parse_operational_timestamp(row["slot_start_ts"]).astimezone(IST)
             end = parse_operational_timestamp(row["slot_end_ts"]).astimezone(IST)
             booked = f"Dock {row['dock_code']}, {start:%H:%M}-{end:%H:%M} on {start:%d %b}"
-        return {"order": row["order_reference"], "facility": row["facility_name"], "booked": booked}
+        waiting = f"Waiting for {pending['facility_name']} to approve your change of facility." if pending else None
+        return {"order": row["order_reference"], "facility": row["facility_name"], "booked": booked, "pending_change": waiting}
 
     def who(request: Request) -> dict[str, Any] | None:
         # Only the demo driver cookie counts, and eligibility is re-checked on every request.

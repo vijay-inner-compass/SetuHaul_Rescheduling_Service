@@ -63,6 +63,7 @@ function card(b,hold){
   if(!b){parts.push(el("div","place","No active load."));}else{
     parts.push(el("div","place",b.facility),el("div","order",`Order ${b.order}`));
     parts.push(el("div",b.booked?"state booked":"state",b.booked?`Booked: ${b.booked}`:"No slot booked yet."));
+    if(b.pending_change)parts.push(el("div","state held",b.pending_change));
     if(hold)parts.push(el("div","state held",`Held, NOT booked yet: ${hold.slot}. Reply "Yes, confirm" within ${hold.seconds_left} seconds of demo time.`));
   }
   $("#booking").replaceChildren(...parts);
