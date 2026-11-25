@@ -57,11 +57,6 @@ def options_text(msgs):  # type: ignore[no-untyped-def]
     return "; ".join(f"{x['rank']}) {x['start']} dock {x['dock']}" for x in o)
 
 
-# A scripted 'request_hold' for option 1, quoting the driver.
-def hold(quote: str):  # type: ignore[no-untyped-def]
-    return tc_dyn("request_hold", lambda m: {"option_set_id": facts_from(m)["latest_option_set_id"], "rank": 1, "driver_quote": quote})
-
-
 # A scripted 'confirm_reschedule' for the live hold.
 def confirm(quote: str):  # type: ignore[no-untyped-def]
     return tc_dyn("confirm_reschedule", lambda m: {"hold_appointment_id": facts_from(m)["live_hold"]["appointment_id"], "driver_quote": quote})
@@ -75,13 +70,11 @@ def clarify_options_hold_confirm() -> TraceChat:
     c.say("SHP1006 broke down, the repair will take 90 minutes", [
         tc("compute_eta", shipment_id="SHP1006", report={"kind": "repair", "minutes": 90}),
         lambda m: say_text(tool_json(m, "compute_eta")["ask_the_driver"])])
-    # Turn 2: with travel time, the model searches and lists options.
+    # Turn 2: with travel time, the model searches and the system holds the first slot.
     c.say("the drive after that is 45 minutes", [
         tc("search_slot_options", shipment_id="SHP1006", report={"kind": "repair", "minutes": 90, "travel_minutes": 45}),
         lambda m: say_text("Here are your options, none is held yet: " + options_text(m))])
-    # Turn 3: the driver picks option 1, so a hold is placed.
-    c.say("I'll take the first option", [hold("the first option"), say_text("ok")])
-    # Turn 4: the driver confirms, in a later message than the hold.
+    # Turn 3: the driver confirms, in a later message than the hold.
     c.say("yes, confirm it", [confirm("confirm it"), say_text("ok")])
     return c
 
@@ -114,25 +107,21 @@ def injection_attempt() -> TraceChat:
 def hinglish_hold_expiry() -> TraceChat:
     # A fresh world.
     c = world("hinglish-hold-expiry")
-    # Turn 1: Hinglish delay report and options.
+    # Turn 1: Hinglish delay report; the system holds a slot.
     c.say("SHP1006 60 minute late hai", [tc("search_slot_options", shipment_id="SHP1006", report=LATE_60),
                                           lambda m: say_text("Ye options hain (abhi koi hold nahi): " + options_text(m))])
-    # Turn 2: the driver picks option 1; a hold is placed.
-    c.say("pehla option theek hai", [hold("pehla option"), say_text("ok")])
-    # Turn 3: 181 seconds later the hold has lapsed, so the driver is told and nothing is confirmed.
+    # Turn 2: 181 seconds later the hold has lapsed, so the driver is told and nothing is confirmed.
     c.say("haan confirm kar do", [say_text("Naye options dekhte hain.")], advance_s=181)
     return c
 
 
-# Scenario: the driver places a hold then changes their mind.
+# Scenario: a slot is held, then the driver changes their mind.
 def never_mind() -> TraceChat:
     # A fresh world.
     c = world("never-mind-release")
-    # Turn 1: options.
+    # Turn 1: delay report; the system holds a slot.
     c.say("SHP1006 is 60 minutes late", [tc("search_slot_options", shipment_id="SHP1006", report=LATE_60), say_text("options")])
-    # Turn 2: hold.
-    c.say("take the first option please", [hold("the first option"), say_text("ok")])
-    # Turn 3: the hold is released and the original appointment is untouched.
+    # Turn 2: the hold is released and the original appointment is untouched.
     c.say("never mind, keep my original slot", [tc("release_pending_change", shipment_id="SHP1006", driver_quote="keep my original slot"), say_text("ok")])
     return c
 
