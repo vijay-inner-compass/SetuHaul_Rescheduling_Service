@@ -196,7 +196,7 @@ This is the **transactional core**. Read `booking.py` closely.
 * A `Trace` records turns, model rounds and tool events; **live** traces come from a real model, **scripted** ones are regression baselines (they say nothing about model quality). `sanitize_trace` replaces ids and masks phones/emails/secrets.
 * Evaluators are plain functions over a trace: `identity`, `tool_order`, `explicit_approval`, `option_set_ownership`, `state_backed_wording`, `round_caps`, `handoff_complete`.
 * **Replay** feeds recorded model outputs back through the real deterministic layers in a fresh database and compares reply, status and tool results. A mismatch means a rule changed. No network, no model. `python scripts/replay_traces.py`.
-* LangSmith tracing is off unless `SETUHAUL_LANGSMITH=approved` and a key are both set; everything is scrubbed first.
+* LangSmith tracing is off unless `SETUHAUL_LANGSMITH_ENABLED=true` (default false), `SETUHAUL_LANGSMITH=approved` and a key are all set; everything is scrubbed first.
 * `proof.py` and `scale_fixture.py` back the concurrency proof (threads and processes racing for one slot) and the generated 360-load scale profile (`GEN-` ids; not SetuHaul data).
 
 ## 7. One message, end to end (the "happy path")

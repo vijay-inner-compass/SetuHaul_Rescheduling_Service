@@ -582,10 +582,10 @@ def run_bounded_loop(
     # Freeze the graph into a runnable.
     app = graph.compile()
     from setuhaul.langsmith_trace import (
-        build_tracer,  # opt-in only; None unless SETUHAUL_LANGSMITH=approved and a key is set
+        build_tracer,  # opt-in only; None unless switched on, approved and keyed
     )
 
-    # None unless the owner approved LangSmith AND a key is set.
+    # None unless LangSmith is switched on, approved AND a key is set.
     tracer = build_tracer()
     # Run settings. The recursion limit is only a backstop; the real caps are enforced in the nodes above.
     config: RunnableConfig = {"recursion_limit": 2 * policy.max_rounds + 10}  # backstop only

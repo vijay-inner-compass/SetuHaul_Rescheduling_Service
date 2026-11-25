@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, ClassVar
 
 import pytest
@@ -18,7 +19,7 @@ from setuhaul.model_gateway import (
 )
 from tests.helpers import at
 
-ON = {"SETUHAUL_LANGSMITH": "approved", "LANGSMITH_API_KEY": "lsv2_pt_abcdefabcdefabcdefabcdef"}
+ON = {"SETUHAUL_LANGSMITH_ENABLED": "true", "SETUHAUL_LANGSMITH": "approved", "LANGSMITH_API_KEY": "lsv2_pt_abcdefabcdefabcdefabcdef"}
 POLICY = ModelPolicy(provider="scripted", model_id="s")
 
 
@@ -52,18 +53,19 @@ def reset() -> None:
 
 # --- off by default ------------------------------------------------------------------------------------
 def test_tracing_is_off_without_the_owners_approval_even_if_a_key_exists() -> None:
+    on = {"SETUHAUL_LANGSMITH_ENABLED": "true"}
     for env in ({}, {"LANGSMITH_API_KEY": "k"}, {"SETUHAUL_LANGSMITH": "yes", "LANGSMITH_API_KEY": "k"},
                 {"LANGSMITH_TRACING": "true", "LANGSMITH_API_KEY": "k"}):
-        s = tracing_status(env)
+        s = tracing_status({**on, **env})
         assert not s.enabled and "not opted in" in s.reason
         assert build_tracer(env, client_factory=StubClient) is None
     assert StubClient.built == []
 
 
 def test_approval_without_a_key_stays_off_and_says_why() -> None:
-    s = tracing_status({"SETUHAUL_LANGSMITH": "approved"})
+    s = tracing_status({"SETUHAUL_LANGSMITH_ENABLED": "true", "SETUHAUL_LANGSMITH": "approved"})
     assert not s.enabled and "LANGSMITH_API_KEY" in s.reason
-    assert build_tracer({"SETUHAUL_LANGSMITH": "approved"}, client_factory=StubClient) is None
+    assert build_tracer({"SETUHAUL_LANGSMITH_ENABLED": "true", "SETUHAUL_LANGSMITH": "approved"}, client_factory=StubClient) is None
 
 
 def test_approval_and_key_turn_it_on_with_defaults_and_overrides() -> None:
@@ -76,7 +78,7 @@ def test_approval_and_key_turn_it_on_with_defaults_and_overrides() -> None:
 def test_the_loop_adds_no_tracer_and_forces_global_tracing_off_when_not_approved(monkeypatch: pytest.MonkeyPatch) -> None:
     import os
 
-    for k in ("SETUHAUL_LANGSMITH", "LANGSMITH_API_KEY"):
+    for k in ("SETUHAUL_LANGSMITH_ENABLED", "SETUHAUL_LANGSMITH", "LANGSMITH_API_KEY"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("LANGSMITH_TRACING", "true")
     seen: list[Any] = []
@@ -183,3 +185,27 @@ def test_flush_is_safe_with_no_tracer_and_with_a_broken_one() -> None:
 
 def test_redact_text_keeps_a_date_followed_by_a_time() -> None:
     assert redact_text("eta 2026-08-04 11:50 and call +91-9000010006") == "eta 2026-08-04 11:50 and call [PHONE]"
+
+
+def test_tracing_stays_off_by_default_even_when_approved_and_keyed() -> None:
+    env = {k: v for k, v in ON.items() if k != "SETUHAUL_LANGSMITH_ENABLED"}
+    status = tracing_status(env)
+    assert not status.enabled and "SETUHAUL_LANGSMITH_ENABLED" in status.reason
+    assert build_tracer(env, client_factory=StubClient) is None
+
+
+@pytest.mark.parametrize("value,on", [("true", True), ("1", True), ("YES", True), ("on", True),
+                                      ("false", False), ("0", False), ("", False), ("enabled?", False)])
+def test_the_flag_turns_tracing_on_and_off(value: str, on: bool) -> None:
+    assert tracing_status({**ON, "SETUHAUL_LANGSMITH_ENABLED": value}).enabled is on
+
+
+def test_a_rate_limit_is_reported_once_and_not_for_every_batch(caplog: pytest.LogCaptureFixture) -> None:
+    build_tracer(ON, client_factory=StubClient)
+    log = logging.getLogger("langsmith.client")
+    caplog.set_level(logging.WARNING, logger="langsmith.client")
+    for _ in range(5):
+        log.warning("Failed to send compressed multipart ingest: LangSmithRateLimitError: Rate limit exceeded")
+    log.warning("something else worth seeing")
+    texts = [r.getMessage() for r in caplog.records]
+    assert sum("Rate limit exceeded" in t for t in texts) == 1 and "something else worth seeing" in texts
