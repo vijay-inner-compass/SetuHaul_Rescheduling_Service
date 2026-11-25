@@ -64,7 +64,7 @@ from redis import Redis
 from starlette.concurrency import run_in_threadpool
 
 # Web sessions, the role guard and the facility scope of cases.
-from setuhaul.auth import sessions
+from setuhaul.auth import same_origin, sessions
 from setuhaul.auth.authz import AuthzError, require_role
 from setuhaul.auth.google import GoogleVerifier
 
@@ -288,6 +288,14 @@ def create_app(deps: AppDeps) -> FastAPI:
 
     # Interactive docs and the schema endpoint are switched off so the surface is exactly the routes below.
     app = FastAPI(title="SetuHaul rescheduling service", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+
+    # Cookie-authenticated writes must come from our own pages. Registered first, so it runs inside the request-id step.
+    @app.middleware("http")
+    async def same_origin_only(request: Request, call_next):  # type: ignore[no-untyped-def]
+        if same_origin.is_cross_site(request, deps.public_url):
+            await run_in_threadpool(same_origin.record_refusal, deps, request)
+            return _reject(request.state.request_id, 403, "CROSS_SITE_REQUEST")
+        return await call_next(request)
 
     # Runs around every request.
     @app.middleware("http")

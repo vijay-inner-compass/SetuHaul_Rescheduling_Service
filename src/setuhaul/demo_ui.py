@@ -52,7 +52,7 @@ from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 # Request body models.
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # Runs blocking database code in a worker thread.
 from starlette.concurrency import run_in_threadpool
@@ -199,6 +199,17 @@ class ClaimIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     coordinator: str
+
+    # "web:" marks a signed-in user's identity; the console must not be able to claim as one.
+    @field_validator("coordinator")
+    @classmethod
+    def not_a_web_identity(cls, value: str) -> str:
+        # Imported here, like the other api names in this module.
+        from setuhaul.api import WEB_PREFIX
+
+        if value.startswith(WEB_PREFIX):
+            raise ValueError("coordinator names may not start with the web identity prefix")
+        return value
 
 
 # A coordinator resolving a case.

@@ -47,7 +47,7 @@ def _user_json(user: User, last_login_at: str | None) -> dict[str, Any]:
             "display_name": user.display_name, "facilities": list(user.facilities), "last_login_at": last_login_at}
 
 
-def _parse_since(raw: str) -> str:
+def parse_since(raw: str) -> str:
     # ISO timestamp with an offset, else 422; normalised to IST so it sorts like the +05:30 stamps the clock writes.
     try:
         parsed = datetime.fromisoformat(raw)
@@ -130,7 +130,7 @@ def register_admin_api(app: FastAPI, deps: AppDeps) -> None:
 
         def read(conn: sqlite3.Connection) -> Response:
             # Validate and normalise before any query runs.
-            floor = _parse_since(since) if since is not None else None
+            floor = parse_since(since) if since is not None else None
             capped = min(limit if limit > 0 else DEFAULT_AUDIT_LIMIT, MAX_AUDIT_LIMIT)
             rows = audit.query(conn, actor=actor, action=action, outcome=outcome, since=floor, limit=capped)
             # Fixed columns only; detail is scrubbed again on the way out, whoever wrote the row.

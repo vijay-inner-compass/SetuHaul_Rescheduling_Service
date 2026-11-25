@@ -9,13 +9,14 @@ import sqlite3
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from setuhaul.api import claim_label
 from setuhaul.auth import audit, onboarding, projects, sessions, users
-from setuhaul.auth.admin_api import DEFAULT_AUDIT_LIMIT, _parse_since
+from setuhaul.auth.admin_api import DEFAULT_AUDIT_LIMIT, parse_since
 from setuhaul.auth.authz import AuthzError, assert_facility, require_role
 from setuhaul.auth.users import User
 from setuhaul.auth.warehouse_routes import (
@@ -53,6 +54,11 @@ _CELL_CLASSES = {"AVAILABLE": "available", "BOOKED": "booked", "HELD": "held", "
 def esc(value: object) -> str:
     # The one escaping helper: every dynamic value in every page passes through here, quotes included.
     return html.escape("" if value is None else str(value), quote=True)
+
+
+def _segment(value: object) -> str:
+    # An id placed in a URL path: percent-encoded, so it can never add a segment, a query or a fragment.
+    return quote(str(value), safe="")
 
 
 def _respond(body: str, status: int = 200) -> HTMLResponse:
@@ -134,7 +140,7 @@ def _users_section(conn: sqlite3.Connection, me: User) -> str:
         if found is None:
             continue
         # Only an active user other than yourself can be disabled.
-        action = (_button("Disable", f"/v1/admin/users/{found.user_id}/disable", confirm=f"Disable {found.email}?")
+        action = (_button("Disable", f"/v1/admin/users/{_segment(found.user_id)}/disable", confirm=f"Disable {found.email}?")
                   if found.status == "ACTIVE" and found.user_id != me.user_id else "")
         rows.append([esc(found.email), esc(found.display_name), esc(found.role), esc(found.status),
                      esc(", ".join(found.facilities)), esc(row["last_login_at"] or "never"), action])
@@ -153,8 +159,8 @@ def _pending_section(conn: sqlite3.Connection) -> str:
     for d in onboarding.pending(conn):
         # The licence number and the full phone are never shown.
         did = d["driver_id"]
-        actions = (_button("Approve", f"/v1/drivers/{did}/approve") + " "
-                   + _button("Reject", f"/v1/drivers/{did}/reject", confirm=f"Reject {d['driver_name']}?"))
+        actions = (_button("Approve", f"/v1/drivers/{_segment(did)}/approve") + " "
+                   + _button("Reject", f"/v1/drivers/{_segment(did)}/reject", confirm=f"Reject {d['driver_name']}?"))
         rows.append([esc(did), esc(d["driver_name"]), esc(mask_phone(d["phone"])), esc(d["carrier_id"]), esc(d["vehicle_id"]),
                      esc(d["licence_expiry"]), actions])
     table = _table(("Driver", "Name", "Phone", "Carrier", "Vehicle", "Licence expiry", ""), rows, "No drivers are waiting.")
@@ -168,7 +174,7 @@ def _audit_section(conn: sqlite3.Connection, query: dict[str, str]) -> str:
     # A bad timestamp is explained, and the log is then shown unfiltered by time.
     if since:
         try:
-            floor = _parse_since(since)
+            floor = parse_since(since)
         except AuthError:
             note = '<p class="error">Since must be an ISO timestamp with an offset, for example 2026-08-04T09:00:00+05:30.</p>'
     found = audit.query(conn, actor=actor or None, action=action or None, outcome=outcome or None, since=floor,
@@ -252,12 +258,12 @@ def _projects_section(conn: sqlite3.Connection, user: User, today: date, facilit
     for p in projects.list_projects(conn, user):
         pid = str(p["project_id"])
         active = [str(d) for d in p["driver_ids"]]  # type: ignore[attr-defined]
-        drivers = "".join(f"<div>{esc(d)} " + _button("Release", f"/v1/projects/{pid}/release", {"driver_id": d},
+        drivers = "".join(f"<div>{esc(d)} " + _button("Release", f"/v1/projects/{_segment(pid)}/release", {"driver_id": d},
                                                          f"Release {d}?") + "</div>" for d in active)
         allocate = ""
         free = [(v, label) for v, label in eligible if v not in active]
         if p["status"] == "ACTIVE" and free:
-            allocate = (f'<form data-api="/v1/projects/{esc(pid)}/allocate"><select name="driver_id">{_options(free)}</select>'
+            allocate = (f'<form data-api="/v1/projects/{esc(_segment(pid))}/allocate"><select name="driver_id">{_options(free)}</select>'
                         '<button type="submit">Allocate</button></form>')
         rows.append([esc(pid), esc(p["customer_name"]), esc(p["contract_ref"]), esc(p["facility_id"]), esc(p["status"]),
                      esc(f"{p['starts_on']} - {p['ends_on'] or 'open'}"), drivers + allocate])
@@ -273,7 +279,7 @@ def _projects_section(conn: sqlite3.Connection, user: User, today: date, facilit
 def _drivers_section(conn: sqlite3.Connection, user: User, today: date) -> str:
     rows = []
     for d in driver_list(conn, user, today):
-        revoke = (_button("Revoke Telegram", f"/v1/warehouse/drivers/{d['driver_id']}/telegram/revoke",
+        revoke = (_button("Revoke Telegram", f"/v1/warehouse/drivers/{_segment(d['driver_id'])}/telegram/revoke",
                           confirm=f"Revoke Telegram for {d['driver_name']}?") if d["telegram_status"] == "BOUND" else "")
         rows.append([esc(d["driver_id"]), esc(d["driver_name"]), esc(d["phone"]), esc(d["approval_status"]),
                      "Yes" if d["licence_valid"] else "No", esc(d["telegram_status"]), revoke])
@@ -337,6 +343,22 @@ def register_pages(app: FastAPI, deps: AppDeps) -> None:
         finally:
             conn.close()
 
+    # The user behind the session cookie, or None (also when the database cannot say).
+    def signed_in(request: Request) -> User | None:
+        token = request.cookies.get(sessions.COOKIE_NAME)
+        if not token:
+            return None
+        try:
+            conn = open_connection(path=deps.db_path, readonly=True)
+        except (sqlite3.Error, FileNotFoundError):
+            return None
+        try:
+            return sessions.resolve(conn, token, deps.clock)
+        except sqlite3.Error:
+            return None
+        finally:
+            conn.close()
+
     # The HTML-aware front of the role guard: the JSON guard runs unchanged, only its refusal is shown as a page.
     def guarded(request: Request, *roles: Any) -> User | Response:
         try:
@@ -346,7 +368,8 @@ def register_pages(app: FastAPI, deps: AppDeps) -> None:
             if exc.status == 401:
                 return _redirect("/")
             if exc.status == 403:
-                return _message_page("Not allowed", "Your account cannot open this page.", 403)
+                # Show who is signed in, with the sign-out button, like every other page.
+                return _message_page("Not allowed", "Your account cannot open this page.", 403, signed_in(request))
             return _message_page("Unavailable", "The service is not available.", exc.status)
 
     @app.get("/", response_class=HTMLResponse)
