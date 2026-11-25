@@ -266,9 +266,9 @@ const $=s=>document.querySelector(s);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const state={drivers:[],driverId:null,facility:null,facilities:[],tab:"cases",lang:"en",cfg:null,busy:false,coordinators:[],lastCases:[],lastActivity:null,holdEnds:null,gps:{driver:null,fac:null,dirty:false,ok:false}};
 const QUICK={
-  en:[["Running 60 minutes late","my truck is 60 minutes late"],["Breakdown, 90 minute repair","my truck broke down, the repair will take 90 minutes"],["Take the first option","I will take the first option"],["Confirm it","yes, please confirm"],["Keep my original slot","never mind, keep my original slot"],["Cancel my appointment","please cancel my appointment"]],
-  hinglish:[["60 minute late","meri gaadi 60 minute late hai"],["Gaadi kharab","meri gaadi kharab ho gayi hai, repair mein 90 minute lagenge"],["Pehla option","pehla option theek hai"],["Confirm karo","haan, confirm kar do"],["Original slot rakho","rehne do, mera original slot rakho"]],
-  hi:[["60 मिनट लेट","मेरा ट्रक 60 मिनट लेट है"],["ट्रक खराब","मेरा ट्रक खराब हो गया है, मरम्मत में 90 मिनट लगेंगे"],["पहला विकल्प","पहला विकल्प ठीक है"],["कन्फर्म करें","हाँ, कन्फर्म करें"]]
+  en:[["Running 60 minutes late","my truck is 60 minutes late"],["Breakdown, 90 minute repair","my truck broke down, the repair will take 90 minutes"],["Confirm it","yes, please confirm"],["Keep my original slot","never mind, keep my original slot"],["Cancel my appointment","please cancel my appointment"]],
+  hinglish:[["60 minute late","meri gaadi 60 minute late hai"],["Gaadi kharab","meri gaadi kharab ho gayi hai, repair mein 90 minute lagenge"],["Confirm karo","haan, confirm kar do"],["Original slot rakho","rehne do, mera original slot rakho"]],
+  hi:[["60 मिनट लेट","मेरा ट्रक 60 मिनट लेट है"],["ट्रक खराब","मेरा ट्रक खराब हो गया है, मरम्मत में 90 मिनट लगेंगे"],["कन्फर्म करें","हाँ, कन्फर्म करें"]]
 };
 const STATUS_CHIP={REPLIED:["ok","Replied"],HANDOFF:["warn","Handed to operations"],TEMPORARILY_UNAVAILABLE:["bad","Temporarily unavailable"],LANGUAGE_PROMPT:["info","Language question"]};
 
