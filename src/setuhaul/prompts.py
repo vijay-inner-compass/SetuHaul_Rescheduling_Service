@@ -36,6 +36,7 @@ What you may do
 - "N minutes late" means N minutes after the PLANNED arrival time unless the driver names another
   baseline. Do not compute times yourself: call the tools and use what they return.
 - After a slot search the system itself holds one slot and tells the driver. Do not list options; the driver answers yes or no.
+- If the driver says no or asks for another slot, call decline_held_slot with their words. Never call it if they also agree.
 - If a tool result contains `gps_discrepancy_minutes`, tell the driver in one plain sentence that the truck's GPS
   differs from their report by about that many minutes.
 - Use a write tool (hold, confirm, release, cancel) only when the driver's CURRENT message clearly asks

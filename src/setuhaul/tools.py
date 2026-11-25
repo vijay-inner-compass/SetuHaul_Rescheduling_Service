@@ -10,6 +10,7 @@ from __future__ import annotations
 
 # json encodes tool results for the model.
 import json
+import re
 
 # sqlite3 for the Connection type.
 import sqlite3
@@ -39,6 +40,7 @@ from setuhaul.booking import (
     acquire_hold,
     confirm_reschedule,
     get_hold,
+    release_hold,
 )
 
 # Release, cancel and return-to-original operations.
@@ -84,7 +86,12 @@ from setuhaul.model_gateway import ToolCall, ToolResult, tool_schema
 from setuhaul.observability import InMemoryExporter, RequestContext, start_span
 
 # Stored menus.
-from setuhaul.option_history import get_option_set, reconcile_option_set, record_option_set
+from setuhaul.option_history import (
+    context_now,
+    get_option_set,
+    reconcile_option_set,
+    record_option_set,
+)
 from setuhaul.partner_booking import request_slot
 
 # ETA and constraint contracts.
@@ -153,6 +160,11 @@ class HoldArgs(_Args):
     option_set_id: str
     rank: int = Field(ge=1, le=3)
     driver_quote: str = Field(min_length=1, description="The driver's own words, copied from their current message.")
+
+
+# A write that needs only the driver's own words.
+class QuoteArgs(_Args):
+    driver_quote: str = Field(min_length=1)
 
 
 # Arguments for confirm_reschedule.
@@ -498,7 +510,8 @@ def _search_slot_options(ctx: ToolContext, a: SearchArgs) -> dict[str, Any]:
     # Current state.
     mem = ctx.memory.load(ctx.driver_id, ctx.thread_id).state
     # Remember this menu as the latest, so 'option 1' refers to it.
-    ctx.memory.save_structured_state(ctx.driver_id, ctx.thread_id, mem.model_copy(update={"latest_option_set_id": shown.option_set_id}))
+    ctx.memory.save_structured_state(ctx.driver_id, ctx.thread_id,
+                                     mem.model_copy(update={"latest_option_set_id": shown.option_set_id, "offered_slot_ids": ()}))
     # Hold the first of them straight away.
     held = _auto_hold(ctx, shown.option_set_id, [i.rank for i in shown.items])
     # Every line was taken in the meantime: a person has to help, and nothing is promised.
@@ -603,6 +616,55 @@ def _auto_hold(ctx: ToolContext, option_set_id: str, ranks: list[int]) -> dict[s
             ctx.turn.writes_done += 1
             return out
     return None
+
+
+# Words that mean agreement. A message carrying one is never read as declining, whatever else it says.
+_AGREE = re.compile(r"(?<!\w)(yes|yeah|ok(ay)?|confirm\w*|haan?|हाँ|हां|कन्फर्म)(?!\w)", re.IGNORECASE)
+
+
+def sounds_like_agreement(text: str) -> bool:
+    return _AGREE.search(text) is not None
+
+
+# WRITE tool: the driver says no to the held slot. Release it and hold the next one they have not been offered.
+def _decline_held_slot(ctx: ToolContext, a: QuoteArgs) -> dict[str, Any]:
+    if sounds_like_agreement(ctx.message_text):
+        return {"status": "AMBIGUOUS", "note": "The message also agrees. Ask the driver to reply Yes or No; nothing changed."}
+    hold = _state(ctx).hold
+    view = get_hold(ctx.conn, hold.appointment_id, ctx.clock) if hold else None
+    if view is None or view.driver_id != ctx.driver_id or view.thread_id != ctx.thread_id:
+        raise AuthError("FOREIGN_HOLD")
+    release_hold(ctx.conn, ctx.driver_id, ctx.thread_id, view.appointment_id, "DRIVER_CANCELLED", ctx.clock)
+    mem = ctx.memory.load(ctx.driver_id, ctx.thread_id).state
+    offered = tuple(dict.fromkeys((*mem.offered_slot_ids, view.slot_id)))
+    ctx.memory.save_structured_state(ctx.driver_id, ctx.thread_id, mem.model_copy(update={"hold": None, "offered_slot_ids": offered}))
+    latest = mem.latest_option_set_id
+    opt = get_option_set(ctx.conn, ctx.driver_id, ctx.thread_id, view.shipment_id, latest) if latest else None
+    # First the rest of the stored list.
+    if opt is not None:
+        for item in sorted(opt.items, key=lambda i: i.rank):
+            if item.slot_id not in offered:
+                out = _hold_rank(ctx, opt.option_set_id, item.rank)
+                if out["status"] == "HELD":
+                    return out
+        # Then search again with the same arrival, leaving out everything already offered.
+        now = ctx.clock.now()
+        fctx = context_now(opt, now)
+        state = build_facility_state(ctx.conn, fctx.facility_id, now)
+        result = search_feasible_slots(fctx, state)
+        fresh = tuple(d for d in result.feasible if d.slot_id not in offered) if result.status == "OK" else ()
+        if fresh:
+            shown = record_option_set(ctx.conn, fctx, ctx.thread_id, rank_options(fresh, limit=3), state, ctx.clock)
+            mem = ctx.memory.load(ctx.driver_id, ctx.thread_id).state
+            ctx.memory.save_structured_state(ctx.driver_id, ctx.thread_id,
+                                             mem.model_copy(update={"latest_option_set_id": shown.option_set_id}))
+            for item in shown.items:
+                out = _hold_rank(ctx, shown.option_set_id, item.rank)
+                if out["status"] == "HELD":
+                    return out
+    # Nothing left: a person helps, and the original booking stands.
+    _handoff(ctx, "NO_SLOT", view.shipment_id, "The driver declined every slot that could be offered.", offered=len(offered))
+    return {"status": "RELEASED", "note": "No other slot is available; operations will take over. The original booking is unchanged."}
 
 
 # WRITE tool: confirm a hold made in an EARLIER message.
@@ -763,6 +825,11 @@ REGISTRY: dict[str, ToolSpec] = {t.name: t for t in [
         returns="CONFIRMED (the system words the confirmation) or why not.",
         fails="APPROVAL_NOT_PRESENT, ONE_WRITE_PER_MESSAGE, FOREIGN_HOLD."),
         ConfirmArgs, _confirm_reschedule, write=True, available=_can_confirm),
+    ToolSpec("decline_held_slot", _JOB.format(
+        use="when the driver says no to the held slot, or asks for the next or another slot.",
+        dont="when the message agrees in any way, or to keep the original appointment (use release_pending_change).",
+        args="driver_quote.", returns="HELD with the next slot (the system words it), or RELEASED when none is left.",
+        fails="APPROVAL_NOT_PRESENT, FOREIGN_HOLD."), QuoteArgs, _decline_held_slot, write=True, available=_can_confirm),
     ToolSpec("release_pending_change", _JOB.format(
         use="when the driver says never mind / keep my original slot while a hold exists.",
         dont="to cancel a confirmed appointment.", args="shipment_id, driver_quote.",

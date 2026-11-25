@@ -95,6 +95,10 @@ class StubGateway:
         shipment = (facts.get("active_shipment_ids") or [None])[0]
         # The shipment a cancel or release is about: the thread's selected one, else the first active one.
         target = facts.get("selected_shipment_id") or shipment
+        # "no" (and nothing agreeing) while a slot is held: ask for the next one.
+        refused = re.match(r"(no|nahi)\b", low.strip())
+        if refused and facts.get("live_hold") and "yes" not in low and "confirm" not in low:
+            return ModelResponse(tool_calls=(ToolCall(id="s1", name="decline_held_slot", arguments={"driver_quote": refused.group(1)}),))
         # "never mind" / "keep my original slot" while a hold exists: release the hold; the original appointment is untouched.
         keep = next((w for w in ("never mind", "keep my original", "original slot", "original") if w in low), None)
         if keep and target and facts.get("live_hold"):
