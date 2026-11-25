@@ -41,7 +41,7 @@ def is_cross_site(request: Request, public_url: str = "") -> bool:
     site = request.headers.get("sec-fetch-site")
     if site is not None:
         return site not in ("same-origin", "none")
-    # Otherwise compare the Origin's host with the one we are served as.
+    # Otherwise compare the Origin with the one we are served as.
     origin = request.headers.get("origin")
     if origin is None:
         # Neither header: not a browser (browsers send Origin on cross-site writes).
@@ -49,8 +49,12 @@ def is_cross_site(request: Request, public_url: str = "") -> bool:
     parts = urlsplit(origin)
     if public_url:
         public = urlsplit(public_url)
+        # The configured URL says which scheme we are served on, so http and https are different origins.
+        if parts.scheme != public.scheme:
+            return True
         expected = _host_port(public.netloc, public.scheme)
     else:
+        # Without it only the host is known for sure (a TLS-terminating proxy hides the scheme).
         expected = _host_port(request.headers.get("host", ""), parts.scheme)
     # "null" and other opaque origins have no host and so never match.
     return not parts.netloc or _host_port(parts.netloc, parts.scheme) != expected

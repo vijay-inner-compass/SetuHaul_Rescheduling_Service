@@ -283,7 +283,9 @@ def test_unset_public_url_uses_request_host(tmp_path: Path, clock: FakeClock) ->
 
 
 @pytest.mark.parametrize("bad", ["haul.example.com", "ftp://haul.example.com", "https://haul.example.com/app",
-                                 "https://haul.example.com?x=1", "https://", "https://h.example.com#f", "https://h.example.com/"])
+                                 "https://haul.example.com?x=1", "https://", "https://h.example.com#f", "https://h.example.com/",
+                                 "https://h.example.com:abc", "https://h.example.com:8443x", "https://h.example.com:99999",
+                                 "https://[::1"])
 def test_bad_public_url_refused_at_startup(tmp_path: Path, clock: FakeClock, bad: str) -> None:
     with pytest.raises(ValueError, match="SETUHAUL_PUBLIC_URL"):
         _make_with(tmp_path, clock, FakeGoogleVerifier(), public_url=bad)

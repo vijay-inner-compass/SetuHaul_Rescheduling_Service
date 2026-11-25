@@ -43,11 +43,17 @@ def validate_public_url(url: str) -> str:
     # Empty means "derive from the request"; otherwise an absolute http(s) origin with nothing after the host.
     if not url:
         return ""
-    parts = urlsplit(url)
+    problem = ("SETUHAUL_PUBLIC_URL must be an absolute http(s) origin such as https://haul.example.com "
+               "(no path, query or trailing slash; a port, if given, is a number up to 65535)")
+    try:
+        parts = urlsplit(url)
+        # Reading the port is what parses it: a non-numeric or out-of-range one raises here, at start-up.
+        _ = parts.port
+    except ValueError:
+        raise ValueError(problem) from None
     if (parts.scheme not in ("http", "https") or not parts.hostname or parts.path or parts.query or parts.fragment
             or parts.username is not None or url.endswith(("?", "#"))):
-        raise ValueError("SETUHAUL_PUBLIC_URL must be an absolute http(s) origin such as https://haul.example.com "
-                         "(no path, query or trailing slash)")
+        raise ValueError(problem)
     return url
 
 

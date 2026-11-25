@@ -119,6 +119,22 @@ def test_public_url_host_is_the_expected_origin(world: World) -> None:
     assert client.post("/auth/logout", headers={"origin": "https://haul.example.com"}).status_code == 200
 
 
+@pytest.mark.parametrize("public_url, origin, status", [
+    # Same host, wrong scheme: a different origin.
+    ("https://haul.example.com", "http://haul.example.com", 403),
+    ("http://haul.example.com", "https://haul.example.com", 403),
+    ("https://haul.example.com", "http://haul.example.com:443", 403),
+    ("https://haul.example.com", "https://haul.example.com:443", 200),
+    ("https://haul.example.com:8443", "https://haul.example.com:8443", 200),
+])
+def test_public_url_origin_fallback_compares_the_scheme(world: World, public_url: str, origin: str, status: int) -> None:
+    world.deps.public_url = public_url
+    app = create_app(world.deps)
+    client = TestClient(app, base_url="http://internal:8000", follow_redirects=False)
+    client.cookies.set(sessions.COOKIE_NAME, world.client("wh_a").cookies[sessions.COOKIE_NAME])
+    assert client.post("/auth/logout", headers={"origin": origin}).status_code == status
+
+
 def test_channel_routes_without_a_session_cookie_are_unaffected(world: World) -> None:
     world.deps.telegram_secret = b"t" * 20
     app = create_app(world.deps)
