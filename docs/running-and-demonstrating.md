@@ -326,7 +326,7 @@ Nothing in this section has been run against real Google or Telegram. The flows 
 
 ### Settings
 
-Read from the process environment by `create_app_from_env`. **`.env` is not loaded by the service**; `.env.example` lists the names.
+Read from the process environment by `create_app_from_env`. **The auth and Telegram variables below are not loaded from `.env` at start-up**: set them in the service's real environment (`.env.example` lists the names). The partner-mail settings are the exception: they read `.env` when first used.
 Below, `<base>` is the public origin of your service, for example `https://haul.example.com`.
 
 | Variable | Effect |
@@ -336,7 +336,7 @@ Below, `<base>` is the public origin of your service, for example `https://haul.
 | `SETUHAUL_GOOGLE_CLIENT_ID`, `SETUHAUL_GOOGLE_CLIENT_SECRET` | Google sign-in; without both, `/auth/login` answers 503 `GOOGLE_NOT_CONFIGURED` |
 | `SETUHAUL_SESSION_SECRET` | signs the sign-in state cookie; at least 32 bytes, otherwise Google sign-in stays off (a warning is logged) |
 | `SETUHAUL_PUBLIC_URL` | origin only (`https://host[:port]`, no path or trailing slash); anything else, including a non-numeric port, stops start-up. Sets the redirect URI and the `Secure` cookie flag and is what the same-origin check compares scheme and host with. **Set it behind any proxy or HTTPS terminator**: without it the redirect URI comes from the request, and a proxy that rewrites `Host` can cause 403 `CROSS_SITE_REQUEST` on every change |
-| `SETUHAUL_BOOTSTRAP_ADMIN_EMAIL` | at every start-up this address is an active admin: created if missing, re-activated if disabled or demoted (the way back from a lockout) |
+| `SETUHAUL_BOOTSTRAP_ADMIN_EMAIL` | at every start-up this address is an active admin: created if missing, its role and status restored if disabled or demoted. It does not clear a locked break-glass password (see Owner step 3) |
 | `SETUHAUL_LOCAL_ADMIN` | `1` shows the break-glass password form on `/` and enables `POST /auth/local-admin`; otherwise that route is 404 |
 | `SETUHAUL_TELEGRAM_BOT_TOKEN` | the bot's token; used to send replies |
 | `SETUHAUL_TELEGRAM_WEBHOOK_SECRET` | checked against Telegram's `X-Telegram-Bot-Api-Secret-Token` header; at least 16 characters. If either Telegram value is missing or the secret is short, `/v1/telegram/webhook` answers 503 |
@@ -384,7 +384,10 @@ curl -X POST "https://api.telegram.org/bot<BOT_TOKEN>/setWebhook" -d "url=<base>
 2. Optional break-glass: run `python scripts/set_admin_password.py <your-email>` on the server, with `SETUHAUL_DB_PATH` set to the same
    database (the address must already be an active admin; the password is prompted for, 12 to 1024 characters), then restart with
    `SETUHAUL_LOCAL_ADMIN=1`. Five wrong attempts lock that account's password for 15 minutes; a locked and a wrong password look the same
-   to the caller (the audit log tells them apart). A break-glass session lasts 1 hour, a Google session 8 hours.
+   to the caller (the audit log tells them apart). The lock clears after the 15 minutes, or at once when `set_admin_password.py` sets a new
+   password; restarting with `SETUHAUL_BOOTSTRAP_ADMIN_EMAIL` does not clear it. Every attempt on the enabled route is audited, including a
+   malformed body or an over-long password (`LOCAL_ADMIN_REFUSED`, reason `BAD_REQUEST`, none of the submitted values kept).
+   A break-glass session lasts 1 hour, a Google session 8 hours.
 
 ### Using it
 
@@ -393,14 +396,21 @@ curl -X POST "https://api.telegram.org/bot<BOT_TOKEN>/setWebhook" -d "url=<base>
 3. The admin approves under **Pending drivers**.
 4. The warehouse authority creates a project for one of their facilities and allocates the driver.
 5. The driver opens the bot, sends any message, taps **Share my phone number**, and is linked if the number is theirs and matches exactly one eligible driver. Then they chat as usual.
-6. To cut access: **Disable** a user (their sessions end at once), or **Revoke Telegram** for a driver.
+6. To cut access: **Disable** a user (their sessions end at once); **Suspend** an approved onboarded driver (admin screen, **Onboarded drivers**;
+   **Re-approve** undoes it while the licence is valid); or **Revoke Telegram** for a driver. A revoke is sticky: sharing the number again,
+   from that or any other account, is refused until someone allowed to clicks **Allow re-link** (audited), after which the driver can link again.
 
 Rules enforced by the server:
 
 * An address that was not invited gets `NOT_INVITED` and no user row. Unverified Google addresses are refused.
 * A warehouse authority sees only their facilities; a case, board or project elsewhere answers "not found". Only a project's creator or an admin changes its drivers.
-* Their driver chats cover only drivers actively allocated to `ACTIVE` projects they created, in facilities they still hold.
+* Their driver chats cover only drivers actively allocated to `ACTIVE`, unexpired (`ends_on` not passed, IST) projects they created, in
+  facilities they still hold, and only messages sent since that allocation began. Messages from before the allocation, after a release, or
+  between a release and a re-allocation are not shown. Admins see every chat.
 * Their driver list shows drivers they added plus those project drivers, with the phone masked.
+* **Revoke Telegram** and **Allow re-link** are for an admin or the warehouse authority who added the driver; supplied drivers: admin only.
+  Allocating a driver to your project does not grant them. Anything else answers 404 `DRIVER_NOT_FOUND`.
+* A suspended (rejected) or licence-expired onboarded driver is refused by the bot, by allocation and by the signed phone channel alike.
 * Admins see everything and can also create projects and allocate.
 * The drivers supplied with the data package (DRV001 to DRV015) have no onboarding profile: they count as approved while `ACTIVE` or `OFF_DUTY`, and their licence expiry is never checked.
 * Every bot refusal is the same neutral message; the reason is only in the audit log.
@@ -414,8 +424,9 @@ Rules enforced by the server:
 * Drivers have no web account or screen.
 * An admin can create projects and allocate drivers, although one line of the design spec says admins only read projects.
 * Drivers on projects created by an admin do not appear in any warehouse authority's chats.
-* A driver is not tied to a warehouse: any eligible driver id can be allocated through the API by a warehouse authority to their own project, after which that driver's chats (including those about other facilities' loads) are visible to them.
-* The screens cannot suspend or edit an approved driver, renew a licence, close a project, change a user's facilities or re-enable a disabled user (only the bootstrap admin comes back). **Revoke Telegram** alone is not a ban: an eligible driver can link again by sharing their number.
+* A driver is not tied to a warehouse: any eligible driver id can be allocated through the API by a warehouse authority to their own project. From then on, until release, that driver's new messages (including ones about other facilities' loads) are visible to them; earlier history is not.
+* The screens cannot edit a driver, renew a licence, close a project, change a user's facilities or re-enable a disabled user (only the bootstrap admin comes back).
+* A message sent to the bot by a revoked account gets the neutral refusal, with no share button and no audit row (only contact shares are audited).
 * Migration 012 stops on contract references that differ only in case.
 * Phone rules are India-first: a bare 10-digit number is read as `+91`, and a trunk `0` after any other country code is rejected (including numbers where that `0` is genuine, such as Italian landlines).
 * The Google ID token signature is not verified. The token comes directly from Google's token endpoint over TLS (OIDC Core 3.1.3.7); issuer, audience, expiry, nonce and verified email are checked. A flow that receives tokens through the browser would need signature verification.
@@ -451,7 +462,8 @@ Always close with the limits: [client-readout.md](client-readout.md) lists what 
 | `/auth/login` answers 503 `GOOGLE_NOT_CONFIGURED` | client id or secret missing, or `SETUHAUL_SESSION_SECRET` shorter than 32 bytes |
 | 403 `CROSS_SITE_REQUEST` from your own pages | set `SETUHAUL_PUBLIC_URL` to exactly the origin in the browser's address bar |
 | Telegram webhook answers 503 / 401 | 503: token or secret missing, or secret shorter than 16 characters. 401: `setWebhook` used a different secret |
-| Locked out of the admin account | restart with `SETUHAUL_BOOTSTRAP_ADMIN_EMAIL` set to it |
+| Admin account disabled or demoted | restart with `SETUHAUL_BOOTSTRAP_ADMIN_EMAIL` set to it (restores role and status only) |
+| Break-glass password locked | wait 15 minutes, or run `python scripts/set_admin_password.py <email>` on the server |
 | `UNKNOWN_PHONE` for a valid driver on your own working database | identities not provisioned; call `provision_identities` (section 7) |
 | `UnicodeEncodeError: 'charmap' codec` | set `PYTHONUTF8=1` before scripts that print Hindi |
 | `[Errno 10048] ... only one usage of each socket address` | the port is taken by an earlier run; stop that process or pass another `--port` |

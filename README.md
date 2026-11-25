@@ -66,19 +66,19 @@ Schedule `jobs/send_partner_requests`, `jobs/poll_partner_replies` and `jobs/exp
 ## Sign-in, roles and the Telegram bot
 | Who | How they get in | What they can do |
 |---|---|---|
-| Admin | Google sign-in (invite only), or the optional break-glass password | `/admin` (invite and disable users, approve drivers, audit log) and `/warehouse` for every facility, including creating projects and allocating drivers |
-| Warehouse authority | Google sign-in (invite only) | `/warehouse` for their facilities: dock board, cases, partner requests, chats of drivers on projects they created, projects, add driver, revoke Telegram |
+| Admin | Google sign-in (invite only), or the optional break-glass password | `/admin` (invite and disable users, approve, suspend and re-approve drivers, audit log) and `/warehouse` for every facility, including creating projects and allocating drivers |
+| Warehouse authority | Google sign-in (invite only) | `/warehouse` for their facilities: dock board, cases, partner requests, chats of drivers on their live projects (messages since allocation only), projects, add driver, revoke / allow re-link Telegram for drivers they added |
 | Driver | Telegram only, bound by sharing their own phone number | chat with the bot about their own loads; no web screen |
 | Service callers | bearer token (case routes) or HMAC signature (driver and GPS channel) | unchanged machine interfaces |
 
-Settings (all from the process environment; see `.env.example`):
+Settings (from the process environment, not loaded from `.env` at start-up; see `.env.example`):
 
 | Variable | Needed for | Rule |
 |---|---|---|
 | `SETUHAUL_GOOGLE_CLIENT_ID`, `SETUHAUL_GOOGLE_CLIENT_SECRET` | Google sign-in | both, or `/auth/login` answers 503 |
 | `SETUHAUL_SESSION_SECRET` | Google sign-in | at least 32 bytes, or Google sign-in stays off |
 | `SETUHAUL_PUBLIC_URL` | behind a proxy or HTTPS | origin only (`https://host[:port]`); malformed values stop start-up. Without it a Host-rewriting proxy can cause 403 `CROSS_SITE_REQUEST` |
-| `SETUHAUL_BOOTSTRAP_ADMIN_EMAIL` | the first admin | created at start-up; also re-activates that admin after a lockout |
+| `SETUHAUL_BOOTSTRAP_ADMIN_EMAIL` | the first admin | created at start-up; also restores that admin's role and status if disabled or demoted (not a locked break-glass password) |
 | `SETUHAUL_LOCAL_ADMIN` | break-glass password | `1` turns it on; set the password with `python scripts/set_admin_password.py <email>` |
 | `SETUHAUL_TELEGRAM_BOT_TOKEN` | Telegram | both Telegram values, or the webhook answers 503 |
 | `SETUHAUL_TELEGRAM_WEBHOOK_SECRET` | Telegram | at least 16 characters, or the route stays off |
