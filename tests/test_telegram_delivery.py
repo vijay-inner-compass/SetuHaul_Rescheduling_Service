@@ -3,20 +3,25 @@
 # Lazy annotations, like the rest of the codebase.
 from __future__ import annotations
 
-from datetime import datetime
+import logging
+import threading
+from datetime import datetime, timedelta
 from pathlib import Path
+
+import pytest
 
 from setuhaul.auth import telegram
 from setuhaul.clock import FakeClock
 from setuhaul.db import make_working_db, open_connection
 from setuhaul.events import append_appointment_event, enqueue_notification
-from setuhaul.jobs.send_driver_notifications import send_driver_notifications
+from setuhaul.jobs.send_driver_notifications import DriverNoticeRunner, send_driver_notifications
 
 
-def _queue(conn, ref: str, key: str, payload: dict | None = None, rtype: str = "DRIVER") -> int:  # type: ignore[no-untyped-def, type-arg]
+def _queue(conn, ref: str, key: str, payload: dict | None = None, rtype: str = "DRIVER", when: datetime | None = None) -> int:  # type: ignore[no-untyped-def, type-arg]
     # Hang the notice on a real history event, as the booking code does.
     apt, ship = tuple(conn.execute("select appointment_id, shipment_id from appointments limit 1").fetchone())
-    when = datetime.fromisoformat("2026-08-04T09:00:00+05:30")
+    # Fresh by default: the tests' clock reads about 09:35.
+    when = when or datetime.fromisoformat("2026-08-04T09:30:00+05:30")
     ev = append_appointment_event(conn, apt, ship, "NOTE", from_status=None, to_status=None, actor_type="SYSTEM",
                                   actor_id=None, reason=None, occurred_at=when)
     enqueue_notification(conn, key, rtype, ref, ev, payload or {"kind": "SLOT_CHANGED", "text": "Slot moved to 10:00"}, when)
@@ -115,3 +120,72 @@ def test_ineligible_backlog_does_not_starve_an_eligible_driver(tmp_path: Path, c
     assert send_driver_notifications(conn, clock, telegram.FakeTelegramClient(), limit=2).sent == 2
     status = {r["outbox_id"]: r["status"] for r in conn.execute("select outbox_id, status from notification_outbox")}
     assert status[first] == "SENT" and status[second] == "SENT" and status[third] == "PENDING"
+
+
+def _row(conn, oid: int) -> tuple:  # type: ignore[no-untyped-def, type-arg]
+    return tuple(conn.execute("select status, last_error from notification_outbox where outbox_id=?", (oid,)).fetchone())
+
+
+def test_a_notice_older_than_thirty_minutes_is_marked_and_not_sent(tmp_path: Path, clock: FakeClock) -> None:
+    conn = open_connection(path=make_working_db(tmp_path / "o.sqlite3"))
+    _bind(conn, clock, 111, "9000010006")
+    old = _queue(conn, "DRV006", "old", {"text": "old"}, when=clock.now() - timedelta(minutes=31))
+    new = _queue(conn, "DRV006", "new", {"text": "new"}, when=clock.now() - timedelta(minutes=29))
+    fake = telegram.FakeTelegramClient()
+    result = send_driver_notifications(conn, clock, fake)
+    assert [t for _, t, _ in fake.sent] == ["new"] and result.sent == 1 and result.permanent_failures == 1
+    assert _row(conn, old) == ("PERMANENT_FAILURE", "TOO_OLD") and _row(conn, new)[0] == "SENT"
+
+
+def test_a_late_binding_driver_gets_no_old_backlog(tmp_path: Path, clock: FakeClock) -> None:
+    conn = open_connection(path=make_working_db(tmp_path / "l.sqlite3"))
+    _queue(conn, "DRV006", "k1", when=clock.now() - timedelta(hours=5))
+    fake = telegram.FakeTelegramClient()
+    assert send_driver_notifications(conn, clock, fake).sent == 0
+    _bind(conn, clock, 111, "9000010006")
+    assert send_driver_notifications(conn, clock, fake).sent == 0 and fake.sent == []
+
+
+def _runner_db(tmp_path: Path, clock: FakeClock) -> Path:
+    path = make_working_db(tmp_path / "r.sqlite3")
+    conn = open_connection(path=path)
+    _bind(conn, clock, 111, "9000010006")
+    _queue(conn, "DRV006", "k1", {"text": "hello"})
+    conn.close()
+    return path
+
+
+def test_a_failing_pass_is_logged_without_secrets_and_the_next_one_sends(
+        tmp_path: Path, clock: FakeClock, caplog: pytest.LogCaptureFixture) -> None:
+    path = _runner_db(tmp_path, clock)
+    calls: list[str] = []
+
+    class Flaky:
+        def send(self, chat_id: int, text: str, request_contact_button: bool = False) -> None:
+            calls.append(text)
+            if len(calls) == 1:
+                raise RuntimeError("https://api.telegram.org/botSECRET/sendMessage")
+
+    runner = DriverNoticeRunner(clock, Flaky(), lambda: open_connection(path=path))
+    assert runner.run_once() is None
+    assert "RuntimeError" in caplog.text and "SECRET" not in caplog.text
+    again = runner.run_once()
+    assert again is not None and again.sent == 1
+
+
+def test_the_runner_thread_sends_and_stops(tmp_path: Path, clock: FakeClock, caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.ERROR)
+    path = _runner_db(tmp_path, clock)
+    sent = threading.Event()
+
+    class Signal:
+        def send(self, chat_id: int, text: str, request_contact_button: bool = False) -> None:
+            sent.set()
+
+    runner = DriverNoticeRunner(clock, Signal(), lambda: open_connection(path=path), interval_s=0.01)
+    runner.start()
+    try:
+        assert sent.wait(5)
+    finally:
+        runner.stop()
+    assert not any(t.name == "setuhaul-driver-notices" and t.is_alive() for t in threading.enumerate())
