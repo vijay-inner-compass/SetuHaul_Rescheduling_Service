@@ -12,6 +12,7 @@ SQLite is the system of record for the prototype.
 
 * [Knowledge transfer](docs/knowledge-transfer.md): background to execution for a new engineer, in one document.
 * [Running and demonstrating](docs/running-and-demonstrating.md): setup, every demo scenario and the real API, with captured output.
+* [Local run and Telegram setup](docs/telegram-local-setup.md): every step from install to a booking made by Telegram message.
 * [Scheduling algorithm](docs/scheduling-algorithm.md): how slots are judged, ranked, held and confirmed.
 * [Code walkthrough](docs/code-walkthrough/README.md): the story behind each layer. Every source file also has line-by-line comments.
 * [Demonstration guide](docs/demonstration-guide.md): what to run, what to type and what you should see.
