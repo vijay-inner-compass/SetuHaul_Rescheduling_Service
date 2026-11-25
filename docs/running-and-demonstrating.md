@@ -437,7 +437,7 @@ Rules enforced by the server:
 
 ### Known limitations
 
-* **Driver notices are sent only when the bot is configured**, by one server process, every 5 seconds; running several server copies could send duplicates. Notices more than 30 minutes old are marked `TOO_OLD` and not sent. Queued for a driver: *hold expired*, facility-change answers and closer-truck offers; booking, cancellation and escalation changes queue none (other operations, partner-warehouse and position messages are written into the chat history only). The demo does not send to Telegram.
+* **Driver notices are sent only when the bot is configured**, by one server process, every 5 seconds; running several server copies could send duplicates. Delivery is at least once: a crash between sending and recording can repeat a message. Notices more than 30 minutes old are marked `TOO_OLD` and not sent. Queued for a driver: *hold expired*, facility-change answers and closer-truck offers; booking, cancellation and escalation changes queue none (other operations, partner-warehouse and position messages are written into the chat history only). The demo does not send to Telegram.
 * The generic `jobs/deliver_notifications` runner does not filter by recipient: a scheduler using it would also mark driver notices as sent without Telegram.
 * Drivers have no web account or screen.
 * An admin can create projects and allocate drivers, although one line of the design spec says admins only read projects.
