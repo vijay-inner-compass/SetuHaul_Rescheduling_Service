@@ -262,7 +262,7 @@ def _projects_section(conn: sqlite3.Connection, user: User, today: date, facilit
         rows.append([esc(pid), esc(p["customer_name"]), esc(p["contract_ref"]), esc(p["facility_id"]), esc(p["status"]),
                      esc(f"{p['starts_on']} - {p['ends_on'] or 'open'}"), drivers + allocate])
     create = ('<h3>New project</h3><form data-api="/v1/projects"><label>Customer <input name="customer_name" required maxlength="120"></label>'
-              '<label>Contract reference <input name="contract_ref" required maxlength="60"></label>'
+              '<label>Contract reference <input name="contract_ref" required maxlength="64"></label>'
               f'<label>Facility <select name="facility_id">{_options(facility_options)}</select></label>'
               f'<label>Starts on <input name="starts_on" type="date" value="{esc(today.isoformat())}" required></label>'
               '<label>Ends on <input name="ends_on" type="date"></label><button type="submit">Create</button></form>')

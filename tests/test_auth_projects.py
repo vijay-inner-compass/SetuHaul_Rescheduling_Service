@@ -3,8 +3,9 @@
 # Lazy annotations, like the rest of the codebase.
 from __future__ import annotations
 
+import shutil
 import sqlite3
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import fakeredis
@@ -16,7 +17,8 @@ from setuhaul.auth import audit, onboarding, projects, sessions, users
 from setuhaul.auth.authz import AuthzError
 from setuhaul.auth.users import User
 from setuhaul.clock import FakeClock
-from setuhaul.db import make_working_db, open_connection
+from setuhaul.config import load_settings
+from setuhaul.db import MIGRATIONS_DIR, apply_migrations, make_working_db, open_connection
 from setuhaul.identity import AuthError
 
 
@@ -103,7 +105,7 @@ def test_create_validates_input(env: Env) -> None:
     kw: dict[str, object] = {"actor": env.wh_a, "customer_name": "Acme", "contract_ref": "V-1",
                              "facility_id": env.fac_a, "starts_on": d, "ends_on": None, "clock": env.clock}
     for bad in ({"ends_on": d - timedelta(days=1)}, {"customer_name": " "}, {"customer_name": "A\x00"},
-                {"contract_ref": ""}, {"contract_ref": "x" * 61}, {"customer_name": "x" * 121}):
+                {"contract_ref": ""}, {"contract_ref": "x" * 65}, {"customer_name": "x" * 121}):
         with pytest.raises(AuthError) as exc:
             projects.create(env.conn, **{**kw, **bad})  # type: ignore[arg-type]
         assert _code(exc) == "INVALID_REQUEST"
@@ -320,3 +322,183 @@ def test_database_untouched_by_refused_create(env: Env) -> None:
     after: int = env.conn.execute("select count(*) from projects").fetchone()[0]
     assert before == after
     assert isinstance(env.conn, sqlite3.Connection)
+
+
+# ---- hardening sweep (11c group D) ----
+
+def _kw(env: Env, **over: object) -> dict[str, object]:
+    return {"actor": env.wh_a, "customer_name": "Acme", "contract_ref": "V-1", "facility_id": env.fac_a,
+            "starts_on": env.clock.now().date(), "ends_on": None, "clock": env.clock, **over}
+
+
+def _other_authority(env: Env) -> User:
+    # A second authority in facility A: it can see A's projects but did not create them.
+    return users.invite(env.conn, actor=env.admin, email="a2@x.com", role="WAREHOUSE_AUTHORITY", display_name="A2",
+                        facilities=(env.fac_a,), clock=env.clock)
+
+
+@pytest.mark.parametrize("action", ["allocate", "release"])
+def test_refusal_rolls_back_a_partial_write(env: Env, monkeypatch: pytest.MonkeyPatch, action: str) -> None:
+    other = _other_authority(env)
+    pid = env.create(env.wh_a)
+    real = projects._load_for_change
+
+    def write_then_check(conn: sqlite3.Connection, *args: object) -> sqlite3.Row:
+        # A write that happens inside the same transaction, before the refusal.
+        conn.execute("update projects set customer_name='PARTIAL' where project_id=?", (pid,))
+        return real(conn, *args)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(projects, "_load_for_change", write_then_check)
+    with pytest.raises(AuthError) as exc:
+        getattr(projects, action)(env.conn, actor=other, project_id=pid, driver_id="DRV001", clock=env.clock)
+    assert _code(exc) == "FORBIDDEN"
+    reader = open_connection(path=env.path, readonly=True)
+    try:
+        # The partial write is gone; the refusal itself is still audited.
+        assert reader.execute("select customer_name from projects where project_id=?", (pid,)).fetchone()[0] == "Acme"
+        assert [r["outcome"] for r in audit.query(reader) if r["target_id"] == pid and r["outcome"] == "FORBIDDEN"] == ["FORBIDDEN"]
+    finally:
+        reader.close()
+
+
+@pytest.mark.parametrize("action", ["allocate", "release"])
+def test_cross_facility_probe_is_audited(env: Env, action: str) -> None:
+    pid = env.create(env.wh_b)
+    with pytest.raises(AuthError) as exc:
+        getattr(projects, action)(env.conn, actor=env.wh_a, project_id=pid, driver_id="DRV001", clock=env.clock)
+    assert _code(exc) == "PROJECT_NOT_FOUND"
+    rows = audit.query(env.conn, action="PROJECT_PROBE")
+    assert [(r["outcome"], r["target_id"], r["actor_user_id"]) for r in rows] == [("NOT_FOUND", pid, env.wh_a.user_id)]
+    assert not env.conn.in_transaction
+
+
+def test_genuinely_missing_id_is_not_a_probe(env: Env) -> None:
+    for actor in (env.wh_a, env.admin, env.wh_none):
+        with pytest.raises(AuthError):
+            projects.allocate(env.conn, actor=actor, project_id="PRJ-NOPE", driver_id="DRV001", clock=env.clock)
+    assert audit.query(env.conn, action="PROJECT_PROBE") == []
+
+
+def test_probe_target_is_truncated_and_response_identical(env: Env, tmp_path: Path) -> None:
+    # A very long id that really exists outside the caller's scope.
+    long_id = "PRJ-" + "L" * 100
+    env.conn.execute("insert into projects(project_id, customer_name, contract_ref, facility_id, status, created_by)"
+                     " values (?,?,?,?,'ACTIVE',?)", (long_id, "Acme", "LONG-1", env.fac_b, env.wh_b.user_id))
+    env.conn.commit()
+    client, tok = _client(env, tmp_path)
+    client.cookies.set(sessions.COOKIE_NAME, tok["a"])
+    hidden = client.post(f"/v1/projects/{long_id}/allocate", json={"driver_id": "DRV001"}, headers={"x-request-id": "r"})
+    missing = client.post("/v1/projects/PRJ-NOPE/allocate", json={"driver_id": "DRV001"}, headers={"x-request-id": "r"})
+    assert (hidden.status_code, hidden.json()) == (missing.status_code, missing.json())
+    rows = audit.query(env.conn, action="PROJECT_PROBE")
+    assert [r["target_id"] for r in rows] == [long_id[:64]]
+
+
+@pytest.mark.parametrize("ref", ["A", "ab.C_d/e-1", "9" * 64])
+def test_contract_ref_pattern_accepts(env: Env, ref: str) -> None:
+    assert projects.create(env.conn, **_kw(env, contract_ref=ref))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("ref", ["-A1", ".A", "/A", "A B", "A#1", "A?1", "caf\u00e9", "x" * 65])
+def test_contract_ref_pattern_refuses(env: Env, ref: str) -> None:
+    with pytest.raises(AuthError) as exc:
+        projects.create(env.conn, **_kw(env, contract_ref=ref))  # type: ignore[arg-type]
+    assert _code(exc) == "INVALID_REQUEST"
+
+
+def test_contract_ref_unique_ignoring_case(env: Env) -> None:
+    env.create(env.wh_a, ref="Dup-1")
+    with pytest.raises(AuthError) as exc:
+        env.create(env.wh_b, ref="dUP-1")
+    assert _code(exc) == "DUPLICATE_CONTRACT"
+    # The database enforces it too.
+    with pytest.raises(sqlite3.IntegrityError, match="contract"):
+        env.conn.execute("insert into projects(project_id, customer_name, contract_ref, facility_id, status, created_by)"
+                         " values ('PRJ-X','A','DUP-1',?,'ACTIVE',?)", (env.fac_a, env.wh_a.user_id))
+    env.conn.rollback()
+
+
+@pytest.mark.parametrize(("starts", "ends"), [("1999-12-31", None), ("2101-01-01", None), ("2026-01-01", "2101-01-01"),
+                                              ("1999-01-01", "1999-06-01")])
+def test_dates_outside_range_refused(env: Env, starts: str, ends: str | None) -> None:
+    with pytest.raises(AuthError) as exc:
+        projects.create(env.conn, **_kw(env, starts_on=date.fromisoformat(starts),  # type: ignore[arg-type]
+                                        ends_on=date.fromisoformat(ends) if ends else None))
+    assert _code(exc) == "INVALID_REQUEST"
+
+
+def test_date_range_edges_accepted(env: Env) -> None:
+    assert projects.create(env.conn, **_kw(env, starts_on=date(2000, 1, 1), ends_on=date(2100, 12, 31)))  # type: ignore[arg-type]
+
+
+def test_ended_project_refuses_allocation_by_ist_date(env: Env, tmp_path: Path) -> None:
+    today = env.clock.now().date()
+    pid = projects.create(env.conn, **_kw(env, ends_on=today))  # type: ignore[arg-type]
+    # The last day still counts.
+    projects.allocate(env.conn, actor=env.wh_a, project_id=pid, driver_id="DRV001", clock=env.clock)
+    env.clock.advance(timedelta(days=1))
+    client, tok = _client(env, tmp_path)
+    client.cookies.set(sessions.COOKIE_NAME, tok["a"])
+    r = client.post(f"/v1/projects/{pid}/allocate", json={"driver_id": "DRV002"})
+    assert r.status_code == 409 and r.json()["reason_code"] == "PROJECT_ENDED"
+    assert projects.drivers_of(env.conn, pid) == ["DRV001"]
+    # Releasing from an ended project is still possible.
+    projects.release(env.conn, actor=env.wh_a, project_id=pid, driver_id="DRV001", clock=env.clock)
+
+
+def test_route_accepts_a_64_character_contract_ref(env: Env, tmp_path: Path) -> None:
+    client, tok = _client(env, tmp_path)
+    client.cookies.set(sessions.COOKIE_NAME, tok["a"])
+    body = {"customer_name": "Acme", "contract_ref": "R" * 64, "facility_id": env.fac_a, "starts_on": "2026-08-01"}
+    assert client.post("/v1/projects", json=body).status_code == 201
+
+
+def _db_before_012(tmp_path: Path) -> tuple[Path, sqlite3.Connection]:
+    # A database migrated only up to 011, as an existing deployment would be.
+    old = tmp_path / "old_migrations"
+    old.mkdir()
+    for sql in sorted(MIGRATIONS_DIR.glob("*.sql")):
+        if sql.name < "012":
+            shutil.copy(sql, old / sql.name)
+    path = tmp_path / "old.sqlite3"
+    shutil.copyfile(load_settings().db_path, path)
+    conn = open_connection(path=path)
+    apply_migrations(conn, old)
+    return path, conn
+
+
+def _raw_project(conn: sqlite3.Connection, pid: str, ref: str) -> None:
+    users.bootstrap_admin(conn, "boss@x.com", FakeClock(datetime.fromisoformat("2026-08-04T09:35:00+05:30")))
+    boss = users.find_by_email(conn, "boss@x.com")
+    assert boss is not None
+    fac = conn.execute("select facility_id from facilities limit 1").fetchone()[0]
+    conn.execute("insert into projects(project_id, customer_name, contract_ref, facility_id, status, created_by)"
+                 " values (?,'A',?,?,'ACTIVE',?)", (pid, ref, fac, boss.user_id))
+    conn.commit()
+
+
+def test_migration_012_applies_over_existing_projects(tmp_path: Path) -> None:
+    _, conn = _db_before_012(tmp_path)
+    _raw_project(conn, "PRJ-1", "C-1")
+    _raw_project(conn, "PRJ-2", "C-2")
+    assert "012_project_contract_nocase.sql" in apply_migrations(conn)
+    assert apply_migrations(conn) == []
+    assert conn.execute("select count(*) from projects").fetchone()[0] == 2
+    conn.close()
+
+
+def test_migration_012_fails_loudly_on_case_duplicates(tmp_path: Path) -> None:
+    path, conn = _db_before_012(tmp_path)
+    _raw_project(conn, "PRJ-1", "Acme-1")
+    _raw_project(conn, "PRJ-2", "ACME-1")
+    with pytest.raises(sqlite3.IntegrityError, match="contract_ref_values_differ_only_by_case"):
+        apply_migrations(conn)
+    conn.close()
+    # Nothing deleted, nothing stamped, no index.
+    check = open_connection(path=path)
+    try:
+        assert check.execute("select count(*) from projects").fetchone()[0] == 2
+        assert check.execute("select count(*) from schema_migrations where filename like '012%'").fetchone()[0] == 0
+        assert check.execute("select count(*) from sqlite_master where name='ux_projects_contract_ref_nocase'").fetchone()[0] == 0
+    finally:
+        check.close()

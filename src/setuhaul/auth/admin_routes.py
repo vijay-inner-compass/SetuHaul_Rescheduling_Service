@@ -25,7 +25,8 @@ if TYPE_CHECKING:
 # Refusal code -> HTTP status; anything unlisted is a 422 (bad input).
 _STATUS = {"FORBIDDEN": 403, "DRIVER_NOT_FOUND": 404, "DUPLICATE_PHONE": 409, "DUPLICATE_LICENCE": 409,
            "NOT_PENDING": 409, "LICENCE_EXPIRED": 409, "PROJECT_NOT_FOUND": 404, "FACILITY_NOT_FOUND": 404,
-           "NOT_ALLOCATED": 404, "DUPLICATE_CONTRACT": 409, "ALREADY_ALLOCATED": 409, "PROJECT_CLOSED": 409}
+           "NOT_ALLOCATED": 404, "DUPLICATE_CONTRACT": 409, "ALREADY_ALLOCATED": 409, "PROJECT_CLOSED": 409,
+           "PROJECT_ENDED": 409}
 
 
 # The body of POST /v1/drivers; unknown fields are refused.
@@ -45,7 +46,8 @@ class NewProject(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     customer_name: str = Field(min_length=1, max_length=120)
-    contract_ref: str = Field(min_length=1, max_length=60)
+    # The exact pattern is applied by the library after trimming; this only bounds the raw input.
+    contract_ref: str = Field(min_length=1, max_length=64)
     facility_id: str = Field(min_length=1, max_length=32)
     starts_on: date
     ends_on: date | None = None
