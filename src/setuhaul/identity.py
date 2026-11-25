@@ -71,6 +71,9 @@ class SessionContext(BaseModel):
 
 def verify_channel_request(body: bytes, signature: str, secret: bytes) -> bool:
     """HMAC-SHA256 hex signature check over the raw body, before any parsing."""
+    # No secret configured means the channel is off: anyone can compute a signature made with an empty key.
+    if not secret:
+        raise AuthError("INVALID_SIGNATURE", "channel secret not configured")
     # No signature at all is rejected with its own message.
     if not signature:
         raise AuthError("INVALID_SIGNATURE", "missing signature")
