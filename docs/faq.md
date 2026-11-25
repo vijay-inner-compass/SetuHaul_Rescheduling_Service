@@ -35,9 +35,6 @@ Answers describe the code as of 2026-11-26. Each answer starts with the short re
 `never mind, keep my original slot`, `Please change facility to Gurugram`. Anything else may get "How late are you, and which
 shipment is it?".
 
-**Known cosmetic issue:** the demo console still has a quick-reply button **Take the first option** from the earlier numbered-menu
-design. Use `yes` and `no`.
-
 ## 1. Product
 
 **What problem does it solve?**

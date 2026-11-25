@@ -292,7 +292,6 @@ machine); wording matches stored state on the deterministic path; failure paths 
 * No recorded real-model run of the current one-slot flow. The Telegram trial used the stand-in.
 * No data retention, export or erasure for personal data; no encryption at rest; no privacy notice. See the [FAQ](faq.md), section 6.
 * Notices for warehouse, customer and operations are queued; no sender is connected.
-* The demo console's quick button **Take the first option** predates the one-slot flow.
 * Telegram: over the rate limit, or for photos and voice notes from a linked driver, there is no reply.
 * The rule-based stand-in understands only set phrases.
 * `scripts/show_phase8.py` needs `PYTHONUTF8=1` on Windows to print Hindi.

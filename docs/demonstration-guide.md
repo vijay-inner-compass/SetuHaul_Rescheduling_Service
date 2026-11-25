@@ -22,7 +22,6 @@ demo shows the real sign-in page.
 * **You type as the driver on a separate page.** The console's Driver panel is read-only. Open
   `http://127.0.0.1:8800/demo/driver-login` (Manoj Sharma; add `?driver=DRV007` for another) and keep the console beside it.
 * For a demonstration through a phone, without a model, use [telegram-local-setup.md](telegram-local-setup.md).
-* The quick button **Take the first option** is left over from the earlier menu design. Type `yes` or `no`.
 
 The console shows a **Driver console** (conversation), a **Dock board** (docks by hour) and **Operations** (cases, activity, partner
 mail). The top bar has the simulated clock, **+1 min**, **+3 min and sweep** and **Reset demo**. Press **Reset demo** between
