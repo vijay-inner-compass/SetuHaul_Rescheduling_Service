@@ -2,7 +2,8 @@
 
 The model **interprets and drafts**. Code **decides and states facts**. Provider, model id and key come from
 the environment (`SETUHAUL_MODEL_PROVIDER`, `SETUHAUL_MODEL_ID`, `SETUHAUL_MODEL_API_KEY`); none is in the repo.
-Two provider adapters exist, `anthropic` and `openai`, chosen by `SETUHAUL_MODEL_PROVIDER`; both are tested only against mock transports. Provider approval is still open (Q9), so nothing here has called a live model.
+Two provider adapters exist, `anthropic` and `openai`, chosen by `SETUHAUL_MODEL_PROVIDER`. The OpenAI adapter was run live on 2026-11-20 on the
+earlier numbered-menu flow; those recordings are retired and the current flow has no recorded live run. Provider approval is still open (Q9).
 
 ## Limits (`ModelPolicy`, provisional until approved)
 | Limit | Value | Enforced by |
@@ -20,7 +21,7 @@ External tracing (LangSmith) is OFF unless `SETUHAUL_LANGSMITH_ENABLED=true` (de
 
 ## What the model can call
 Read tools: `list_my_shipments`, `get_shipment_status`, `compute_eta`, `search_slot_options`, `compare_option_set`,
-`offer_original_slot`. Write tools: `request_hold`, `confirm_reschedule`, `release_pending_change`,
+`offer_original_slot`. Write tools: `request_hold`, `confirm_reschedule`, `release_pending_change`, `decline_held_slot`,
 `cancel_appointment`, `request_partner_slot` (offered only when one of the driver's open loads is bound for a partner
 warehouse; it records an email request, books nothing, and the reply is worded by the system from the stored request).
 Always: `escalate_to_operations` (SAFETY, REGULATED_LOAD, POLICY_CONFLICT, DRIVER_REQUESTED,
@@ -57,4 +58,4 @@ times the tool returned. A lapsed hold is reported once from the `HOLD_EXPIRED` 
 ## Known limits
 Language detection and the claim guard are heuristics (script ratios, word lists, regexes), not a classifier: they can
 miss a paraphrased claim or misread a short message. Hindi and Hinglish wording was written by the assistant and **needs
-review by a native speaker** before any driver sees it. The adapter is tested only against a mock transport.
+review by a native speaker** before any driver sees it. Automated tests use mock transports only.

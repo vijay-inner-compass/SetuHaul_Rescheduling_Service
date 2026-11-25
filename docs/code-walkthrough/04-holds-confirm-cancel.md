@@ -14,9 +14,9 @@ It is not the lock.
 
 All inside one `BEGIN IMMEDIATE` transaction (the write lock is taken first, so racers queue):
 
-1. Load the stored menu (proves ownership) and pick the chosen rank. A rank never shown is `INVALID_OPTION`.
+1. Load the stored option set (proves ownership) and pick the chosen rank. A rank never offered is `INVALID_OPTION`.
 2. **Lazy expiry:** clear any overdue hold on the same shipment or slot, so a lapsed hold never blocks a new one.
-3. Menu older than 15 minutes: `OPTION_EXPIRED`.
+3. Option set older than 15 minutes: `OPTION_EXPIRED`.
 4. Shipment already holds this same slot: return that hold (idempotent). A different slot: `SHIPMENT_ALREADY_HELD`.
 5. Re-judge the option against the facility **as it is right now**. Taken by someone else: `SLOT_CONFLICT`. Any other
    change: `OPTION_CHANGED`.
@@ -83,7 +83,7 @@ appointment never left active) plus SQLite's foreign-key check. The concurrency 
 | Planner inserts into a held slot | database rejects it | `test_external_writer_hits_the_same_uniqueness_constraint` |
 | Same "take option 1" twice | same hold returned | `test_repeating_the_same_hold_request_returns_the_same_hold` |
 | Second slot for one shipment | refused | `test_one_shipment_cannot_hold_two_slots` |
-| Menu older than 15 minutes | `OPTION_EXPIRED` | `test_expired_option_set_is_refused` |
+| Option set older than 15 minutes | `OPTION_EXPIRED` | `test_expired_option_set_is_refused` |
 | Slot changed since shown | `OPTION_CHANGED` | `test_option_that_changed_since_it_was_shown_is_not_held` |
 | Confirm at exactly the expiry second | hold has lapsed | `test_exactly_at_expiry_the_hold_lapses` |
 | Confirm an expired hold | refused, original stands | `test_expired_hold_cannot_be_confirmed_and_original_stands` |

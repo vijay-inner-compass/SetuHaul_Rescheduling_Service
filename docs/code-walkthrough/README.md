@@ -8,7 +8,7 @@ part is for, how a request travels through it, why it is built that way, and wha
 ## The one-paragraph version
 
 A truck driver messages that they are late. The service works out a new arrival time, finds dock slots that can really
-take the truck, shows up to three as a numbered list, **holds** the one the driver picks for 3 minutes, and **confirms**
+take the truck, **holds** the first of them for 3 minutes ("No" moves to the next), and **confirms**
 it when the driver says yes in a later message, ending the old appointment and telling the warehouse planner, the
 customer and operations. A language model helps with understanding and questions, but it **never decides**: identity,
 timing, capacity, approvals and every statement about a booking come from code and the database.
@@ -30,7 +30,7 @@ Companion documents:
 
 * [Demonstration guide](../demonstration-guide.md): what to run, what to type, what you should see.
 * [Scenario catalogue](../scenario-catalogue.md): edge cases and failure scenarios, each with the test that proves it.
-* [Decision register](../decision-register.md): why each design choice was made (D1 to D65).
+* [Decision register](../decision-register.md): why each design choice was made (D1 onward).
 
 ## Five rules that explain most of the code
 
@@ -40,7 +40,7 @@ Companion documents:
    be tested without waiting. (`clock.py`)
 3. **The database is the referee.** A hold is an appointment row covered by the same unique index as a booking, so two
    people cannot hold or book one slot even if the application code is wrong. (`migrations/002`, `booking.py`)
-4. **Facts come from committed rows.** "Held", "confirmed", "cancelled", the option menu and hand-off wording are
+4. **Facts come from committed rows.** "Held", "confirmed", "cancelled", held-slot and hand-off wording are
    rendered from the database in three languages. If the model's text claims something the database does not back, it is
    replaced. (`language.py`, `conversation.py`)
 5. **Missing evidence is never assumed.** No labour data means "cannot check", not "assume available". (`feasibility.py`)
@@ -54,7 +54,7 @@ driver message
        model_gateway  (max 6 rounds, 4 tools, 30 s, cost cap)
          tools.py     allowed? valid arguments? quote in THIS message? one write only? -> handler
            eta / feasibility / option_history / booking / cancellation   (deterministic, transactional)
-  -> conversation  system wording for committed facts (hold, confirm, menu, hand-off) else guarded model text
+  -> conversation  system wording for committed facts (hold, confirm, hand-off) else guarded model text
   -> api.py        store the reply under the message id, return it
 ```
 
