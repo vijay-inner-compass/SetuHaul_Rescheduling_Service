@@ -239,16 +239,24 @@ def register_auth_routes(app: FastAPI, deps: AppDeps) -> None:
         # The feature is invisible unless switched on.
         if not deps.local_admin_enabled:
             return _reject(rid, 404, "NOT_FOUND")
+        ip = request.client.host if request.client else None
+
+        def refuse_bad_request(conn: sqlite3.Connection) -> Response:
+            # Audited like every other attempt, but with none of the submitted values (not even the email).
+            audit.record(conn, actor_user_id=None, actor_email=None, action="LOCAL_ADMIN", target_type=None, target_id=None,
+                         outcome="LOCAL_ADMIN_REFUSED", ip=ip, detail={"reason": "BAD_REQUEST"}, clock=deps.clock)
+            conn.commit()
+            return _reject(rid, 401, "BAD_CREDENTIALS")
+
         # A malformed body is just bad credentials; it must not reveal anything.
         try:
             body = await request.json()
             email, password = str(body["email"]), str(body["password"])
-            # Refuse over-long input before any hashing work.
-            if len(password) > local_admin.MAX_LENGTH:
-                return _reject(rid, 401, "BAD_CREDENTIALS")
         except (ValueError, KeyError, TypeError):
-            return _reject(rid, 401, "BAD_CREDENTIALS")
-        ip = request.client.host if request.client else None
+            return await run_in_threadpool(with_conn, rid, refuse_bad_request)
+        # Refuse over-long input before any hashing work.
+        if len(password) > local_admin.MAX_LENGTH:
+            return await run_in_threadpool(with_conn, rid, refuse_bad_request)
 
         def attempt(conn: sqlite3.Connection) -> Response:
             # verify audits every outcome itself; scrypt makes this blocking, so it runs in the threadpool.

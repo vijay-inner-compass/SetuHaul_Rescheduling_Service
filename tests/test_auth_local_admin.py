@@ -325,3 +325,21 @@ def test_locked_path_runs_the_dummy_hash(tmp_path: Path, clock: FakeClock, monke
         local_admin.verify(conn, "boss@x.com", PASSWORD, clock)
     assert e.value.code == "LOCKED" and calls == [local_admin._DUMMY_SALT]
     conn.close()
+
+
+@pytest.mark.parametrize("send", [
+    {"content": b"not json", "headers": {"content-type": "application/json"}},
+    {"json": {"email": "boss@x.com"}},
+    {"json": ["boss@x.com", "pw"]},
+    {"json": {"email": "boss@x.com", "password": "y" * 1025}},
+])
+def test_malformed_or_overlong_attempts_are_audited_without_their_values(tmp_path: Path, clock: FakeClock,
+                                                                         send: dict[str, object]) -> None:
+    path, client = _make(tmp_path, clock)
+    r = client.post("/auth/local-admin", **send)  # type: ignore[arg-type]
+    assert r.status_code == 401 and r.json()["reason_code"] == "BAD_CREDENTIALS"
+    rows = [x for x in _rows(path) if x["outcome"] == "LOCAL_ADMIN_REFUSED"]
+    # One refusal row, reason BAD_REQUEST, and none of the submitted values (not even the email).
+    assert [(x["action"], x["outcome"], x["detail_json"]) for x in rows] == [("LOCAL_ADMIN", "LOCAL_ADMIN_REFUSED", '{"reason": "BAD_REQUEST"}')]
+    assert rows[0]["actor_email"] is None and rows[0]["actor_user_id"] is None
+    assert "boss@x.com" not in str(tuple(rows[0])) and "yyyy" not in str(tuple(rows[0]))
