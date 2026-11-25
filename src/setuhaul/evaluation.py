@@ -366,6 +366,9 @@ def eval_tool_order(trace: Trace) -> list[Finding]:
             # Remember when options were shown.
             if e.executed and e.name in ("search_slot_options", "offer_original_slot") and isinstance(e.result, dict) and e.result.get("option_set_id"):
                 searched = t.turn
+                # The system holds a slot itself after a search: that hold counts for the later confirmation.
+                if e.result.get("held") is True:
+                    held_turn = t.turn
             # A hold requires options to have been shown earlier.
             if e.executed and e.name == "request_hold" and isinstance(e.result, dict) and e.result.get("status") == "HELD":
                 out.append(Finding("tool_order", t.turn, searched is not None, "hold needs options shown first"))

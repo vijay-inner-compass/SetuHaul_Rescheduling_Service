@@ -21,7 +21,7 @@ def test_every_check_in_the_scenario_passes(bundle: Bundle) -> None:
 
 
 @pytest.mark.parametrize("needle", [
-    "clarification", "ETA derived", "options are shown, not held", "stored option set compared", "three drivers hold stored option sets",
+    "clarification", "ETA derived", "one slot is held, not booked", "stored option set compared", "three drivers hold stored option sets",
     "first valid request wins", "exactly one hold", "cross-driver read refused", "confirmation is state-backed", "lapsed hold",
     "cancellation outside the cutoff", "no-slot hand-off", "gate-in contradiction", "missing labour evidence", "coordinator lifecycle",
     "downstream notices queued", "notification failure left the booking intact", "history shows who changed what", "zero invariant violations",
@@ -38,7 +38,7 @@ def test_the_scenario_is_deterministic(bundle: Bundle, tmp_path: Path) -> None:
 
 def test_transcript_shows_system_worded_facts_and_no_run_specific_noise(bundle: Bundle) -> None:
     text = bundle.text()
-    assert "Your appointment is confirmed: dock D4, 12:00-13:00 on 04 Aug 2026. Reference $HOLD1." in text
+    assert "Your appointment is confirmed: dock D2, 12:00-13:00 on 04 Aug 2026. Reference $HOLD1." in text
     assert "ORIGINAL_ENDED" in text and "RESCHEDULE_CONFIRMED" in text and "APPOINTMENT_CANCELLED" in text
     assert "attempts=2" in text  # a failed downstream delivery was retried
     assert not re.search(r"OPT-[0-9A-F]{12}|APT-H-[0-9A-F]{10}|ESC-[0-9A-F]{8}", text)
