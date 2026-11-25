@@ -8,8 +8,12 @@ import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import fakeredis
 import pytest
+from fastapi.testclient import TestClient
 
+from setuhaul import api
+from setuhaul.api import AppDeps, create_app
 from setuhaul.auth import telegram
 from setuhaul.clock import FakeClock
 from setuhaul.db import make_working_db, open_connection
@@ -189,3 +193,50 @@ def test_the_runner_thread_sends_and_stops(tmp_path: Path, clock: FakeClock, cap
     finally:
         runner.stop()
     assert not any(t.name == "setuhaul-driver-notices" and t.is_alive() for t in threading.enumerate())
+
+
+def _app_deps(path: Path, clock: FakeClock, fake: telegram.TelegramClient | None, run: bool) -> AppDeps:
+    return AppDeps(db_path=path, redis=fakeredis.FakeRedis(decode_responses=True), webhook_secret=b"w", coordinator_tokens={},
+                   fallback_path=path.parent / "f.jsonl", clock=clock, telegram=fake,
+                   run_driver_notices=run, notice_interval_s=0.01)
+
+
+def _runner_threads() -> list[threading.Thread]:
+    return [t for t in threading.enumerate() if t.name == "setuhaul-driver-notices" and t.is_alive()]
+
+
+def test_the_app_delivers_while_it_runs_and_stops_on_shutdown(tmp_path: Path, clock: FakeClock) -> None:
+    path = _runner_db(tmp_path, clock)
+    sent = threading.Event()
+
+    class Signal(telegram.FakeTelegramClient):
+        def send(self, chat_id: int, text: str, request_contact_button: bool = False) -> None:
+            super().send(chat_id, text, request_contact_button)
+            sent.set()
+
+    fake = Signal()
+    with TestClient(create_app(_app_deps(path, clock, fake, run=True))):
+        assert sent.wait(5)
+    assert [t for _, t, _ in fake.sent] == ["hello"] and not _runner_threads()
+
+
+def test_nothing_starts_without_a_bot(tmp_path: Path, clock: FakeClock) -> None:
+    path = _runner_db(tmp_path, clock)
+    with TestClient(create_app(_app_deps(path, clock, None, run=True))):
+        assert not _runner_threads()
+
+
+@pytest.mark.parametrize("bot", [True, False])
+def test_environment_with_a_bot_turns_on_delivery_and_the_sweep(
+        tmp_path: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch, bot: bool) -> None:
+    built: list[AppDeps] = []
+    monkeypatch.setattr(api, "create_app", built.append)
+    monkeypatch.setenv("SETUHAUL_DB_PATH", str(tmp_path / "env.sqlite3"))
+    monkeypatch.setenv("SETUHAUL_REDIS_URL", "fakeredis://")
+    monkeypatch.delenv("SETUHAUL_RUN_MAINTENANCE", raising=False)
+    if bot:
+        # Test values only; nothing is sent to Telegram.
+        monkeypatch.setenv("SETUHAUL_TELEGRAM_WEBHOOK_SECRET", "t" * 32)
+        monkeypatch.setenv("SETUHAUL_TELEGRAM_BOT_TOKEN", "123:test-token")
+    api.create_app_from_env()
+    assert built[0].run_driver_notices is bot and built[0].run_maintenance is bot
