@@ -62,7 +62,9 @@ def test_unknown_driver_is_refused(tmp_path: Path) -> None:
 def test_driver_account_is_not_a_web_user_and_reaches_nothing_else(tmp_path: Path) -> None:
     app, _ = _app(tmp_path)
     driver = _driver(app)
-    for path in ("/demo", "/demo/api/board", "/demo/api/drivers", "/demo/api/driver/DRV007/state",
+    # The console page sends the driver to the web sign-in; everything else refuses.
+    assert driver.get("/demo").headers["location"] == "/"
+    for path in ("/demo/api/board", "/demo/api/drivers", "/demo/api/driver/DRV007/state",
                  "/v1/warehouse/board?facility_id=FAC-JAI-01", "/v1/warehouse/driver-chats", "/v1/admin/audit"):
         assert driver.get(path).status_code == 401, path
     assert driver.post("/demo/api/chat", json={"driver_id": "DRV007", "text": "x"}).status_code == 401

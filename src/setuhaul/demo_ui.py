@@ -31,7 +31,7 @@ import tempfile
 import uuid
 
 # Callable typing.
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 # dataclass for the demo state.
 from dataclasses import dataclass, field
@@ -58,8 +58,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 
 # Web sign-in: the role guard, sessions and the seeded demo user.
-from setuhaul.auth import audit, sessions, users
-from setuhaul.auth.authz import require_role
+from setuhaul.auth import audit, local_admin, sessions, users
+from setuhaul.auth.authz import AuthzError, require_role
+from setuhaul.auth.google import GoogleVerifier, RealGoogleVerifier
 
 # The same facility snapshot the service uses, to draw the dock board.
 from setuhaul.board import build_board
@@ -68,7 +69,7 @@ from setuhaul.board import build_board
 from setuhaul.booking import make_hold_checker
 
 # A controllable clock.
-from setuhaul.clock import FakeClock
+from setuhaul.clock import FakeClock, SystemClock
 
 # Settings loader (travel-time constants for the GPS readout).
 from setuhaul.config import load_settings
@@ -167,6 +168,41 @@ class DemoState:
     notes: dict[str, Any] = field(default_factory=dict)
     # TEST ONLY: lets automated tests act as a driver. scripts/run_demo.py never sets it, because driver messages come from Telegram.
     driver_simulation: bool = False
+
+
+# The real sign-in settings the demo connects: the same ones the service reads, so the login page is the real one.
+@dataclass
+class DemoSignIn:
+    google: GoogleVerifier | None = None
+    session_secret: bytes = b""
+    local_admin: bool = False
+    admin_email: str = ""
+    # The backup password for this run (typed at start-up; the demo database is rebuilt every time, so it is not kept).
+    admin_password: str = field(default="", repr=False)
+
+
+def sign_in_from_env(env: Mapping[str, str]) -> DemoSignIn:
+    """Read the sign-in variables. A missing or short signing secret is replaced for this run only."""
+    google: GoogleVerifier | None = None
+    client_id, client_secret = env.get("SETUHAUL_GOOGLE_CLIENT_ID", ""), env.get("SETUHAUL_GOOGLE_CLIENT_SECRET", "")
+    if client_id and client_secret:
+        import httpx
+
+        # Real time, not the demo's frozen clock: token expiry must be judged against now.
+        google = RealGoogleVerifier(client_id, client_secret, httpx.Client(timeout=10.0), SystemClock())
+    secret = env.get("SETUHAUL_SESSION_SECRET", "").encode()
+    return DemoSignIn(google=google, session_secret=secret if len(secret) >= 32 else os.urandom(32),
+                      local_admin=env.get("SETUHAUL_LOCAL_ADMIN") == "1", admin_email=env.get("SETUHAUL_BOOTSTRAP_ADMIN_EMAIL", "").strip())
+
+
+def seed_sign_in(conn: sqlite3.Connection, settings: DemoSignIn, clock: FakeClock) -> None:
+    """Create the first admin and, when the backup login is on, its password."""
+    if not settings.admin_email:
+        return
+    admin = users.bootstrap_admin(conn, settings.admin_email, clock)
+    if settings.local_admin and settings.admin_password:
+        local_admin.set_password(conn, admin.user_id, settings.admin_password, clock)
+    conn.commit()
 
 
 # A chat message typed in the driver console.
@@ -411,8 +447,15 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
         return {"iso": now.isoformat(), "text": f"{now.astimezone(IST):%a %d %b %Y, %H:%M:%S} IST"}
 
     # The demo page.
-    @router.get("/demo", response_class=HTMLResponse)
-    async def page(request: Request) -> Any:
+    # On the app, not the router, so a signed-out visitor gets the login page instead of a JSON error. Same role rule.
+    @app.get("/demo", response_class=HTMLResponse)
+    def page(request: Request) -> Any:
+        try:
+            require_role("WAREHOUSE_AUTHORITY", "ADMIN")(request)
+        except AuthzError as exc:
+            if exc.status == 401:
+                return RedirectResponse("/", status_code=303)
+            raise
         return local_only(request) or HTMLResponse(html)
 
     # Static configuration for the page: clock, model mode, coordinators, facilities.
@@ -999,7 +1042,7 @@ def carry_sign_ins(old: Path, new: Path) -> None:
     src = open_connection(path=old, readonly=True)
     dst = open_connection(path=new)
     try:
-        for table in ("users", "user_facilities", "auth_sessions"):
+        for table in ("users", "user_facilities", "auth_sessions", "admin_credentials"):
             rows = src.execute(f"select * from {table}").fetchall()
             if rows:
                 marks = ",".join("?" for _ in rows[0])
@@ -1011,7 +1054,8 @@ def carry_sign_ins(old: Path, new: Path) -> None:
 
 
 def build_demo_app(workdir: Path | None = None, live_factory: Callable[[], Any] | None = None, policy: Any = None,
-                   fresh: bool = False, driver_simulation: bool = False) -> tuple[FastAPI, Any]:
+                   fresh: bool = False, driver_simulation: bool = False, sign_in: DemoSignIn | None = None,
+                   auto_login: bool = True) -> tuple[FastAPI, Any]:
     """The service wired for the demo: fixed clock, in-process cache, the configured model (chat is off without one), no real channel."""
     # An in-process fake Redis, so no server is needed.
     import fakeredis
@@ -1034,9 +1078,11 @@ def build_demo_app(workdir: Path | None = None, live_factory: Callable[[], Any] 
 
     # Build the first database, with the demo console's own sign-in.
     build_demo_db(db_path, fresh)
+    signing = sign_in or DemoSignIn()
     first = open_connection(path=db_path)
     try:
         seed_demo_user(first, clock)
+        seed_sign_in(first, signing, clock)
     finally:
         first.close()
     # Shared state for the routes (its reset function is attached just below).
@@ -1078,13 +1124,14 @@ def build_demo_app(workdir: Path | None = None, live_factory: Callable[[], Any] 
     deps = AppDeps(
         db_path=db_path, redis=redis, webhook_secret=os.urandom(16), coordinator_tokens={}, fallback_path=work / "fallback.jsonl",
         policy=policy or ModelPolicy(provider="none", model_id=""), clock=clock, demo=state,
-        gateway_factory=live_factory if live_factory else UnconfiguredGateway)
+        gateway_factory=live_factory if live_factory else UnconfiguredGateway,
+        google=signing.google, session_secret=signing.session_secret, local_admin_enabled=signing.local_admin)
     # Remove a stray folder if one exists (harmless if not).
     shutil.rmtree(work / "unused", ignore_errors=True)
     app = create_app(deps)
 
-    # Local tooling only: a loopback client trades itself for a session as the seeded demo user. Registered here, never by create_app.
-    @app.get("/demo/login")
+    # Local tooling only: a loopback client trades itself for a session as the seeded demo user. Registered here, never by create_app,
+    # and only when asked (scripts/run_demo.py --auto-login), because it skips authentication.
     async def demo_login(request: Request) -> Any:
         host = request.client.host if request.client else ""
         # Anyone else is refused and given nothing.
@@ -1112,6 +1159,9 @@ def build_demo_app(workdir: Path | None = None, live_factory: Callable[[], Any] 
         resp = await run_in_threadpool(go)
         # No demo user could be found or made: refuse rather than hand out nothing.
         return resp or JSONResponse({"status": "REJECTED", "reason_code": "DEMO_USER_UNAVAILABLE"}, status_code=503)
+
+    if auto_login:
+        app.get("/demo/login")(demo_login)
 
     # The separate demo driver account (loopback only, its own cookie, no board): see demo_driver.py.
     register_demo_driver(app, deps, *app.state.demo_driver_io)

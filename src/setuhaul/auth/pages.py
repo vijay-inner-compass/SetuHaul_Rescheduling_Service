@@ -116,7 +116,7 @@ def _message_page(title: str, text: str, status: int, user: User | None = None) 
 
 
 # ---- sign-in ----------------------------------------------------------------------------------------------
-def _landing(local_admin: bool) -> str:
+def _landing(google: bool, local_admin: bool) -> str:
     # The sign-in page; the backup form exists only when the feature is switched on.
     backup = ""
     if local_admin:
@@ -124,8 +124,12 @@ def _landing(local_admin: bool) -> str:
                   '<form data-api="/auth/local-admin"><label>Email <input name="email" type="email" required autocomplete="username"></label>'
                   '<label>Password <input name="password" type="password" required autocomplete="current-password"></label>'
                   '<button type="submit">Sign in</button></form></section>')
-    body = ('<section class="landing"><h2>Sign in</h2><p><a class="button" href="/auth/login">Sign in with Google</a></p>'
-            f"{backup}</section>")
+    # Only what is set up is offered: a button that can only fail is worse than none.
+    button = '<p><a class="button" href="/auth/login">Sign in with Google</a></p>' if google else ""
+    if not google and not local_admin:
+        button = ('<p class="empty">No sign-in is configured. Set SETUHAUL_GOOGLE_CLIENT_ID and SETUHAUL_GOOGLE_CLIENT_SECRET (with '
+                  'SETUHAUL_SESSION_SECRET), or SETUHAUL_LOCAL_ADMIN=1 with SETUHAUL_BOOTSTRAP_ADMIN_EMAIL, then restart.</p>')
+    body = f'<section class="landing"><h2>Sign in</h2>{button}{backup}</section>'
     return _layout("Sign in", body, ("common.js",))
 
 
@@ -412,7 +416,9 @@ def register_pages(app: FastAPI, deps: AppDeps) -> None:
                 conn.close()
             if user is not None:
                 return _redirect("/admin" if user.role == "ADMIN" else "/warehouse")
-        return _respond(_landing(deps.local_admin_enabled))
+        # The same condition the Google routes use (a client and a signing secret of at least 32 bytes).
+        google = deps.google is not None and len(deps.session_secret) >= 32
+        return _respond(_landing(google, deps.local_admin_enabled))
 
     @app.get("/admin", response_class=HTMLResponse)
     def admin_page(request: Request) -> Response:

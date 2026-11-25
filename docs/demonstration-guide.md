@@ -11,7 +11,7 @@ snapshot with labelled `DEMO_FIXTURE` evidence. Nothing real is touched.
 python scripts/run_demo.py
 ```
 
-This opens `http://127.0.0.1:8800/demo`. The driver chat is answered by the **language model configured in `.env`**
+This opens the login page at `http://127.0.0.1:8800/` (see running-and-demonstrating.md; `--auto-login` skips it), then go to `/demo`. The driver chat is answered by the **language model configured in `.env`**
 (`SETUHAUL_MODEL_PROVIDER`, `SETUHAUL_MODEL_ID`, `SETUHAUL_MODEL_API_KEY`); its name shows in the title bar. There is **no
 rule-based stand-in** any more. If no model is configured the page says so, the chat is switched off, and the dock board, planner
 bookings and operations panel still work. Use synthetic messages only.

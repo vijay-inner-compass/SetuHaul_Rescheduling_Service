@@ -48,6 +48,9 @@ def _add_driver(world: World, who: str = "wh_a", name: str = "Ravi Kumar", phone
 
 
 def test_root_redirects_by_role(world: World) -> None:
+    # Google is offered only when it is configured.
+    assert "/auth/login" not in world.client().get("/").text
+    world.deps.google, world.deps.session_secret = FakeGoogleVerifier(), b"s" * 32
     anon = world.client().get("/")
     assert anon.status_code == 200 and "/auth/login" in anon.text and "Sign in with Google" in anon.text
     # The backup form is absent unless the feature is on.

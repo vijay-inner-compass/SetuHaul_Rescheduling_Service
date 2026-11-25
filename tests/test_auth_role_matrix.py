@@ -66,6 +66,7 @@ ROLE_GUARDED: dict[tuple[str, str], frozenset[str]] = {
 # HTML screens: like ROLE_GUARDED, but a refusal is a page or a redirect, never JSON (anonymous -> 303 to "/").
 HTML_GUARDED: dict[tuple[str, str], frozenset[str]] = {
     ("GET", "/admin"): ADMIN,
+    ("GET", "/demo"): BOTH,
     ("GET", "/warehouse"): BOTH,
 }
 # The whole demo console (page and API) is one guarded family, so a new demo route is covered the day it is added.
@@ -225,7 +226,9 @@ def test_no_route_serves_board_data_without_web_role(demo) -> None:  # type: ign
         r = client.request(method, path, headers=headers)
         assert r.status_code == 303 and r.headers["location"] == "/"
     assert client.get("/demo/api/board", headers=headers).status_code == 401
-    assert client.get("/demo", headers=headers).status_code == 401
+    # The console page sends them to sign in, and carries nothing of the console.
+    page = client.get("/demo", headers=headers)
+    assert page.status_code == 303 and page.headers["location"] == "/" and not page.content
 
 
 def test_demo_login_is_loopback_only_and_absent_from_production_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
