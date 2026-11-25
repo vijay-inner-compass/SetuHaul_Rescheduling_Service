@@ -224,9 +224,6 @@ class TurnState:
     status_read_confirmed: bool = False
     status_confirmed_times: set[str] = field(default_factory=set)  # HH:MM values of confirmed appointments read this turn
     # True if a menu was recorded this turn.
-    options_shown: bool = False
-    shown_options: list[dict[str, str]] = field(default_factory=list)  # the latest option set shown this turn, as stored (rank order)
-    options_valid_until: str = ""
     # Minutes by which the driver's ETA and the GPS ETA disagree, when a search found them far apart (else None).
     gps_discrepancy_minutes: int | None = None
     # True when a hold or confirmation was refused because the truck can no longer reach the slot from its current position.

@@ -5,6 +5,7 @@ Each test names one situation a reader might ask "what if...?" about and pins th
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from pathlib import Path
 
@@ -288,35 +289,49 @@ def test_every_ping_is_confirmed_to_the_driver_with_distance_and_drive_time(tmp_
     assert len(msgs) == 1 and "about 24 km" in msgs[0] and "minutes away" in msgs[0] and "arrive around" in msgs[0]
 
 
-def test_a_closer_truck_is_offered_earlier_slots_and_can_switch_its_booking(tmp_path: Path) -> None:
+def test_a_closer_truck_is_offered_one_held_earlier_slot_and_can_switch_its_booking(tmp_path: Path) -> None:
     # Far away (165 km) the earliest reachable slot is mid-afternoon; at 24 km much earlier slots open up.
+    client, ping, say, held, chat = _gps_demo(tmp_path)
+    ping(165)
+    say("my truck is 60 minutes late")
+    assert "confirmed" in say("yes confirm").lower()
+    late = _booked_or_held_starts(client)[0]
+    ping(24)  # the truck is now much closer
+    offer = [t for t in chat() if "earlier slot" in t]
+    # One slot, already held, answered with Yes or No: never a numbered list.
+    assert len(offer) == 1 and held()
+    assert "Reply Yes" in offer[0] and "No for the next" in offer[0] and "1. Dock" not in offer[0]
+    assert "SetuHaul Jaipur Distribution Centre" in offer[0]
+    first_offered = re.search(r"(\d\d:\d\d)-\d\d:\d\d", offer[0]).group(1)  # type: ignore[union-attr]
+    assert first_offered < late  # genuinely earlier than the slot it had
+    # The confirmed booking stays until the driver agrees; agreeing swaps them.
+    assert late in _booked_or_held_starts(client)
+    assert "confirmed" in say("yes confirm").lower()
+    assert _booked_or_held_starts(client) == [first_offered]  # the old late slot is free again, only the new one is booked
+
+
+def test_a_declined_earlier_offer_keeps_the_booking_and_is_not_repeated(tmp_path: Path) -> None:
     client, ping, say, _held, chat = _gps_demo(tmp_path)
     ping(165)
     say("my truck is 60 minutes late")
-    say("1")
-    assert "confirmed" in say("confirm").lower()
+    say("yes confirm")
     late = _booked_or_held_starts(client)[0]
-    ping(24)  # the truck is now much closer
-    offer = [t for t in chat() if "earlier slots than your current one" in t]
-    assert len(offer) == 1 and "1. Dock" in offer[0] and "Reply with the number" in offer[0]
-    first_offered = offer[0].split("\n")[1].split(", ")[1].split("-")[0]
-    assert first_offered < late  # genuinely earlier than the slot it had
-    # Picking by number holds the earlier slot (the confirmed one stays until the swap is confirmed), then confirming swaps them.
-    assert "holding" in say("1").lower()
-    assert "confirmed" in say("confirm").lower()
-    assert _booked_or_held_starts(client) == [first_offered]  # the old late slot is free again, only the new one is booked
+    ping(24)
+    say("No")
+    assert late in _booked_or_held_starts(client)
+    ping(23)
+    assert len([t for t in chat() if "earlier slot" in t]) == 1
 
 
 def test_the_same_offer_is_not_repeated_for_every_ping(tmp_path: Path) -> None:
     _client, ping, say, _, chat = _gps_demo(tmp_path)
     ping(165)
     say("my truck is 60 minutes late")
-    say("1")
-    say("confirm")
+    say("yes confirm")
     ping(24)
     ping(23)
     ping(22)
-    assert len([t for t in chat() if "earlier slots than your current one" in t]) == 1  # one offer, three confirmations
+    assert len([t for t in chat() if "earlier slot" in t]) == 1  # one offer, three confirmations
     assert len([t for t in chat() if "your new position" in t]) == 4  # 165, 24, 23, 22
 
 
@@ -324,10 +339,9 @@ def test_no_offer_when_the_current_slot_is_already_as_early_as_it_gets(tmp_path:
     _, ping, say, _, chat = _gps_demo(tmp_path)
     ping(20)
     say("my truck is 60 minutes late")
-    say("1")
-    say("confirm")
+    say("yes confirm")
     ping(5)  # closer, but there is nothing at least 30 minutes earlier than the slot it already has
-    assert not any("earlier slots than your current one" in t for t in chat())
+    assert not any("earlier slot" in t for t in chat())
 
 
 def test_a_search_from_far_away_does_not_offer_slots_the_truck_cannot_reach(tmp_path: Path) -> None:
@@ -335,8 +349,8 @@ def test_a_search_from_far_away_does_not_offer_slots_the_truck_cannot_reach(tmp_
     _, ping, say, _, _ = _gps_demo(tmp_path)
     ping(300)
     reply = say("my truck is 60 minutes late")
-    starts = [ln.split(", ")[1].split("-")[0] for ln in reply.split("\n") if ln[:2] in ("1.", "2.", "3.")]
-    assert all(s >= "19:00" for s in starts) or "operations" in reply.lower()
+    starts = re.findall(r"(\d\d:\d\d)-\d\d:\d\d", reply)
+    assert (starts and all(s >= "19:00" for s in starts)) or "operations" in reply.lower()
 
 
 def test_a_position_update_reaches_the_load_with_the_late_booking_even_when_it_is_not_the_first_load(tmp_path: Path) -> None:
@@ -353,9 +367,8 @@ def test_a_position_update_reaches_the_load_with_the_late_booking_even_when_it_i
         r = client.post("/demo/api/gps", json={"driver_id": sandeep["id"], "lat": fac["lat"] + km / 111.2, "lon": fac["lon"], "age_minutes": 0})
         assert r.status_code == 200
     texts = [m["text"] for m in client.get(f"/demo/api/driver/{sandeep['id']}/state").json()["messages"]]
-    offers = [t for t in texts if "earlier slots than your current one" in t]
-    # At 165 km the 15:00 slots already beat 18:00; at 24 km much earlier ones open up, so the second offer starts earlier than the first.
-    assert len(offers) == 2 and all(o.startswith(f"For order {late['order']}:") and "1. Dock" in o for o in offers)
-    first_start = [o.split("\n")[1].split(", ")[1].split("-")[0] for o in offers]
-    assert first_start[1] < first_start[0] < "18:00"
+    offers = [t for t in texts if "earlier slot" in t]
+    # One question at a time: while the first earlier slot is held, a closer ping does not swap it under the driver.
+    assert len(offers) == 1 and offers[0].startswith(f"For order {late['order']}:") and "Reply Yes" in offers[0]
+    assert re.search(r"(\d\d:\d\d)-\d\d:\d\d", offers[0]).group(1) < "18:00"  # type: ignore[union-attr]
     assert len([t for t in texts if "your new position" in t]) == 2  # each ping confirmed once, not once per load

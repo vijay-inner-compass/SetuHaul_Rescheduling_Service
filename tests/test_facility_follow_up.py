@@ -76,3 +76,19 @@ def test_partner_destination_sends_a_request_and_never_says_booked(chat: Chat) -
     assert outcome == "PARTNER_REQUESTED" and chat.held() == []
     assert chat.rows("select count(*) from partner_requests where status='PENDING_PARTNER'")[0][0] == 1
     assert "not booked" in _last_message(chat).lower()
+
+
+def test_a_partner_move_drops_the_hold_at_the_old_facility_so_yes_cannot_book_it(chat: Chat) -> None:
+    old = chat.current()
+    chat.say("I will be about two hours late")
+    assert len(chat.held()) == 1
+    outcome, _ = _approve(chat, "the partner")
+    assert outcome == "PARTNER_REQUESTED" and chat.held() == []
+    assert not chat.say("Yes, confirm").startswith("Your appointment is confirmed") and chat.current() == old
+
+
+def test_the_driver_card_names_the_warehouse_of_the_old_booking_after_a_move(tmp_path: Path) -> None:
+    chat = Chat(tmp_path)
+    _approve(chat, "Gurugram")
+    card = chat.client.get("/demo/driver/api/state").json()["booking"]
+    assert "Gurugram" in card["facility"] and "Dock D4" in card["booked"] and "Jaipur" in card["booked"]

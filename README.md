@@ -17,11 +17,14 @@ SQLite is the system of record for the prototype.
 * [Demonstration guide](docs/demonstration-guide.md): what to run, what to type and what you should see.
 * [Scenario catalogue](docs/scenario-catalogue.md): edge cases and failure scenarios, each with the test that proves it.
 
+**How a slot is offered:** the service holds the first feasible slot and the driver replies Yes or No; a driver may ask to change
+facility, which the destination warehouse approves (see `docs/running-and-demonstrating.md`, section 11).
+
 ## Quick start (Windows PowerShell; Python 3.12)
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\python -m pip install -e ".[dev]"
-.\.venv\Scripts\python -m pytest -q          # 1158 tests
+.\.venv\Scripts\python -m pytest -q          # 1302 tests
 .\.venv\Scripts\python -m ruff check .
 .\.venv\Scripts\python -m mypy src
 ```

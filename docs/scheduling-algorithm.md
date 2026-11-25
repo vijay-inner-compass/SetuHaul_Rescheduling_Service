@@ -1,5 +1,8 @@
 # Scheduling algorithm
 
+> **Changed 2026-11-25 (D93):** the numbered three-option menu is gone. After a delay report the service **holds the first feasible
+> slot** and the driver replies **Yes** to book it or **No** for the next one. Steps or examples below that pick a number no longer apply.
+
 How SetuHaul decides which dock slots to offer a late truck, how it stops two drivers taking the same slot, and how it moves a
 driver from the old appointment to the new one. This describes the code as it stands; each section names the file and function.
 For a guided tour of the same files see [code-walkthrough/03](code-walkthrough/03-eta-feasibility-options.md) and

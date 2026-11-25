@@ -18,7 +18,7 @@ from setuhaul.allocation import rank_options
 from setuhaul.auth import audit
 from setuhaul.auth.authz import facility_ids
 from setuhaul.auth.users import User
-from setuhaul.booking import acquire_hold, make_hold_checker
+from setuhaul.booking import acquire_hold, make_hold_checker, release_hold
 from setuhaul.capacity import build_facility_state
 from setuhaul.clock import Clock
 from setuhaul.config import load_settings
@@ -118,6 +118,17 @@ APPROVAL_HOLD_SECONDS = 15 * 60
 Outcome = Literal["HELD", "PARTNER_REQUESTED", "NO_SLOT"]
 
 
+def _release_live_holds(conn: sqlite3.Connection, clock: Clock, memory: ConversationMemoryStore, driver_id: str, thread_id: str,
+                        shipment_id: str) -> None:
+    """Cancel every hold the load still has, whichever conversation made it, and forget the remembered one."""
+    rows = conn.execute(
+        "select a.appointment_id, m.thread_id from appointments a join appointment_hold_meta m using(appointment_id) "
+        "where a.shipment_id=? and a.appointment_status='HELD' and m.driver_id=?", (shipment_id, driver_id)).fetchall()
+    for row in rows:
+        release_hold(conn, driver_id, row["thread_id"], row["appointment_id"], "SYSTEM", clock)
+    memory.save_structured_state(driver_id, thread_id, memory.load(driver_id, thread_id).state.model_copy(update={"hold": None}))
+
+
 def after_approval(conn: sqlite3.Connection, redis: Any, clock: Clock, request_id: str) -> Outcome:
     """Offer the driver something at the new facility, or put the load back. Tells the driver either way."""
     req = conn.execute("select * from facility_change_requests where request_id=? and status='APPROVED'", (request_id,)).fetchone()
@@ -160,6 +171,8 @@ def after_approval(conn: sqlite3.Connection, redis: Any, clock: Clock, request_i
         asked = request_slot(conn, clock, shipment_id=shipment_id, proposed_start=start, proposed_end=start + timedelta(hours=1))
         if asked.status not in ("REQUESTED", "ALREADY_PENDING"):
             return give_back("NO_PARTNER_REQUEST")
+        # A slot still held at the old facility must go: the driver's next "Yes" would otherwise book it.
+        _release_live_holds(conn, clock, memory, driver_id, thread_id, shipment_id)
         tell(f"The move to {new['facility_name']} is approved. I have asked them for {start:%H:%M} on {start:%d %b}. "
              "It is NOT booked until they reply.")
         return "PARTNER_REQUESTED"

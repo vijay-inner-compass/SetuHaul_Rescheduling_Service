@@ -72,7 +72,7 @@ the empty-board walkthrough (observed output, two drivers competing, a hand-off 
 [demonstration guide](demonstration-guide.md#g-fresh-run-an-empty-dock-board).
 
 If a `.env` with a provider, model id and key exists, a **Live model** switch becomes usable; otherwise the assistant is the **rule-based
-stand-in** (deterministic; it understands "N minutes late/delay", "first"/"take", "confirm" and a bare menu number such as "1"; it does **not** understand breakdown/repair wording, "keep my original slot" or "cancel"). It says nothing about model quality.
+stand-in** (deterministic; it understands "N minutes late/delay", "first"/"take", "yes"/"confirm", "no" and "change facility"; it does **not** understand breakdown/repair wording, "keep my original slot" or "cancel"). It says nothing about model quality.
 To guarantee the stand-in, start with `$env:SETUHAUL_DOTENV = "off"` first.
 
 The page has three panels and a top bar:
@@ -93,6 +93,10 @@ Do this between scenarios. Each chat message advances the clock 20 seconds, so a
 
 Direct API calls to the same routes (`/demo/api/chat`, `/clock`, `/board`, `/cases`, `/gps`, ...) are used below to show exact text; they run the same code as the page.
 A script calling them must first keep the session cookie from a sign-in (`/demo/login` sets one when started with `--auto-login`) (for example one `httpx.Client` for all calls).
+
+> **Changed 2026-11-25 (D93):** the numbered menu is gone. A delay report (or a closer truck) **holds one slot**; the driver replies
+> **Yes** to book it or **No** for the next one. Where a step below picks a number or shows three options, see section 11; the
+> screenshots and recorded outputs below predate this change.
 
 ## 4. Scenarios on the console
 
@@ -191,7 +195,7 @@ Wording is a draft; a native speaker has not reviewed it.
 ### F. Cancel, keep original, break the rules
 
 The quick buttons **Breakdown, 90 minute repair**, **Keep my original slot** and **Cancel my appointment** need a model that understands those phrases. The rule-based
-stand-in recognises only "N minutes late/delay", a bare menu number, "first"/"take" and "confirm"; for the other three it replies `How late are you, and which shipment is it?`
+stand-in recognises only "N minutes late/delay", "first"/"take", "yes"/"confirm", "no" and "change facility"; for the other three it replies `How late are you, and which shipment is it?`
 (observed for "keep my original slot" and "cancel my appointment"). With the **Live model**:
 
 * **Keep my original slot** releases a pending hold and never touches the original appointment.
@@ -487,3 +491,18 @@ Always close with the limits: [client-readout.md](client-readout.md) lists what 
 | Rows missing on the board | switch facility tab (Gurugram or Jaipur); demo drivers' loads are mostly Jaipur |
 | `docs/verification/scenario-run.md` shows as modified | `run_scenario.py` rewrote it; `git checkout docs/verification/scenario-run.md` |
 | Sandbox or CI differs from your machine | CI runs Windows and Ubuntu (`.github/workflows/ci.yml`); Ubuntu behaviour of later phases was not re-run here |
+
+## 11. Auto-hold and changing facility
+
+**Slots.** A delay report holds one slot (facility, dock, time, expiry in the reply). `Yes` books it; `No` releases it and holds the next,
+searching again when the first three are used up; when nothing is left the case goes to operations and the original booking stands.
+
+**Closer truck.** When a GPS ping shows an earlier slot is now reachable, one is held for 15 minutes and offered the same way. Nothing
+changes unless the driver replies `Yes`; while a slot is already held, no further offer is made.
+
+**Facility change.** The driver writes, for example, `Please change facility to Gurugram`. It is only a request (expires after 120 minutes).
+A warehouse user of the **destination** facility, or an admin, approves or rejects it on `/warehouse` > Messages > Facility change requests.
+On approval the load's destination changes and a slot is held there for 15 minutes; for the partner warehouse the usual email request is sent
+instead. If nothing can be offered, the load goes back to its original facility with its original booking and a case is opened.
+
+**Limits.** The hold messages after an approval are in English only. The partner request proposes the first full hour after the arrival.

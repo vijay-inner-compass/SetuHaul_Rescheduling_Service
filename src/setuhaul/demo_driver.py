@@ -90,10 +90,11 @@ def register_demo_driver(app: FastAPI, deps: Any, send: Callable[[str, str, str]
             if shipment is None:
                 return None
             row = conn.execute(
-                "select s.order_reference, f.facility_name, sl.slot_start_ts, sl.slot_end_ts, dk.dock_code from shipments s "
-                "join facilities f on f.facility_id=s.destination_facility_id left join appointments a on a.shipment_id=s.shipment_id "
+                "select s.order_reference, f.facility_name, sl.slot_start_ts, sl.slot_end_ts, dk.dock_code, bf.facility_name as booked_at "
+                "from shipments s join facilities f on f.facility_id=s.destination_facility_id left join appointments a on a.shipment_id=s.shipment_id "
                 "and a.is_current=1 and a.appointment_status in ('PENDING_CONFIRMATION','CONFIRMED','IN_PROGRESS') "
-                "left join appointment_slots sl on sl.slot_id=a.slot_id left join docks dk on dk.dock_id=sl.dock_id where s.shipment_id=?",
+                "left join appointment_slots sl on sl.slot_id=a.slot_id left join docks dk on dk.dock_id=sl.dock_id "
+                "left join facilities bf on bf.facility_id=dk.facility_id where s.shipment_id=?",
                 (shipment,)).fetchone()
             pending = conn.execute("select t.facility_name from facility_change_requests q join facilities t on t.facility_id=q.to_facility_id "
                                    "where q.shipment_id=? and q.status='PENDING'", (shipment,)).fetchone()
@@ -106,6 +107,9 @@ def register_demo_driver(app: FastAPI, deps: Any, send: Callable[[str, str, str]
             start = parse_operational_timestamp(row["slot_start_ts"]).astimezone(IST)
             end = parse_operational_timestamp(row["slot_end_ts"]).astimezone(IST)
             booked = f"Dock {row['dock_code']}, {start:%H:%M}-{end:%H:%M} on {start:%d %b}"
+            # After an approved move the old booking stands until the new one is confirmed: say where it is.
+            if row["booked_at"] != row["facility_name"]:
+                booked += f" at {row['booked_at']}"
         waiting = f"Waiting for {pending['facility_name']} to approve your change of facility." if pending else None
         return {"order": row["order_reference"], "facility": row["facility_name"], "booked": booked, "pending_change": waiting}
 

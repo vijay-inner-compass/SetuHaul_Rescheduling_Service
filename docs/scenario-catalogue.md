@@ -1,5 +1,8 @@
 # Scenario catalogue: edge cases and failures
 
+> **Changed 2026-11-25 (D93):** the numbered three-option menu is gone. After a delay report the service **holds the first feasible
+> slot** and the driver replies **Yes** to book it or **No** for the next one. Steps or examples below that pick a number no longer apply.
+
 Every row is a situation someone might ask about, the expected behaviour, and the **test that proves it**. Run any one with
 `python -m pytest -q -k <test_name>`. For a live view of the main flows see the [demonstration guide](demonstration-guide.md).
 

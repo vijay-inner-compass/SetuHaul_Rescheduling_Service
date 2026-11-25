@@ -1,5 +1,8 @@
 # Demonstration guide
 
+> **Changed 2026-11-25 (D93):** the numbered three-option menu is gone. After a delay report the service **holds the first feasible
+> slot** and the driver replies **Yes** to book it or **No** for the next one. Steps or examples below that pick a number no longer apply.
+
 How to show the whole service working, how to explain it, and how to show the edge cases and failures.
 
 Use **synthetic data only**. The demo console runs on a simulated clock (4 Aug 2026, 09:35 IST) and a copy of the supplied

@@ -51,3 +51,10 @@ def test_warehouse_chats_can_be_refreshed_in_place() -> None:
     assert 'data-driver="DRV006"' in page
     script = (Path(__file__).resolve().parents[1] / "src/setuhaul/auth/assets/warehouse.js").read_text(encoding="utf-8")
     assert "DOMParser" in script and "setInterval" in script and "document.hidden" in script
+
+
+def test_action_buttons_still_work_after_the_live_refresh_replaces_them() -> None:
+    # The refresh swaps whole sections in; a handler bound to each button at load would be lost with the old node.
+    script = (Path(__file__).resolve().parents[1] / "src/setuhaul/auth/assets/common.js").read_text(encoding="utf-8")
+    assert 'document.addEventListener("click"' in script and 'closest("button[data-api]")' in script
+    assert 'querySelectorAll("button[data-api]")' not in script

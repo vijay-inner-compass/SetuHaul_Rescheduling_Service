@@ -88,15 +88,18 @@
         send(form.getAttribute("data-api"), collect(form), form.getAttribute("data-next"));
       });
     });
-    Array.prototype.forEach.call(document.querySelectorAll("button[data-api]"), function (button) {
-      button.addEventListener("click", function () {
-        var ask = button.getAttribute("data-confirm");
-        if (ask && !window.confirm(ask)) {
-          return;
-        }
-        var raw = button.getAttribute("data-body");
-        send(button.getAttribute("data-api"), raw ? JSON.parse(raw) : {}, button.getAttribute("data-next"));
-      });
+    // One listener on the document, not one per button: the live refresh replaces sections, and their new buttons must work too.
+    document.addEventListener("click", function (event) {
+      var button = event.target.closest("button[data-api]");
+      if (!button) {
+        return;
+      }
+      var ask = button.getAttribute("data-confirm");
+      if (ask && !window.confirm(ask)) {
+        return;
+      }
+      var raw = button.getAttribute("data-body");
+      send(button.getAttribute("data-api"), raw ? JSON.parse(raw) : {}, button.getAttribute("data-next"));
     });
   }
 

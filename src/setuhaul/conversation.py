@@ -412,20 +412,6 @@ def _finalize(
     elif not parts and turn.position_changed:
         # The truck moved too far away to reach the slot: said by the system, from the database result, not by the model.
         parts.append(say("position_changed", lang))
-    elif not parts and turn.shown_options:
-        # a menu is a stored fact too: the numbered list comes from the saved option set, never from the model's wording,
-        # so "option 1" in the driver's reply always means the line the driver saw
-        # How many lines the menu has.
-        n = len(turn.shown_options)
-        # Heading: says nothing is held.
-        parts.append(say("options_intro", lang))
-        # One numbered line per stored option.
-        parts.extend(say("options_line", lang, n=str(i), **o) for i, o in enumerate(turn.shown_options, 1))
-        # Closing line: which numbers can be chosen and until when.
-        parts.append(say("options_outro", lang, choices=", ".join(str(i) for i in range(1, n + 1)), until=turn.options_valid_until))
-        # GPS disagreed with the driver's report: say so in the system's own wording (only then, so other replies are unchanged).
-        if turn.gps_discrepancy_minutes is not None:
-            parts.append(say("gps_note", lang, minutes=str(turn.gps_discrepancy_minutes)))
     elif parts:
         pass  # something was committed: the system's wording stands alone, the model's text is not used
     # Nothing committed and no hand-off: use the model's text, but only after the output guard.
