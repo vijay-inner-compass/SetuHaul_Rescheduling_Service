@@ -52,7 +52,7 @@ $env:SETUHAUL_COORDINATOR_TOKENS = '{"<token>": "asha"}'
 $env:SETUHAUL_REDIS_URL = "redis://localhost:6379/0"
 python -m uvicorn --factory setuhaul.api:create_app_from_env --port 8000
 ```
-Make the working database from the pristine seed: `python -c "from pathlib import Path; from setuhaul.db import make_working_db; make_working_db(Path('data/working.sqlite3'))"`.
+Make the working database from the pristine seed (this replaces an existing one): `python -c "from pathlib import Path; from setuhaul.db import make_working_db; make_working_db(Path('data/working.sqlite3'), Path('data/setuhaul.sqlite3'))"`.
 `data/setuhaul.sqlite3` is hash-pinned and never written; migrations (`migrations/`) are applied to copies.
 Coordinators can also use the CLI: `python -m setuhaul.coordinator --db data/working.sqlite3 list|show|claim|resolve|reopen`.
 
