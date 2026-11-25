@@ -7,3 +7,5 @@ __pycache__/
 *.egg-info/
 .superpowers/
 live_traces/
+# Local working database; the tracked seed is data/setuhaul.sqlite3.
+data/working.sqlite3
