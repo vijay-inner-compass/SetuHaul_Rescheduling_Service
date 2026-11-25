@@ -14,7 +14,7 @@ Use **synthetic data only**. The demo uses a copy of the supplied snapshot, a si
 `DEMO_FIXTURE` evidence. Nothing real is touched.
 
 Contents: 1 Setup · 2 Quality gates · 3 The demo console · 4 Scenarios A to F (console) · 5 GPS scenarios · 6 Evidence scripts · 7 The real HTTP service ·
-8 Live model · 9 Suggested 15-minute demo · 10 Troubleshooting
+7a Sign-in, roles and the Telegram bot · 8 Live model · 9 Suggested 15-minute demo · 10 Troubleshooting
 
 ---
 
@@ -36,15 +36,27 @@ python -m ruff check .
 python -m mypy src
 ```
 
-Observed: `647 passed in 29.35s`, `All checks passed!`, `Success: no issues found in 39 source files`.
+Observed: `647 passed in 29.35s`, `All checks passed!`, `Success: no issues found in 39 source files`. With sign-in and roles added (2026-11-25): `1158 passed`, mypy clean on 67 source files.
 
 ## 3. The demo console
 
 ```powershell
-python scripts/run_demo.py            # opens http://127.0.0.1:8800/demo
+python scripts/run_demo.py            # opens http://127.0.0.1:8800/demo/login, which signs you in and shows /demo
 python scripts/run_demo.py --no-browser --port 8800   # headless
 python scripts/run_demo.py --fresh    # start with an empty dock board (no existing appointments)
 ```
+
+**Open `/demo/login` first.** The console now needs a web session; without one `/demo` and its API answer 401. `/demo/login` exists only
+in `run_demo.py` (never in the real service) and only for loopback requests: it signs the browser in as a seeded demo **warehouse authority**
+bound to every facility. The same session also opens the real screens:
+
+| Screen | What it is | As the demo user |
+|---|---|---|
+| `/` | sign-in page; a signed-in user is sent on to their screen | redirects to `/warehouse`. The Google button answers 503 in the demo (no Google client) |
+| `/warehouse` | dock board, cases, partner requests, driver chats, projects, drivers | works |
+| `/admin` | users, pending drivers, audit log | "Not allowed" (403): admins only |
+
+The demo has no Telegram and no Google sign-in. To see the admin screen, run the real service (section 7a).
 
 `--fresh` deletes the supplied appointments, so every slot is free and no load has a booking; drivers, loads, evidence and the clock are unchanged.
 You can also switch at any time: **Reset demo** offers **Supplied schedule** or **Empty dock board**. Scenarios A to F below use the supplied schedule;
@@ -66,6 +78,7 @@ The page has three panels and a top bar:
 Do this between scenarios. Each chat message advances the clock 20 seconds, so a 180-second hold can be watched lapsing.
 
 Direct API calls to the same routes (`/demo/api/chat`, `/clock`, `/board`, `/cases`, `/gps`, ...) are used below to show exact text; they run the same code as the page.
+A script calling them must first keep the session cookie that `/demo/login` sets (for example one `httpx.Client` for all calls).
 
 ## 4. Scenarios on the console
 
@@ -222,7 +235,7 @@ The unit tests for the boundary (exactly 30 minutes is not a discrepancy, 31 is)
 Remember the console's Send calls the shared store function directly; the signed endpoints are shown in section 7.
 
 ## 5b. Partner warehouse by email (new)
-1. Start the console (`python scripts/run_demo.py`). Open **Operations > Partner mail**, press **Request partner slot (12:00)**.
+1. Start the console (`python scripts/run_demo.py`, signing in through `/demo/login`). Open **Operations > Partner mail**, press **Request partner slot (12:00)**.
 2. The request email appears (to the demo partner's coordinator). Switch the dock board to **Partner Warehouse Jaipur**: the request shows under the board as *waiting*, not booked.
 3. Press **Partner replies APPROVE**. The reply is read from the (simulated) inbox, the slot is booked and the board cell turns purple (partner warehouse). The driver (Ravi Partner-Demo) gets the update in the chat.
 4. Try **DECLINE**, or move time on with **+3 min and sweep** past 2 hours to see the request expire; the original booking is never touched.
@@ -306,6 +319,120 @@ print(httpx.post("http://127.0.0.1:8000/v1/driver/messages", content=body, heade
 
 Coordinators can also work cases from the command line: `python -m setuhaul.coordinator --db data/working.sqlite3 list|show|claim|resolve|reopen`.
 
+## 7a. Sign-in, roles and the Telegram bot
+
+Nothing in this section has been run against real Google or Telegram. The flows were exercised with fakes
+([verification/auth-roles-run.md](verification/auth-roles-run.md)).
+
+### Settings
+
+Read from the process environment by `create_app_from_env`. **The auth and Telegram variables below are not loaded from `.env` at start-up**: set them in the service's real environment (`.env.example` lists the names). The partner-mail settings are the exception: they read `.env` when first used.
+Below, `<base>` is the public origin of your service, for example `https://haul.example.com`.
+
+| Variable | Effect |
+|---|---|
+| `SETUHAUL_DB_PATH` | the migrated working database (also used by `set_admin_password.py`) |
+| `SETUHAUL_REDIS_URL` | also holds the single-use sign-in state; if Redis is down the sign-in callback answers 503 `STATE_STORE_UNAVAILABLE` |
+| `SETUHAUL_GOOGLE_CLIENT_ID`, `SETUHAUL_GOOGLE_CLIENT_SECRET` | Google sign-in; without both, `/auth/login` answers 503 `GOOGLE_NOT_CONFIGURED` |
+| `SETUHAUL_SESSION_SECRET` | signs the sign-in state cookie; at least 32 bytes, otherwise Google sign-in stays off (a warning is logged) |
+| `SETUHAUL_PUBLIC_URL` | origin only (`https://host[:port]`, no path or trailing slash); anything else, including a non-numeric port, stops start-up. Sets the redirect URI and the `Secure` cookie flag and is what the same-origin check compares scheme and host with. **Set it behind any proxy or HTTPS terminator**: without it the redirect URI comes from the request, and a proxy that rewrites `Host` can cause 403 `CROSS_SITE_REQUEST` on every change |
+| `SETUHAUL_BOOTSTRAP_ADMIN_EMAIL` | at every start-up this address is an active admin: created if missing, its role and status restored if disabled or demoted. It does not clear a locked break-glass password (see Owner step 3) |
+| `SETUHAUL_LOCAL_ADMIN` | `1` shows the break-glass password form on `/` and enables `POST /auth/local-admin`; otherwise that route is 404 |
+| `SETUHAUL_TELEGRAM_BOT_TOKEN` | the bot's token; used to send replies |
+| `SETUHAUL_TELEGRAM_WEBHOOK_SECRET` | checked against Telegram's `X-Telegram-Bot-Api-Secret-Token` header; at least 16 characters. If either Telegram value is missing or the secret is short, `/v1/telegram/webhook` answers 503 |
+| `SETUHAUL_COORDINATOR_TOKENS` | JSON map `{"<token>": "<name>"}`: bearer access to `/v1/coordinator/cases...` for services. Not limited to facilities; names may not start with `web:` |
+| `SETUHAUL_WEBHOOK_SECRET` | HMAC key of the signed driver and GPS channel (not Telegram) |
+
+### Database
+
+Migrations 011 and 012 add the tables. `make_working_db` (section 7) creates a new migrated copy. To upgrade a working database you want to keep:
+
+```powershell
+python -c "from pathlib import Path; from setuhaul.db import open_connection, apply_migrations; c = open_connection(path=Path('data/working.sqlite3')); print(apply_migrations(c)); c.close()"
+```
+
+Migration 012 stops, changing nothing, if two projects have contract references differing only in case; rename one and run it again.
+
+### Owner step 1: Google Cloud OAuth client
+
+1. In the Google Cloud console, create or pick a project.
+2. Configure the OAuth consent screen (scopes `openid`, `email`, `profile`). While the app is in testing, add each person as a test user.
+3. Credentials > Create credentials > OAuth client ID > application type **Web application**.
+4. Authorised redirect URI: `<base>/auth/callback`, exactly (for local trials, `http://localhost:8000/auth/callback`).
+5. Put the client id and secret in `SETUHAUL_GOOGLE_CLIENT_ID` and `SETUHAUL_GOOGLE_CLIENT_SECRET`; generate `SETUHAUL_SESSION_SECRET` with
+   `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+
+### Owner step 2: Telegram bot
+
+1. In Telegram, message `@BotFather`, send `/newbot`, choose a name and username, and keep the token it gives you.
+2. Generate a webhook secret: `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+3. Set `SETUHAUL_TELEGRAM_BOT_TOKEN` and `SETUHAUL_TELEGRAM_WEBHOOK_SECRET` and start the service at a public HTTPS `<base>`.
+4. Register the webhook (once, and again whenever the URL or secret changes). Replace the placeholders; do not save the real values in a file or script:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri "https://api.telegram.org/bot<BOT_TOKEN>/setWebhook" -Body @{ url = "<base>/v1/telegram/webhook"; secret_token = "<WEBHOOK_SECRET>" }
+```
+```bash
+curl -X POST "https://api.telegram.org/bot<BOT_TOKEN>/setWebhook" -d "url=<base>/v1/telegram/webhook" -d "secret_token=<WEBHOOK_SECRET>"
+```
+
+`getWebhookInfo` (same URL pattern) shows whether Telegram can reach it.
+
+### Owner step 3: first admin and break-glass
+
+1. Set `SETUHAUL_BOOTSTRAP_ADMIN_EMAIL` to your Google address and start the service.
+2. Optional break-glass: run `python scripts/set_admin_password.py <your-email>` on the server, with `SETUHAUL_DB_PATH` set to the same
+   database (the address must already be an active admin; the password is prompted for, 12 to 1024 characters), then restart with
+   `SETUHAUL_LOCAL_ADMIN=1`. Five wrong attempts lock that account's password for 15 minutes; a locked and a wrong password look the same
+   to the caller (the audit log tells them apart). The lock clears after the 15 minutes, or at once when `set_admin_password.py` sets a new
+   password; restarting with `SETUHAUL_BOOTSTRAP_ADMIN_EMAIL` does not clear it. Every attempt on the enabled route is audited, including a
+   malformed body or an over-long password (`LOCAL_ADMIN_REFUSED`, reason `BAD_REQUEST`, none of the submitted values kept).
+   A break-glass session lasts 1 hour, a Google session 8 hours.
+
+### Using it
+
+1. Admin opens `<base>/`, signs in with Google, lands on `/admin` and invites users. A warehouse authority needs at least one facility.
+2. The warehouse authority signs in, lands on `/warehouse` and adds a driver (name, phone, licence number and expiry, carrier, an existing vehicle). The driver is `PENDING_APPROVAL`.
+3. The admin approves under **Pending drivers**.
+4. The warehouse authority creates a project for one of their facilities and allocates the driver.
+5. The driver opens the bot, sends any message, taps **Share my phone number**, and is linked if the number is theirs and matches exactly one eligible driver. Then they chat as usual.
+6. To cut access: **Disable** a user (their sessions end at once); **Suspend** an approved onboarded driver (admin screen, **Onboarded drivers**;
+   **Re-approve** undoes it while the licence is valid); or **Revoke Telegram** for a driver. A revoke is sticky: sharing the number again,
+   from that or any other account, is refused until someone allowed to clicks **Allow re-link** (audited), after which the driver can link again.
+
+Rules enforced by the server:
+
+* An address that was not invited gets `NOT_INVITED` and no user row. Unverified Google addresses are refused.
+* A warehouse authority sees only their facilities; a case, board or project elsewhere answers "not found". Only a project's creator or an admin changes its drivers.
+* Their driver chats cover only drivers actively allocated to `ACTIVE`, unexpired (`ends_on` not passed, IST) projects they created, in
+  facilities they still hold, and only messages sent since that allocation began. Messages from before the allocation, after a release, or
+  between a release and a re-allocation are not shown. Admins see every chat.
+* Their driver list shows drivers they added plus those project drivers, with the phone masked.
+* **Revoke Telegram** and **Allow re-link** are for an admin or the warehouse authority who added the driver; supplied drivers: admin only.
+  Allocating a driver to your project does not grant them. Anything else answers 404 `DRIVER_NOT_FOUND`.
+* A suspended (rejected) or licence-expired onboarded driver is refused by the bot, by allocation and by the signed phone channel alike.
+* Admins see everything and can also create projects and allocate.
+* The drivers supplied with the data package (DRV001 to DRV015) have no onboarding profile: they count as approved while `ACTIVE` or `OFF_DUTY`, and their licence expiry is never checked.
+* Every bot refusal is the same neutral message; the reason is only in the audit log.
+* A change sent with the session cookie from another origin is refused (403 `CROSS_SITE_REQUEST`).
+* Cases claimed from the web are stored as `web:<email>` and shown by display name.
+
+### Known limitations
+
+* **Driver notices are not delivered on their own.** The only notice queued for a driver is *hold expired*; booking, cancellation and escalation changes queue none (operations, partner-warehouse and position messages are written into the chat history only, not sent to Telegram). Nothing schedules or runs `jobs/send_driver_notifications.py` (it has no command-line entry point). The bot only replies to what the driver sends.
+* The generic `jobs/deliver_notifications` runner does not filter by recipient: a scheduler using it would also mark driver notices as sent without Telegram.
+* Drivers have no web account or screen.
+* An admin can create projects and allocate drivers, although one line of the design spec says admins only read projects.
+* Drivers on projects created by an admin do not appear in any warehouse authority's chats.
+* A driver is not tied to a warehouse: any eligible driver id can be allocated through the API by a warehouse authority to their own project. From then on, until release, that driver's new messages (including ones about other facilities' loads) are visible to them; earlier history is not.
+* The screens cannot edit a driver, renew a licence, close a project, change a user's facilities or re-enable a disabled user (only the bootstrap admin comes back).
+* A message sent to the bot by a revoked account gets the neutral refusal, with no share button and no audit row (only contact shares are audited).
+* Migration 012 stops on contract references that differ only in case.
+* Phone rules are India-first: a bare 10-digit number is read as `+91`, and a trunk `0` after any other country code is rejected (including numbers where that `0` is genuine, such as Italian landlines).
+* The Google ID token signature is not verified. The token comes directly from Google's token endpoint over TLS (OIDC Core 3.1.3.7); issuer, audience, expiry, nonce and verified email are checked. A flow that receives tokens through the browser would need signature verification.
+* Refused contact shares and messages from unlinked accounts are not rate limited; each refused share writes an audit row.
+* Not run against real Google, a real Telegram bot or a real HTTPS proxy.
+
 ## 8. Live model (*not run*)
 
 To use a real model, copy `.env.example` to `.env` (git-ignored) and set `SETUHAUL_MODEL_PROVIDER` (`openai` or `anthropic`), `SETUHAUL_MODEL_ID`, `SETUHAUL_MODEL_API_KEY`; then restart the demo and switch to **Live model**.
@@ -331,6 +458,12 @@ Always close with the limits: [client-readout.md](client-readout.md) lists what 
 
 | Symptom | Cause and fix |
 |---|---|
+| `/demo` answers 401 | open `/demo/login` first (loopback only) |
+| `/auth/login` answers 503 `GOOGLE_NOT_CONFIGURED` | client id or secret missing, or `SETUHAUL_SESSION_SECRET` shorter than 32 bytes |
+| 403 `CROSS_SITE_REQUEST` from your own pages | set `SETUHAUL_PUBLIC_URL` to exactly the origin in the browser's address bar |
+| Telegram webhook answers 503 / 401 | 503: token or secret missing, or secret shorter than 16 characters. 401: `setWebhook` used a different secret |
+| Admin account disabled or demoted | restart with `SETUHAUL_BOOTSTRAP_ADMIN_EMAIL` set to it (restores role and status only) |
+| Break-glass password locked | wait 15 minutes, or run `python scripts/set_admin_password.py <email>` on the server |
 | `UNKNOWN_PHONE` for a valid driver on your own working database | identities not provisioned; call `provision_identities` (section 7) |
 | `UnicodeEncodeError: 'charmap' codec` | set `PYTHONUTF8=1` before scripts that print Hindi |
 | `[Errno 10048] ... only one usage of each socket address` | the port is taken by an earlier run; stop that process or pass another `--port` |

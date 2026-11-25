@@ -14,13 +14,14 @@ from setuhaul.gps import active_shipment_for_driver
 from setuhaul.schemas import EtaEvidence
 from setuhaul.stub_model import StubGateway  # a scripted stand-in model, for tests only
 from setuhaul.tools import ReportArgs, _eta_for
+from tests.auth_helpers import demo_client
 
 
 # The demo app with a client that counts as this machine.
 @pytest.fixture()
 def demo(tmp_path: Path):  # type: ignore[no-untyped-def]
     app, deps = build_demo_app(tmp_path / "demo", live_factory=StubGateway)
-    return TestClient(app), deps
+    return demo_client(app), deps
 
 
 # Id of the driver with this name (same helper pattern as test_demo_ui.py).
@@ -118,7 +119,7 @@ def test_invalid_values_are_rejected(demo) -> None:  # type: ignore[no-untyped-d
 
 def test_outsiders_are_refused_on_both_gps_routes(tmp_path: Path) -> None:
     app, _ = build_demo_app(tmp_path / "d", live_factory=StubGateway)
-    outsider = TestClient(app, client=("203.0.113.9", 50000))
+    outsider = demo_client(app, client=("203.0.113.9", 50000))
     r = outsider.get("/demo/api/driver/DRV001/gps")
     assert r.status_code == 403 and r.json()["reason_code"] == "DEMO_IS_LOCAL_ONLY"
     r = outsider.post("/demo/api/gps", json={"driver_id": "DRV001", "lat": 26.0, "lon": 75.0, "age_minutes": 0})

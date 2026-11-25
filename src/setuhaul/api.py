@@ -46,7 +46,7 @@ from pathlib import Path
 from typing import Any
 
 # FastAPI is the web framework.
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 
 # The error raised when a request body fails validation.
 from fastapi.exceptions import RequestValidationError
@@ -63,7 +63,16 @@ from redis import Redis
 # Runs blocking database code in a worker thread so the event loop is not blocked.
 from starlette.concurrency import run_in_threadpool
 
-# Live hold checker for conversation memory.
+# Web sessions, the role guard and the facility scope of cases.
+from setuhaul.auth import same_origin, sessions
+from setuhaul.auth.authz import AuthzError, require_role
+from setuhaul.auth.google import GoogleVerifier
+from setuhaul.auth.onboarding import driver_eligible
+
+# The Telegram reply sender type.
+from setuhaul.auth.telegram import TelegramClient
+from setuhaul.auth.users import User
+from setuhaul.auth.warehouse_routes import case_ids_in_scope
 from setuhaul.booking import make_hold_checker
 
 # Real or simulated clock.
@@ -100,7 +109,12 @@ from setuhaul.escalation import (
 from setuhaul.gps import UnknownShipment, active_shipment_for_driver, store_ping
 
 # Phone-to-driver lookup and webhook signature check.
-from setuhaul.identity import AuthError, resolve_driver, verify_channel_request
+from setuhaul.identity import (
+    AuthError,
+    TrustedDriverContext,
+    resolve_driver,
+    verify_channel_request,
+)
 
 # The background maintenance runner.
 from setuhaul.jobs.expire_holds import MaintenanceRunner
@@ -175,6 +189,18 @@ class AppDeps:
     # Optional span collector.
     exporter: InMemoryExporter | None = None
     demo: Any = None  # a demo_ui.DemoState turns on the localhost-only demo screen
+    # Google sign-in verifier; None leaves the sign-in routes answering 503.
+    google: GoogleVerifier | None = None
+    # Key for the signed OAuth state cookie.
+    session_secret: bytes = b""
+    # The site's public origin (SETUHAUL_PUBLIC_URL); when set it fixes the OAuth redirect URI and the Secure cookie flag.
+    public_url: str = ""
+    # The break-glass admin password route exists only when this is on (SETUHAUL_LOCAL_ADMIN=1).
+    local_admin_enabled: bool = False
+    # Shared secret Telegram echoes in a header on every webhook call; empty leaves the Telegram route off.
+    telegram_secret: bytes = b""
+    # Sends replies to Telegram chats; None means no replies can be sent.
+    telegram: TelegramClient | None = None
 
 
 # The inbound webhook body. Unknown fields are rejected (extra='forbid').
@@ -211,6 +237,20 @@ class ResolveIn(BaseModel):
     note: str = Field(max_length=500)
 
 
+# Claims made from a web session are stored as this prefix plus the user's (unique) e-mail.
+WEB_PREFIX = "web:"
+
+
+# A human label for a stored claim identity: a web user's display name, a bearer coordinator's own name.
+def claim_label(conn: sqlite3.Connection, claimed_by: str | None) -> str | None:
+    if claimed_by is None or not claimed_by.startswith(WEB_PREFIX):
+        return claimed_by
+    from setuhaul.auth import users as web_users
+
+    found = web_users.find_by_email(conn, claimed_by[len(WEB_PREFIX):])
+    return (found.display_name or found.email) if found else claimed_by[len(WEB_PREFIX):]
+
+
 # A structured error body: status, reason code and request id. No stack trace, SQL or path ever appears.
 def _reject(request_id: str, status: int, reason: str, **extra: Any) -> JSONResponse:
     # Rate-limit rejections tell the client when to retry.
@@ -221,6 +261,19 @@ def _reject(request_id: str, status: int, reason: str, **extra: Any) -> JSONResp
 
 
 # Build the FastAPI application from its dependencies.
+def resolve_eligible_driver(conn: sqlite3.Connection, raw_phone: str, clock: Clock) -> TrustedDriverContext:
+    """The phone channel's driver, refused like an inactive one unless eligible today (IST): approved with a valid licence.
+
+    Supplied drivers (no onboarding profile) stay eligible; the rule is the one allocation and the Telegram bot use.
+    """
+    # Phone lookup and the driver_status check first, unchanged.
+    trusted = resolve_driver(conn, raw_phone)
+    # Then the onboarding rule; the refusal is the same code an inactive driver gets.
+    if not driver_eligible(conn, trusted.driver_id, clock.now().astimezone(IST).date()):
+        raise AuthError("DRIVER_NOT_ALLOWED", "NOT_ELIGIBLE")
+    return trusted
+
+
 def create_app(deps: AppDeps) -> FastAPI:
     # Start-up and shut-down hook.
     @asynccontextmanager
@@ -242,8 +295,21 @@ def create_app(deps: AppDeps) -> FastAPI:
             if runner is not None:
                 await run_in_threadpool(runner.stop)
 
+    # A bearer name that looks like a web identity would let that token act as a signed-in user's claims.
+    for token_name in deps.coordinator_tokens.values():
+        if token_name.startswith(WEB_PREFIX):
+            raise ValueError(f"coordinator token names may not start with {WEB_PREFIX!r}")
+
     # Interactive docs and the schema endpoint are switched off so the surface is exactly the routes below.
     app = FastAPI(title="SetuHaul rescheduling service", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+
+    # Cookie-authenticated writes must come from our own pages. Registered first, so it runs inside the request-id step.
+    @app.middleware("http")
+    async def same_origin_only(request: Request, call_next):  # type: ignore[no-untyped-def]
+        if same_origin.is_cross_site(request, deps.public_url):
+            await run_in_threadpool(same_origin.record_refusal, deps, request)
+            return _reject(request.state.request_id, 403, "CROSS_SITE_REQUEST")
+        return await call_next(request)
 
     # Runs around every request.
     @app.middleware("http")
@@ -329,14 +395,19 @@ def create_app(deps: AppDeps) -> FastAPI:
 
     # The ordered pipeline: sender lookup -> duplicate check -> rate limit -> claim the id -> conversation. All before the model is called.
     def _process(conn: sqlite3.Connection, payload: MessageIn, request_id: str) -> JSONResponse:
-        # The clock.
-        clock = deps.clock
         try:
             # Identify the driver from their phone number. The model never supplies identity.
-            trusted = resolve_driver(conn, payload.sender)
+            trusted = resolve_eligible_driver(conn, payload.sender, deps.clock)
         except AuthError as exc:
             # Unknown or disallowed sender.
             return _reject(request_id, 403, exc.code)
+        # The rest of the pipeline is shared with the Telegram channel, which resolves its driver differently.
+        return _process_trusted(conn, trusted, payload, request_id)
+
+    # Duplicate check -> rate limit -> claim the id -> conversation, for a driver whose identity is already verified.
+    def _process_trusted(conn: sqlite3.Connection, trusted: TrustedDriverContext, payload: MessageIn, request_id: str) -> JSONResponse:
+        # The clock.
+        clock = deps.clock
         # The verified driver.
         driver_id = trusted.driver_id
         # A fingerprint of the message text: the same id with different text is a conflict.
@@ -525,7 +596,7 @@ def create_app(deps: AppDeps) -> FastAPI:
         def store(conn: sqlite3.Connection, p: DriverLocationIn, rid: str) -> int | JSONResponse:
             try:
                 # Identity comes from the phone number, never from the body's content.
-                driver = resolve_driver(conn, p.sender)
+                driver = resolve_eligible_driver(conn, p.sender, deps.clock)
             except AuthError as exc:
                 return _reject(rid, 403, exc.code)
             # The shipment being driven now.
@@ -548,7 +619,7 @@ def create_app(deps: AppDeps) -> FastAPI:
         try:
             try:
                 # Identify the driver by phone.
-                driver = resolve_driver(conn, phone)
+                driver = resolve_eligible_driver(conn, phone, deps.clock)
             except AuthError as exc:
                 return _reject(rid, 403, exc.code)
             # Their current hand-off case, if any.
@@ -615,66 +686,148 @@ def create_app(deps: AppDeps) -> FastAPI:
         code = {"NOT_FOUND": 404, "NOT_YOUR_CASE": 403, "INVALID_RESOLUTION": 422}.get(r.status, 409)
         return _reject(rid, code, r.status, case_id=r.case_id, claimed_by=r.claimed_by)
 
+    # Who is calling a case route: a legacy bearer token (all cases, the token's name) or a web session (scoped, the user's name).
+    # A plain dependency, so it runs (in a worker thread) before the body is validated and an anonymous caller always gets 401.
+    def case_actor(request: Request) -> tuple[str, User | None]:
+        # The service-to-service fallback keeps its old meaning exactly.
+        who = coordinator(request)
+        if who is not None:
+            return who, None
+        # Neither a bearer token nor a session cookie: the same 401 as before.
+        if not request.cookies.get(sessions.COOKIE_NAME):
+            raise AuthzError(401, "UNAUTHORIZED")
+        # A session must carry a warehouse role with a facility (or be an admin); refusals are 401/403/503.
+        user = require_role("WAREHOUSE_AUTHORITY", "ADMIN")(request)
+        # The stored identity is the unique e-mail under a prefix no bearer name may use, so it can never equal anyone else's.
+        return WEB_PREFIX + user.email, user
+
+    # A case that is not in the session user's scope looks like it does not exist.
+    def not_found(rid: str, case_id: str) -> JSONResponse:
+        return _reject(rid, 404, "NOT_FOUND", case_id=case_id, claimed_by=None)
+
+    # Run a change on one case after the scope check (the bearer fallback has no scope).
+    def change_case(rid: str, case_id: str, user: User | None, act: Callable[[sqlite3.Connection], TransitionResult]) -> JSONResponse:
+        def go(c: sqlite3.Connection) -> JSONResponse:
+            if user is not None and not case_ids_in_scope(c, user, case_id=case_id):
+                return not_found(rid, case_id)
+            return transition_response(rid, act(c))
+
+        return with_conn(rid, go)
+
     # List cases (open and claimed by default).
     @app.get("/v1/coordinator/cases")
-    async def cases(request: Request, status: str | None = None, limit: int = 50) -> JSONResponse:
+    async def cases(request: Request, actor: tuple[str, User | None] = Depends(case_actor), status: str | None = None, limit: int = 50) -> JSONResponse:
         rid = request.state.request_id
-        if coordinator(request) is None:
-            return _reject(rid, 401, "UNAUTHORIZED")
+        user = actor[1]
         # Keep only valid status names from the query.
         statuses = tuple(s for s in (status or "OPEN,CLAIMED").split(",") if s in ("OPEN", "CLAIMED", "RESOLVED", "CANCELLED"))
-        return await run_in_threadpool(with_conn, rid, lambda c: JSONResponse(
-            {"cases": [x.model_dump(mode="json") for x in list_open_cases(c, statuses or ("OPEN", "CLAIMED"), min(limit, 200))], "request_id": rid}))
+        statuses = statuses or ("OPEN", "CLAIMED")
+
+        def read(c: sqlite3.Connection) -> JSONResponse:
+            if user is None:
+                found = list_open_cases(c, statuses, min(limit, 200))
+            else:
+                # Same order and cap as the unscoped list, but only cases bound for the user's facilities.
+                found = [x for x in (get_case(c, i) for i in case_ids_in_scope(c, user, statuses, min(limit, 200))) if x is not None]
+            return JSONResponse({"cases": [{**x.model_dump(mode="json"), "claimed_by_label": claim_label(c, x.claimed_by)} for x in found],
+                                 "request_id": rid})
+
+        return await run_in_threadpool(with_conn, rid, read)
 
     # One case with its full history.
     @app.get("/v1/coordinator/cases/{case_id}")
-    async def case_detail(request: Request, case_id: str) -> JSONResponse:
+    async def case_detail(request: Request, case_id: str, actor: tuple[str, User | None] = Depends(case_actor)) -> JSONResponse:
         rid = request.state.request_id
-        if coordinator(request) is None:
-            return _reject(rid, 401, "UNAUTHORIZED")
+        user = actor[1]
 
         # Load the case and its events.
         def read(c: sqlite3.Connection) -> JSONResponse:
             case = get_case(c, case_id)
-            if case is None:
+            if case is None or (user is not None and not case_ids_in_scope(c, user, case_id=case_id)):
                 return _reject(rid, 404, "NOT_FOUND")
             from setuhaul.escalation import case_events
 
-            return JSONResponse({"case": case.model_dump(mode="json"), "events": case_events(c, case_id), "request_id": rid})
+            return JSONResponse({"case": {**case.model_dump(mode="json"), "claimed_by_label": claim_label(c, case.claimed_by)},
+                                 "events": case_events(c, case_id), "request_id": rid})
 
         return await run_in_threadpool(with_conn, rid, read)
 
     # Claim a case.
     @app.post("/v1/coordinator/cases/{case_id}/claim")
-    async def claim_endpoint(request: Request, case_id: str) -> JSONResponse:
-        rid, who = request.state.request_id, coordinator(request)
-        if who is None:
-            return _reject(rid, 401, "UNAUTHORIZED")
-        return await run_in_threadpool(with_conn, rid, lambda c: transition_response(rid, claim_case(c, case_id, who, deps.clock)))
+    async def claim_endpoint(request: Request, case_id: str, actor: tuple[str, User | None] = Depends(case_actor)) -> JSONResponse:
+        rid = request.state.request_id
+        who, user = actor
+        return await run_in_threadpool(change_case, rid, case_id, user, lambda c: claim_case(c, case_id, who, deps.clock))
 
     # Resolve a claimed case.
     @app.post("/v1/coordinator/cases/{case_id}/resolve")
-    async def resolve_endpoint(request: Request, case_id: str, body: ResolveIn) -> JSONResponse:
-        rid, who = request.state.request_id, coordinator(request)
-        if who is None:
-            return _reject(rid, 401, "UNAUTHORIZED")
-        return await run_in_threadpool(with_conn, rid, lambda c: transition_response(
-            rid, resolve_case(c, case_id, who, body.resolution_code, body.note, deps.clock)))
+    async def resolve_endpoint(request: Request, case_id: str, body: ResolveIn, actor: tuple[str, User | None] = Depends(case_actor)) -> JSONResponse:
+        rid = request.state.request_id
+        who, user = actor
+        return await run_in_threadpool(change_case, rid, case_id, user, lambda c: resolve_case(
+            c, case_id, who, body.resolution_code, body.note, deps.clock))
 
     # Reopen a recently resolved case.
     @app.post("/v1/coordinator/cases/{case_id}/reopen")
-    async def reopen_endpoint(request: Request, case_id: str) -> JSONResponse:
-        rid, who = request.state.request_id, coordinator(request)
-        if who is None:
-            return _reject(rid, 401, "UNAUTHORIZED")
-        return await run_in_threadpool(with_conn, rid, lambda c: transition_response(rid, reopen_case(c, case_id, who, deps.clock)))
+    async def reopen_endpoint(request: Request, case_id: str, actor: tuple[str, User | None] = Depends(case_actor)) -> JSONResponse:
+        rid = request.state.request_id
+        who, user = actor
+        return await run_in_threadpool(change_case, rid, case_id, user, lambda c: reopen_case(c, case_id, who, deps.clock))
 
+    # Google sign-in routes.
+    from setuhaul.auth.routes import register_auth_routes
+
+    register_auth_routes(app, deps)
+    # Driver onboarding and approval.
+    from setuhaul.auth.admin_routes import register_admin_routes
+
+    register_admin_routes(app, deps)
+    # Read APIs for the warehouse screens: partner slot requests and project drivers' chats.
+    from setuhaul.auth.warehouse_routes import register_warehouse_routes
+
+    register_warehouse_routes(app, deps)
+    # Admin JSON APIs: users and the audit log.
+    from setuhaul.auth.admin_api import register_admin_api
+
+    register_admin_api(app, deps)
+    # The sign-in landing page and the admin and warehouse screens.
+    from setuhaul.auth.pages import register_pages
+
+    register_pages(app, deps)
+    # The Telegram driver channel reuses the driver pipeline above.
+    from setuhaul.auth.telegram_routes import register_telegram_routes
+
+    register_telegram_routes(app, deps, _process_trusted)
     # The demo screen is registered only when a demo state is supplied.
     if deps.demo is not None:
         from setuhaul.demo_ui import register_demo
 
         register_demo(app, deps, process)
     return app
+
+
+# A shorter Telegram webhook secret is too easy to guess.
+MIN_TELEGRAM_SECRET_LEN = 16
+
+
+def telegram_from_env() -> tuple[bytes, TelegramClient | None]:
+    """The Telegram webhook secret and reply client from the environment; (b"", None) leaves the route off."""
+    import logging
+
+    secret = os.environ.get("SETUHAUL_TELEGRAM_WEBHOOK_SECRET", "")
+    token = os.environ.get("SETUHAUL_TELEGRAM_BOT_TOKEN", "")
+    if not (secret and token):
+        return b"", None
+    if len(secret) < MIN_TELEGRAM_SECRET_LEN:
+        # The values themselves are never logged.
+        logging.getLogger(__name__).warning(
+            "Telegram disabled: SETUHAUL_TELEGRAM_WEBHOOK_SECRET must be at least %d characters", MIN_TELEGRAM_SECRET_LEN)
+        return b"", None
+    import httpx
+
+    from setuhaul.auth.telegram import RealTelegramClient
+
+    return secret.encode(), RealTelegramClient(token, httpx.Client(timeout=10.0))
 
 
 def create_app_from_env() -> FastAPI:
@@ -716,8 +869,32 @@ def create_app_from_env() -> FastAPI:
         from setuhaul.clock import FakeClock
 
         clock = FakeClock(parse_operational_timestamp(os.environ["SETUHAUL_FAKE_NOW"]))
+    # Google sign-in is configured only when the client id and secret are both present.
+    google: GoogleVerifier | None = None
+    if os.environ.get("SETUHAUL_GOOGLE_CLIENT_ID") and os.environ.get("SETUHAUL_GOOGLE_CLIENT_SECRET"):
+        import httpx
+
+        from setuhaul.auth.google import RealGoogleVerifier
+
+        google = RealGoogleVerifier(os.environ["SETUHAUL_GOOGLE_CLIENT_ID"], os.environ["SETUHAUL_GOOGLE_CLIENT_SECRET"],
+                                    httpx.Client(timeout=10.0), clock)
+    # The first admin, created at start-up when an address is configured (idempotent).
+    if os.environ.get("SETUHAUL_BOOTSTRAP_ADMIN_EMAIL"):
+        from setuhaul.auth import users
+
+        boot = open_connection(path=s.db_path)
+        try:
+            users.bootstrap_admin(boot, os.environ["SETUHAUL_BOOTSTRAP_ADMIN_EMAIL"], clock)
+        finally:
+            boot.close()
+    # Telegram: the webhook secret and, when both are usable, the client that sends replies.
+    tg_secret, tg_client = telegram_from_env()
     # Assemble the dependencies and build the app.
     return create_app(AppDeps(
+        telegram_secret=tg_secret, telegram=tg_client,
+        google=google, session_secret=os.environ.get("SETUHAUL_SESSION_SECRET", "").encode(),
+        local_admin_enabled=os.environ.get("SETUHAUL_LOCAL_ADMIN") == "1",
+        public_url=os.environ.get("SETUHAUL_PUBLIC_URL", ""),
         db_path=s.db_path, redis=redis,
         webhook_secret=os.environ.get("SETUHAUL_WEBHOOK_SECRET", "").encode(), coordinator_tokens=tokens,
         fallback_path=Path(os.environ.get("SETUHAUL_FALLBACK_ESCALATIONS", "escalations-fallback.jsonl")), policy=policy,

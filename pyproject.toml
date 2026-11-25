@@ -34,7 +34,7 @@ dev = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-setuhaul = ["demo/*.html"]
+setuhaul = ["demo/*.html", "auth/assets/*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

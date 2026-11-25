@@ -9,13 +9,14 @@ The audit and all Phase 1 code are read-only. The table below names what the pro
 | `driver_exceptions` | insert and update exception status | 8, 9 |
 | `eta_updates` | insert `DRIVER_DECLARED` rows with baseline recorded in `note` or an extension column | 2, 8 |
 | `chat_threads`, `chat_messages` | insert driver and agent turns | 3, 8 |
+| `drivers`, `vehicles`, `carriers` | **insert-only** (auth/roles feature, migration 011): rows supplied with the data package are never updated or deleted. Only rows created through the app may have `drivers.driver_status` set, at approval. | auth |
 | `operational_messages` | not written directly; downstream notices go through the new outbox | 6 |
 
 ## Supplied tables that are read-only
-`shipments`, `drivers`, `vehicles`, `vehicle_types`, `carriers`, `facilities`, `docks`, `dock_status_events`, `appointment_slots`, `facility_rules`, `facility_contacts`, `facility_checkins`. Slot blocking stays an operations action.
+`shipments`, `vehicle_types`, `facilities`, `docks`, `dock_status_events`, `appointment_slots`, `facility_rules`, `facility_contacts`, `facility_checkins`. Slot blocking stays an operations action.
 
 ## New extension tables (named separately)
-`option_sets`, `option_set_items` (Phase 4, migration 001); `labour_windows`, `consignee_commitments` (Phase 4, migration 006, read by feasibility, written only by operations or fixtures); `appointment_hold_meta` (Phase 5, migration 002); `appointment_events`, `notification_outbox`, `maintenance_runs` (migration 003, written in the same transaction as the change they describe); `idempotency_keys`, `appointment_events`, `notification_outbox` (Phase 6); `escalation_cases`, `escalation_events` (Phase 9, migration 004, events append-only); `driver_sessions`, `channel_identities`, `conversation_state` (Phase 3, migration 005).
+`option_sets`, `option_set_items` (Phase 4, migration 001); `labour_windows`, `consignee_commitments` (Phase 4, migration 006, read by feasibility, written only by operations or fixtures); `appointment_hold_meta` (Phase 5, migration 002); `appointment_events`, `notification_outbox`, `maintenance_runs` (migration 003, written in the same transaction as the change they describe); `idempotency_keys`, `appointment_events`, `notification_outbox` (Phase 6); `escalation_cases`, `escalation_events` (Phase 9, migration 004, events append-only); `driver_sessions`, `channel_identities`, `conversation_state` (Phase 3, migration 005); `users`, `user_facilities`, `auth_sessions`, `admin_credentials`, `driver_profiles`, `telegram_identities`, `projects`, `project_drivers` and `audit_log` (auth/roles, migration 011; `audit_log` is append-only, enforced by triggers).
 
 ## Rules
 Writable connections use WAL, `foreign_keys=on` and a 5000 ms busy timeout (`setuhaul.db.open_connection`). Writes happen in `BEGIN IMMEDIATE` transactions. The seed file in `data/` is migrated in place only through numbered files in `migrations/`; the original in `SetuHaul_Data_Package/` is never touched.

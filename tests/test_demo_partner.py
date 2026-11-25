@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from setuhaul.demo_ui import build_demo_app
 from setuhaul.stub_model import StubGateway
+from tests.auth_helpers import demo_client
 
 PARTNER = "FAC-PARTNER-01"
 
@@ -18,7 +19,7 @@ def demo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-un
     monkeypatch.setenv("SETUHAUL_ENV_FILE", "")
     monkeypatch.setenv("SETUHAUL_PARTNER_EMAIL_MODE", "simulated")
     app, deps = build_demo_app(tmp_path / "demo", live_factory=StubGateway)
-    return TestClient(app), deps
+    return demo_client(app), deps
 
 
 def _board(client: TestClient) -> dict:  # type: ignore[type-arg]
@@ -78,7 +79,7 @@ def test_partner_reply_endpoint_is_rejected_in_live_mode(tmp_path: Path, monkeyp
         monkeypatch.setenv(f"SETUHAUL_{k}", "x")
     monkeypatch.setattr("setuhaul.demo_ui.build_mail", lambda s: (_Noop(), _Noop()))
     app, _ = build_demo_app(tmp_path / "d", live_factory=StubGateway)
-    client = TestClient(app)
+    client = demo_client(app)
     r = client.post("/demo/api/partner-reply", json={"request_ref": "PR-AAAAAAAA", "decision": "APPROVE"})
     assert r.status_code == 409 and r.json()["reason_code"] == "REPLY_SIMULATION_IS_SIMULATED_MODE_ONLY"
 
@@ -100,7 +101,7 @@ class _Noop:
 def test_partner_endpoints_reject_non_local_clients(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SETUHAUL_ENV_FILE", "")
     app, _ = build_demo_app(tmp_path / "d", live_factory=StubGateway)
-    outsider = TestClient(app, client=("203.0.113.9", 50000))
+    outsider = demo_client(app, client=("203.0.113.9", 50000))
     assert outsider.get("/demo/api/partner-mailbox").status_code == 403
     bodies = {"partner-request": {}, "partner-reply": {"request_ref": "PR-AAAAAAAA", "decision": "APPROVE"}, "partner-sync": {}}
     for path, body in bodies.items():

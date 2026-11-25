@@ -1,6 +1,6 @@
 """Start the demonstration console on this machine and open it in the browser.
 
-    python scripts/run_demo.py            # http://127.0.0.1:8800/demo
+    python scripts/run_demo.py            # open http://127.0.0.1:8800/demo/login first (signs you in), then /demo
 
 Runs the real service on a fixed clock (2026-08-04 09:35 IST, the snapshot's day) with an in-process cache and no real
 messaging channel. The assistant is the rule-based stand-in unless a model is configured in .env, in which case a
@@ -95,10 +95,10 @@ def main() -> int:
             live = None
     # Build the demo app (fixed clock, fake cache, the configured model; chat is off without one).
     app, _deps = build_demo_app(live_factory=live, policy=policy if live else None, fresh=args.fresh)
-    # Where the page will be.
-    url = f"http://127.0.0.1:{args.port}/demo"
+    # The console needs a sign-in: /demo/login (loopback only) signs this browser in as the seeded demo user, then lands on /demo.
+    url = f"http://127.0.0.1:{args.port}/demo/login"
     # Tell the user where to go.
-    print(f"SetuHaul demonstration console: {url}")
+    print(f"SetuHaul demonstration console: open {url} first (it signs you in as the local demo user, then shows /demo)")
     # Which assistant is in use.
     print(f"  assistant model: {policy.model_id}" if live else "  NO MODEL CONFIGURED: the driver chat is switched off. Set SETUHAUL_MODEL_PROVIDER, SETUHAUL_MODEL_ID and SETUHAUL_MODEL_API_KEY in .env and restart.")
     # Whether tracing is on and why.
@@ -109,7 +109,8 @@ def main() -> int:
     if not args.no_browser:
         threading.Timer(1.2, lambda: webbrowser.open(url)).start()
     # Serve on 127.0.0.1 only: the demo is not reachable from other machines.
-    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
+    # proxy_headers off and no trusted forwarders: X-Forwarded-For can never make a remote client look like loopback.
+    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning", proxy_headers=False, forwarded_allow_ips="")
     # Clean exit.
     return 0
 

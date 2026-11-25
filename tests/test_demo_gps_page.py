@@ -5,17 +5,17 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 
 from setuhaul.demo_ui import build_demo_app
 from setuhaul.stub_model import StubGateway  # a scripted stand-in model, for tests only
+from tests.auth_helpers import demo_client
 
 
 # The served demo page as text.
 @pytest.fixture()
 def html(tmp_path: Path) -> str:
     app, _ = build_demo_app(tmp_path / "demo", live_factory=StubGateway)
-    return TestClient(app).get("/demo").text
+    return demo_client(app).get("/demo").text
 
 
 # The panel's inputs, slider and button exist with the agreed ids and label.

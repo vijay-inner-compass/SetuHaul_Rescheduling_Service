@@ -12,6 +12,7 @@ import pytest
 
 from setuhaul.clock import FakeClock
 from setuhaul.stub_model import StubGateway  # a scripted stand-in model, for tests only
+from tests.auth_helpers import demo_client
 from tests.conv_helpers import Chat, facts_from, say_text, tc, tc_dyn, tool_json
 from tests.helpers import seed_everything_known
 from tests.test_api import env, msg, post  # noqa: F401  (the API fixture and helpers)
@@ -140,11 +141,10 @@ def _board_statuses(client) -> set[str]:  # type: ignore[no-untyped-def]
 
 
 def test_cancelling_a_confirmed_appointment_frees_its_slot_on_the_board(tmp_path: Path) -> None:
-    from fastapi.testclient import TestClient
 
     from setuhaul.demo_ui import build_demo_app
 
-    client = TestClient(build_demo_app(tmp_path / "cx", fresh=True, live_factory=StubGateway)[0])
+    client = demo_client(build_demo_app(tmp_path / "cx", fresh=True, live_factory=StubGateway)[0])
     did = next(d["id"] for d in client.get("/demo/api/drivers").json()["drivers"] if d["name"] == "Manoj Sharma")
 
     def say(t: str) -> str:
@@ -158,11 +158,10 @@ def test_cancelling_a_confirmed_appointment_frees_its_slot_on_the_board(tmp_path
 
 
 def test_keeping_the_original_slot_releases_the_hold_on_the_board(tmp_path: Path) -> None:
-    from fastapi.testclient import TestClient
 
     from setuhaul.demo_ui import build_demo_app
 
-    client = TestClient(build_demo_app(tmp_path / "rel", fresh=True, live_factory=StubGateway)[0])
+    client = demo_client(build_demo_app(tmp_path / "rel", fresh=True, live_factory=StubGateway)[0])
     did = next(d["id"] for d in client.get("/demo/api/drivers").json()["drivers"] if d["name"] == "Manoj Sharma")
 
     def say(t: str) -> str:
@@ -176,11 +175,10 @@ def test_keeping_the_original_slot_releases_the_hold_on_the_board(tmp_path: Path
 
 
 def test_cancelling_with_nothing_booked_says_so(tmp_path: Path) -> None:
-    from fastapi.testclient import TestClient
 
     from setuhaul.demo_ui import build_demo_app
 
-    client = TestClient(build_demo_app(tmp_path / "none", fresh=True, live_factory=StubGateway)[0])
+    client = demo_client(build_demo_app(tmp_path / "none", fresh=True, live_factory=StubGateway)[0])
     did = next(d["id"] for d in client.get("/demo/api/drivers").json()["drivers"] if d["name"] == "Manoj Sharma")
     reply = client.post("/demo/api/chat", json={"driver_id": did, "text": "cancel my appointment"}).json()["reply"]
     assert "could not find an appointment" in reply.lower()
@@ -188,11 +186,10 @@ def test_cancelling_with_nothing_booked_says_so(tmp_path: Path) -> None:
 
 # --- the truck's position changes -------------------------------------------------------------------------------
 def _gps_demo(tmp_path: Path):  # type: ignore[no-untyped-def]
-    from fastapi.testclient import TestClient
 
     from setuhaul.demo_ui import build_demo_app
 
-    client = TestClient(build_demo_app(tmp_path / "gps", fresh=True, live_factory=StubGateway)[0])
+    client = demo_client(build_demo_app(tmp_path / "gps", fresh=True, live_factory=StubGateway)[0])
     did = next(d["id"] for d in client.get("/demo/api/drivers").json()["drivers"] if d["name"] == "Manoj Sharma")
     fac = client.get(f"/demo/api/driver/{did}/gps").json()["facility"]
 
@@ -342,11 +339,10 @@ def test_a_search_from_far_away_does_not_offer_slots_the_truck_cannot_reach(tmp_
 def test_a_position_update_reaches_the_load_with_the_late_booking_even_when_it_is_not_the_first_load(tmp_path: Path) -> None:
     # Sandeep Meena has two open loads; the ping attaches to the first (09:00), his 18:00 booking is on the second. The truck has one
     # position, so moving it close must still offer earlier slots for the 18:00 load, naming its order.
-    from fastapi.testclient import TestClient
 
     from setuhaul.demo_ui import build_demo_app
 
-    client = TestClient(build_demo_app(tmp_path / "two", live_factory=StubGateway)[0])  # the supplied schedule, with its bookings
+    client = demo_client(build_demo_app(tmp_path / "two", live_factory=StubGateway)[0])  # the supplied schedule, with its bookings
     sandeep = next(d for d in client.get("/demo/api/drivers").json()["drivers"] if d["name"] == "Sandeep Meena")
     late = next(s for s in sandeep["shipments"] if s["appointment"] and s["appointment"].startswith("18:00"))
     fac = client.get(f"/demo/api/driver/{sandeep['id']}/gps").json()["facility"]
