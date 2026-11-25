@@ -339,7 +339,8 @@ Coordinators can also work cases from the command line: `python -m setuhaul.coor
 
 ## 7a. Sign-in, roles and the Telegram bot
 
-Nothing in this section has been run against real Google or Telegram. The flows were exercised with fakes
+Google sign-in has not been run against real Google. Telegram was run once against a real bot (2026-11-25, stand-in assistant); for a step-by-step
+local setup see [telegram-local-setup.md](telegram-local-setup.md). The flows were also exercised with fakes
 ([verification/auth-roles-run.md](verification/auth-roles-run.md)).
 
 ### Settings
@@ -449,7 +450,7 @@ Rules enforced by the server:
 * Phone rules are India-first: a bare 10-digit number is read as `+91`, and a trunk `0` after any other country code is rejected (including numbers where that `0` is genuine, such as Italian landlines).
 * The Google ID token signature is not verified. The token comes directly from Google's token endpoint over TLS (OIDC Core 3.1.3.7); issuer, audience, expiry, nonce and verified email are checked. A flow that receives tokens through the browser would need signature verification.
 * Refused contact shares and messages from unlinked accounts are not rate limited; each refused share writes an audit row.
-* Not run against real Google, a real Telegram bot or a real HTTPS proxy.
+* Not run against real Google or a production HTTPS proxy. Telegram was tried once through a temporary tunnel, without a real AI model.
 
 ## 8. Live model (*not run*)
 
