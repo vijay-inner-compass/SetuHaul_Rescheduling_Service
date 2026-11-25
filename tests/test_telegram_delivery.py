@@ -97,3 +97,21 @@ def test_malformed_notice_does_not_crash_the_batch(tmp_path: Path, clock: FakeCl
     assert res.sent == 1 and res.permanent_failures == 1
     status = {r["outbox_id"]: r["status"] for r in conn.execute("select outbox_id, status from notification_outbox")}
     assert status[bad] == "PERMANENT_FAILURE" and status[good] == "SENT"
+
+
+def test_ineligible_backlog_does_not_starve_an_eligible_driver(tmp_path: Path, clock: FakeClock) -> None:
+    conn = open_connection(path=make_working_db(tmp_path / "n6.sqlite3"))
+    _bind(conn, clock, 111, "9000010006")
+    _bind(conn, clock, 222, "9000010007")
+    # More old notices for a bound but suspended driver than one batch holds.
+    for i in range(5):
+        _queue(conn, "DRV007", f"s{i}")
+    first = _queue(conn, "DRV006", "ok1")
+    second = _queue(conn, "DRV006", "ok2")
+    third = _queue(conn, "DRV006", "ok3")
+    conn.execute("update drivers set driver_status='SUSPENDED' where driver_id='DRV007'")
+    conn.commit()
+    # The limit counts delivered work, not the notices skipped on the way to it.
+    assert send_driver_notifications(conn, clock, telegram.FakeTelegramClient(), limit=2).sent == 2
+    status = {r["outbox_id"]: r["status"] for r in conn.execute("select outbox_id, status from notification_outbox")}
+    assert status[first] == "SENT" and status[second] == "SENT" and status[third] == "PENDING"

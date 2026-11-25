@@ -27,11 +27,14 @@ def send_driver_notifications(conn: sqlite3.Connection, clock: Clock, client: te
     # Only drivers with an active binding are selected, so a backlog for unbound drivers cannot starve the batch.
     rows = conn.execute(
         "select o.* from notification_outbox o join telegram_identities t on t.driver_id=o.recipient_ref and t.revoked_at is null"
-        " where o.recipient_type='DRIVER' and o.status in ('PENDING','FAILED') and o.attempts < ? order by o.outbox_id limit ?",
-        (max_attempts, limit)).fetchall()
+        " where o.recipient_type='DRIVER' and o.status in ('PENDING','FAILED') and o.attempts < ? order by o.outbox_id",
+        (max_attempts,)).fetchall()
     today = clock.now().date()
     sent = failed = permanent = 0
     for r in rows:
+        # The limit counts notices acted on, so skipped ones cannot fill the batch and starve newer ones.
+        if sent + failed + permanent >= limit:
+            break
         # A driver who is no longer eligible gets nothing; the notice stays queued, with no attempt used.
         chat_id = telegram.bound_chat(conn, r["recipient_ref"])
         if chat_id is None or not driver_eligible(conn, r["recipient_ref"], today):

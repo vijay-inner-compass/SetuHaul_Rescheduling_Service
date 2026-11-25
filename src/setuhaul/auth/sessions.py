@@ -43,6 +43,8 @@ def create(
         "values (?,?,?,?,NULL,?)",
         (_hash(token), user.user_id, now.isoformat(), expires.isoformat(), method),
     )
+    # Every sign-in path comes through here, so the admin screen's "last login" is recorded with the session.
+    conn.execute("update users set last_login_at=? where user_id=?", (now.isoformat(), user.user_id))
     conn.commit()
     # The raw token goes to the caller once, for the cookie.
     return token

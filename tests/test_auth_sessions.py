@@ -81,3 +81,15 @@ def test_cookie_kwargs() -> None:
     assert sessions.COOKIE_NAME == "setuhaul_session"
     assert sessions.cookie_kwargs(True) == {"httponly": True, "samesite": "lax", "secure": True, "path": "/"}
     assert sessions.cookie_kwargs(False)["secure"] is False
+
+
+def test_sign_in_records_last_login(db: sqlite3.Connection, clock: FakeClock) -> None:
+    admin = _admin(db, clock)
+    query = "select last_login_at from users where user_id=?"
+    assert db.execute(query, (admin.user_id,)).fetchone()[0] is None
+    sessions.create(db, admin, "GOOGLE", clock)
+    assert db.execute(query, (admin.user_id,)).fetchone()[0] == clock.now().isoformat()
+    # A later break-glass sign-in moves the time on.
+    clock.advance(timedelta(hours=2))
+    sessions.create(db, admin, "LOCAL_ADMIN", clock)
+    assert db.execute(query, (admin.user_id,)).fetchone()[0] == clock.now().isoformat()
