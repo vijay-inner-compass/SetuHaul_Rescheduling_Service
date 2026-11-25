@@ -154,6 +154,22 @@ T: dict[str, dict[str, str]] = {
         "hinglish": "Maine hold hata diya hai. Aapki original appointment waisi hi hai.",
     },
     # Told when a hold was placed: which slot, until when, and what to do next.
+    # A facility change is only ever a request until the destination warehouse approves it.
+    "change_requested": {
+        "en": "I have asked {to} to take this load. Your destination has not changed yet: it is still {origin} until they approve.",
+        "hi": "मैंने {to} से यह लोड लेने का अनुरोध किया है। आपकी मंज़िल अभी नहीं बदली है: उनकी मंज़ूरी तक {origin} ही है।",
+        "hinglish": "Maine {to} se yeh load lene ki request ki hai. Aapki destination abhi nahi badli hai: unki approval tak {origin} hi hai.",
+    },
+    "change_pending": {
+        "en": "A request to move to {to} is already waiting for approval. Your destination is still {origin}.",
+        "hi": "{to} में बदलने का अनुरोध पहले से मंज़ूरी का इंतज़ार कर रहा है। आपकी मंज़िल अभी {origin} ही है।",
+        "hinglish": "{to} mein badalne ki request pehle se approval ka wait kar rahi hai. Aapki destination abhi {origin} hi hai.",
+    },
+    "change_refused": {
+        "en": "That change cannot be requested for this load.",
+        "hi": "इस लोड के लिए यह बदलाव नहीं माँगा जा सकता।",
+        "hinglish": "Is load ke liye yeh change request nahi ho sakta.",
+    },
     "hold_placed": {
         "en": "I am holding {start}-{end} at dock {dock} on {date}, {facility}, for you until {until}. "
               "It is not booked yet. Reply Yes to confirm, or No for the next slot.",

@@ -30,6 +30,8 @@ from typing import Any, Literal
 # Pydantic validates every tool's arguments.
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from setuhaul import facility_change
+
 # Ranks feasible slots into a menu.
 from setuhaul.allocation import rank_options
 
@@ -167,6 +169,13 @@ class QuoteArgs(_Args):
     driver_quote: str = Field(min_length=1)
 
 
+# Arguments for request_facility_change.
+class FacilityChangeArgs(_Args):
+    shipment_id: str
+    facility_id: str
+    driver_quote: str = Field(min_length=1)
+
+
 # Arguments for confirm_reschedule.
 class ConfirmArgs(_Args):
     hold_appointment_id: str
@@ -225,6 +234,8 @@ class TurnState:
     committed: list[str] = field(default_factory=list)  # names of write tools that changed state
     # Set when a partner-warehouse request was made (or already open) this turn: the reply then states its stored state.
     partner_shipment_id: str | None = None
+    # A facility change asked for this turn: (message key, from name, to name), worded from stored rows.
+    facility_change: tuple[str, str, str] | None = None
 
 
 @dataclass
@@ -722,6 +733,22 @@ def _cancel_appointment(ctx: ToolContext, a: ShipmentQuoteArgs) -> dict[str, Any
     return {"status": r.status, "escalation": r.escalation_code, "note": "Nothing was cancelled unless status is CANCELLED."}
 
 
+# WRITE tool: ask to move this load to another facility. Only a request; the destination warehouse decides.
+def _request_facility_change(ctx: ToolContext, a: FacilityChangeArgs) -> dict[str, Any]:
+    authorize_shipment(ctx.conn, ctx.trusted, a.shipment_id)
+    r = facility_change.request_change(ctx.conn, ctx.clock, driver_id=ctx.driver_id, shipment_id=a.shipment_id, to_facility_id=a.facility_id)
+    if r.request_id is None:
+        ctx.turn.facility_change = ("change_refused", "", "")
+        return {"status": r.status, "note": "Nothing was requested."}
+    names = ctx.conn.execute(
+        "select f.facility_name, t.facility_name from facility_change_requests q join facilities f on f.facility_id=q.from_facility_id "
+        "join facilities t on t.facility_id=q.to_facility_id where q.request_id=?", (r.request_id,)).fetchone()
+    key = "change_requested" if r.status == "REQUESTED" else "change_pending"
+    ctx.turn.facility_change = (key, names[0], names[1])
+    ctx.turn.committed.append("request_facility_change")
+    return {"status": r.status, "request_id": r.request_id, "note": "Only a request. The system words the state."}
+
+
 # Tool: the model asks for a human for safety, regulated loads or genuine uncertainty.
 def _escalate(ctx: ToolContext, a: EscalateArgs) -> dict[str, Any]:
     _handoff(ctx, a.reason_code, None, a.note)
@@ -830,6 +857,11 @@ REGISTRY: dict[str, ToolSpec] = {t.name: t for t in [
         dont="when the message agrees in any way, or to keep the original appointment (use release_pending_change).",
         args="driver_quote.", returns="HELD with the next slot (the system words it), or RELEASED when none is left.",
         fails="APPROVAL_NOT_PRESENT, FOREIGN_HOLD."), QuoteArgs, _decline_held_slot, write=True, available=_can_confirm),
+    ToolSpec("request_facility_change", _JOB.format(
+        use="ONLY when the driver asks to deliver to a different facility. facility_id is from the facts' other_facilities.",
+        dont="to pick a facility yourself, or to promise the move: the destination warehouse must approve.",
+        args="shipment_id, facility_id, driver_quote.", returns="REQUESTED, ALREADY_PENDING, or why not.",
+        fails="APPROVAL_NOT_PRESENT, FOREIGN_SHIPMENT."), FacilityChangeArgs, _request_facility_change, write=True),
     ToolSpec("release_pending_change", _JOB.format(
         use="when the driver says never mind / keep my original slot while a hold exists.",
         dont="to cancel a confirmed appointment.", args="shipment_id, driver_quote.",

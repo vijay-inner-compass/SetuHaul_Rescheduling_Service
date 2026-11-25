@@ -227,6 +227,9 @@ def _facts(ctx: ConversationContext, services: ConversationServices, clock: Cloc
         "selected_shipment_id": state.selected_shipment_id,
         "active_shipment_ids": list(state.active_shipment_ids),
         "latest_option_set_id": state.latest_option_set_id,
+        # The facilities a driver can ask to move to (ids and names only).
+        "other_facilities": {r["facility_id"]: r["facility_name"] for r in services.conn.execute(
+            "select facility_id, facility_name from facilities where active_flag=1 order by facility_id")},
         "system_already_told_driver_hold_expired": any(e.type == "HOLD_EXPIRED" for e in ctx.events),
         "note": "If latest_option_set_id is set and the driver is returning, call compare_option_set before re-offering it.",
     }
@@ -375,6 +378,10 @@ def _finalize(
     # A hold was released.
     elif turn.released:
         parts.append(say("hold_released", lang))
+    # A facility change was asked for: worded from the stored request.
+    elif turn.facility_change:
+        key, origin, to = turn.facility_change
+        parts.append(say(key, lang, origin=origin, to=to))
     # A partner-warehouse request was made: worded from the stored request, never from the model.
     elif turn.partner_shipment_id:
         partner_text = render_partner_status(conn, turn.partner_shipment_id, lang)
