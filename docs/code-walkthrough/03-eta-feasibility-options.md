@@ -63,14 +63,14 @@ priority order: `OK`, then `REQUIRES_APPROVAL`, then `INCOMPLETE_FEASIBILITY_DAT
 
 ## Option history (`option_history.py`): remembering what the driver saw
 
-* `record_option_set` stores the menu, its context, and every line's fingerprints. The thread and shipment must belong to
-  the driver (`FOREIGN_THREAD` / `FOREIGN_SHIPMENT`). A menu lives 15 minutes.
+* `record_option_set` stores the options, their context and every line's fingerprints. The thread and shipment must belong to
+  the driver (`FOREIGN_THREAD` / `FOREIGN_SHIPMENT`). An option set lives 15 minutes.
 * `get_option_set` requires driver, thread **and** shipment to match; anything else looks like "does not exist".
 * `diff_option_set` re-judges each stored option against live state and classifies it: `UNCHANGED`,
   `CHANGED_STILL_FEASIBLE`, `DISAPPEARED`, `NEWLY_BLOCKED`, `NEWLY_HELD`, `NEWLY_OCCUPIED`, `NEWLY_INCOMPATIBLE`,
   `NO_LONGER_FEASIBLE`, `DATA_NOW_INCOMPLETE`, with a plain-language explanation.
-* The numbered list the driver sees is rendered from the stored menu (D65), so "option 2" always means the line shown.
-* Menus older than 30 days are purged by the maintenance job.
+* The driver is not shown the list: the first option is held, and "No" moves to the next (D93).
+* Option sets older than 30 days are purged by the maintenance job.
 
 ## `repositories.py`
 
@@ -93,8 +93,8 @@ Read-only audit queries (duplicate active slots, orphan appointments, overlappin
 | Dock breakdown then reopening | block closes at the reopen time | `test_reopened_event_closes_an_open_ended_block` |
 | Penalty or exceptional customer | requires approval | `test_penalty_commitment_requires_approval`, `test_exceptional_commitment_requires_approval` |
 | Deadline missed, no penalty | feasible with a warning | `test_missed_deadline_without_penalty_is_a_warning_not_a_block` |
-| Slot taken after the menu was shown | explained as newly occupied | `test_option_taken_by_someone_else_is_explained` |
-| Menu viewed after rules changed | flagged | `test_changed_facility_rules_are_flagged` |
-| Another driver's menu id | refused | `test_option_set_cannot_be_selected_by_another_driver_thread_or_shipment` |
+| Slot taken after it was offered | explained as newly occupied | `test_option_taken_by_someone_else_is_explained` |
+| Offer reviewed after rules changed | flagged | `test_changed_facility_rules_are_flagged` |
+| Another driver's option set id | refused | `test_option_set_cannot_be_selected_by_another_driver_thread_or_shipment` |
 | Two critical loads with no single slot | no option; hand-off | `test_snapshot_reality_two_critical_loads_have_no_single_slot_option` |
 | 360-load search speed | p95 under 500 ms | `test_capacity_search_p95_under_500ms` |

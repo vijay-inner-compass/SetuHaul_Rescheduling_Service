@@ -3,10 +3,10 @@
 **Audience:** an engineer joining the project with no history. **Goal:** after reading this and doing the exercises in
 section 14 you can explain the system, run it, change it safely, and know what is and is not proven.
 
-Companion document: [Running and demonstrating the program](running-and-demonstrating.md) (what to run, what you will see).
+Companion documents: [Running and demonstrating the program](running-and-demonstrating.md) and the [FAQ](faq.md).
 Deeper per-layer notes: [code-walkthrough/](code-walkthrough/README.md). Every source file also carries line-by-line comments.
 
-Figures in this document (647 tests, 23 scenario checks, 9 replayed traces) were measured on 2026-11-21 on Windows with
+Figures in this document were re-checked on 2026-11-26 on Windows with Python 3.12 unless a date is given.
 Python 3.12; section 13 lists where the repository's own older text disagrees.
 
 ---
@@ -19,10 +19,10 @@ longer works, and today a **warehouse planner or coordinator phones around** to 
 trucks compete for the same few slots, and drivers get inconsistent promises.
 
 **What the service does:** the driver sends a chat message ("my truck is 60 minutes late", in English, Hindi or Hinglish).
-The service works out the real arrival time, finds dock slots that can genuinely take that truck, shows up to three, **holds**
-the one the driver picks for 3 minutes, **confirms** it when the driver agrees, ends the old appointment, and notifies the
+The service works out the real arrival time, finds dock slots that can genuinely take that truck, **holds** the first for 3 minutes
+("No" moves to the next), **confirms** it when the driver agrees, ends the old appointment, and queues notices for the
 planner, the customer (consignee) and operations. When it cannot act safely it opens a **case** for a human coordinator
-with full context instead of guessing.
+with full context instead of guessing. Drivers use Telegram; warehouse staff and admins use signed-in web screens.
 
 **The design stance that explains everything else:** a language model is good at understanding messy messages and bad at being
 trusted with bookings. So the model *interprets and drafts*; deterministic Python and the database *decide and state facts*.
@@ -56,7 +56,7 @@ What it does **not** contain, and the consequences (details in [snapshot-limitat
 ## 3. System at a glance
 
 ```
-                      +------------------ driver chat channel (WhatsApp-like, not integrated yet)
+                      +------------------ driver chat channel (Telegram; signed HTTP channel)
                       |
 driver message --> api.py  (signature, validation, duplicate check, rate limit, claim message id)
                       |
@@ -81,7 +81,7 @@ httpx (provider calls), pytest + Hypothesis, ruff, mypy `strict`. Pinned in `pyp
 1. **The model never supplies identity.** No tool has a `driver_id` or `thread_id` argument. The driver comes from the verified phone number (or a server-made session). An invented field is rejected (`extra="forbid"`).
 2. **Time is injected.** Nothing calls `datetime.now()`. Code takes a `Clock`; tests and the demo use a `FakeClock` so a 180-second hold, a 20-per-minute limit and a 30-day purge are testable without waiting.
 3. **The database is the referee.** A hold is an `appointments` row with status `HELD`, covered by the same unique index as a booking. Two drivers, a planner's tool, or a bug in our code collide on the database constraint.
-4. **Facts come from committed rows.** "Held", "confirmed", "cancelled", the option menu and hand-off wording are rendered from stored state in three languages. If model text claims something the database does not back, it is replaced.
+4. **Facts come from committed rows.** "Held", "confirmed", "cancelled" and hand-off wording are rendered from stored state in three languages. If model text claims something the database does not back, it is replaced.
 5. **Missing evidence is never assumed.** No labour data means "cannot check", never "assume free".
 
 If you remember only these, you can predict how almost any new feature should be built.
@@ -89,9 +89,9 @@ If you remember only these, you can predict how almost any new feature should be
 ## 5. Repository map
 
 ```
-src/setuhaul/    the service (about 39 modules; layers in section 6)
-migrations/      001-009, numbered SQL applied in order to working copies
-tests/           647 tests; tests/traces/ = recorded conversations; tests/scenario_flow.py = the end-to-end scenario
+src/setuhaul/    the service (layers in section 6; auth/ holds sign-in, roles, Telegram and the web screens)
+migrations/      001-013, numbered SQL applied in order to working copies
+tests/           about 1,360 tests; tests/traces/ = recorded conversations; tests/scenario_flow.py = the end-to-end scenario
 scripts/         evidence and demo scripts (audit, replay, scenario, show_phaseN, integrity proof, scale profile, run_demo)
 load/            Locust profile
 docs/            decisions, readout, verification evidence, this document, walkthrough, scenario catalogue
@@ -129,6 +129,9 @@ Migrations (each file is commented line by line):
 | 007 | idempotency keys | exact-retry answers |
 | 008 | inbound messages | duplicate webhook handling |
 | 009 | GPS pings, facility coordinates | supporting ETA signal |
+| 010 | partner warehouse requests | book only after an approval reply |
+| 011, 012 | users, sessions, onboarding, projects, Telegram links, audit | invite-only web sign-in, append-only audit |
+| 013 | facility change requests | the destination approves |
 
 ### 6.2 Identity, memory, limits: `identity.py`, `memory.py`, `rate_limit.py`, `observability.py`
 
@@ -153,14 +156,14 @@ See it: `python scripts/show_eta_cases.py` prints each case as JSON.
 
 * `build_facility_state` loads docks, slots, dock events, occupancy and labour into memory so slot evaluation is pure. **Expired holds do not occupy capacity**, whether or not the sweep has run. `slot_version` hashes every fact that decides offerability; if it changes between "shown" and "hold requested", the option is stale.
 * `evaluate_slot` returns `FEASIBLE`, `INFEASIBLE` (all failing reasons listed), `REQUIRES_APPROVAL` (deadline missed with a penalty, or an exceptional customer) or `INCOMPLETE_FEASIBILITY_DATA` (no labour/customer data, or snapshot older than 5 minutes). Hard failures outrank missing data. Hard reasons include slot in the past, blocked, dock out of service, outside hours, dock-type or weight mismatch, refrigeration, unload longer than the slot, truck cannot arrive in time.
-* Ranking: feasible slots only, sorted by start, dock code, slot id (so ties never vary), first three numbered. Policy D5: **first come first served at successful hold commit**; priority never pre-empts an existing hold.
-* Option history: the menu is stored with each line's fingerprints and lives 15 minutes. When the driver returns, `diff_option_set` re-judges each option and explains changes (`NEWLY_OCCUPIED`, `NEWLY_HELD`, ...). The numbered list shown to the driver is rendered from the stored menu (D65), so "option 2" always means the line they saw.
+* Ranking: feasible slots only, sorted by start, dock code, slot id (so ties never vary), first three kept; the first is held. Policy D5: **first come first served at successful hold commit**; priority never pre-empts an existing hold.
+* Option history: the options are stored with their fingerprints and live 15 minutes. `diff_option_set` re-judges each and explains changes (`NEWLY_OCCUPIED`, `NEWLY_HELD`, ...). The driver sees one held slot at a time (D93).
 
 ### 6.5 Holds, confirmation, cancellation: `booking.py`, `cancellation.py`, `events.py`, `notifications.py`, `integrity.py`, `jobs/`
 
 This is the **transactional core**. Read `booking.py` closely.
 
-* `acquire_hold` (one `BEGIN IMMEDIATE`): load the stored menu (proves ownership), pick the rank, lazily clear overdue holds on this shipment/slot, reject menus older than 15 minutes, return the existing hold if the same slot is requested again, `SHIPMENT_ALREADY_HELD` for a different slot, **re-judge the option against the facility now** (`SLOT_CONFLICT` if someone else took it, `OPTION_CHANGED` otherwise), insert the `HELD` row and metadata, append history. `IntegrityError` from the unique index means a stale read lost a race: `SLOT_CONFLICT`. A busy database is `LOCK_TIMEOUT`, **never** reported as a conflict or a success.
+* `acquire_hold` (one `BEGIN IMMEDIATE`): load the stored option set (proves ownership), pick the rank, lazily clear overdue holds on this shipment/slot, reject option sets older than 15 minutes, return the existing hold if the same slot is requested again, `SHIPMENT_ALREADY_HELD` for a different slot, **re-judge the option against the facility now** (`SLOT_CONFLICT` if someone else took it, `OPTION_CHANGED` otherwise), insert the `HELD` row and metadata, append history. `IntegrityError` from the unique index means a stale read lost a race: `SLOT_CONFLICT`. A busy database is `LOCK_TIMEOUT`, **never** reported as a conflict or a success.
 * `confirm_reschedule` (one transaction, all or nothing): idempotency check, ownership, expiry, **feasibility re-evaluated**, original not already `IN_PROGRESS`, then end the original, promote the hold, append history, queue three notices, store the idempotent answer. A fault at any named step rolls everything back and the original appointment stays.
 * `cancellation.py`: "never mind" releases the hold only. Cancelling a confirmed appointment is automatic only if not in progress, more than 120 minutes out, and a known penalty-free customer commitment; otherwise it **escalates and changes nothing**. Returning to the original slot is a new request, re-judged, never restored.
 * Outbox: notices are queued inside the booking transaction and delivered outside it (`deliver_pending_notifications`), at least once with a stable `dedupe_key`; delivery failure never touches the appointment; transient failures retry up to 3 times.
@@ -173,7 +176,7 @@ This is the **transactional core**. Read `booking.py` closely.
 * Tools: read (`list_my_shipments`, `get_shipment_status`, `compute_eta`, `search_slot_options`, `compare_option_set`, `offer_original_slot`), write (`request_hold`, `confirm_reschedule`, `release_pending_change`, `cancel_appointment`), and `escalate_to_operations`. `ToolRegistry.execute` runs five checkpoints in order: **allowed in this state?** (`TOOL_NOT_ALLOWED`) then **valid arguments?** (`INVALID_ARGUMENTS`) then, for writes, **is the `driver_quote` inside the driver's current message?** (`APPROVAL_NOT_PRESENT`) then **at most one write per message** (`ONE_WRITE_PER_MESSAGE`) then the handler. Confirm needs a hold created in an *earlier* message; the model cannot hold and confirm in one breath.
 * Prompt: written as boundaries; contains a per-process **canary** string; if the canary or a substantial prompt line appears in a reply, the reply is blocked. Untrusted text (load notes) is passed only under `untrusted_text` and marked as data.
 * Language: English, Hindi (Devanagari) and Hinglish. `detect_language` counts script letters and marker words. `T` is the wording table for every system-stated fact. `claims_confirmed` / `claims_held` catch model text that claims a booking.
-* `conversation.handle_message` runs a turn: save text, language, system facts into the prompt, bounded loop, then `_finalize`: committed hold/confirm/cancel/release gets **system wording from the row**; a hand-off gets the case reference; a menu gets the **numbered list from the stored set**; otherwise model text passes through `_guard`, which replaces prompt leaks and unbacked claims. Any database or service failure inside a turn becomes a safe reply plus a hand-off recorded in a fallback file.
+* `conversation.handle_message` runs a turn: save text, language, system facts into the prompt, bounded loop, then `_finalize`: committed hold/confirm/cancel/release gets **system wording from the row**; a hand-off gets the case reference; an offer is worded from the held row; otherwise model text passes through `_guard`, which replaces prompt leaks and unbacked claims. Any database or service failure inside a turn becomes a safe reply plus a hand-off recorded in a fallback file.
 
 ### 6.7 Escalation and the HTTP API: `escalation.py`, `coordinator.py`, `api.py`
 
@@ -206,13 +209,13 @@ Driver Manoj Sharma (shipment SHP1006, planned ETA 10:20) writes at 09:35: *"my 
 1. **api.py** verifies the signature, finds Manoj by phone, checks it is not a duplicate, passes the rate limit, claims the message id.
 2. **conversation.py** saves the text, detects English, builds the prompt with system facts (active shipments, no hold yet) and starts the model loop.
 3. The model calls **`search_slot_options`** with a `LATE_BY 60` report. `tools.py` allows it, validates it, and the handler runs `derive_eta` (10:20 + 60 = 11:20) then `search_feasible_slots` over live capacity.
-4. Three slots come back; `option_history` stores the menu (valid until 09:50) with fingerprints. **Nothing is held.**
-5. `_finalize` renders the **numbered menu from the stored set** in the driver's language and `api.py` stores the reply under the message id.
-6. Driver replies *"1"*. The model calls **`request_hold`**; checkpoint 3 sees the quote "1" is the whole current message. `acquire_hold` inserts a `HELD` row for D2 12:00 and returns it. Reply is system wording: "I am holding 12:00-13:00 at dock D2 ... until 09:38".
+4. Three slots come back; `option_history` stores them (valid until 09:50) with fingerprints and the first is **held** (D2 12:00).
+5. The system words the offer: "I am holding 12:00-13:00 at dock D2 ... until 09:38. It is not booked yet. Reply Yes to confirm, or No for the next slot."
+6. Driver replies *"no"* to release it and hold the next, or *"yes"* to book it.
 7. Driver replies *"yes, confirm it"* in a **later message**. `confirm_reschedule` re-evaluates feasibility, ends the original (10:00 at D4), promotes the hold, writes history, queues three notices, all in one transaction. Reply: "Your appointment is confirmed ... Reference APT-H-...".
 8. `deliver_pending_notifications` sends the planner, consignee and operations notices outside the transaction.
 
-If the driver waits more than 3 minutes at step 6, the sweep expires the hold, the next message announces the lapse once, and **the original appointment still stands**.
+If the driver waits more than 3 minutes, the sweep expires the hold, the next message announces the lapse once, and **the original appointment still stands**.
 
 ## 8. Failure model: what happens when things go wrong
 
@@ -220,7 +223,7 @@ If the driver waits more than 3 minutes at step 6, the sweep expires the hold, t
 |---|---|
 | Two requests want one slot | the unique index lets exactly one in; the other gets `SLOT_CONFLICT` |
 | Hold lapses before confirm | refused; original unchanged; driver told once |
-| Slot changed since shown | `OPTION_CHANGED` or `SLOT_CONFLICT`, explained |
+| Slot changed since offered | `OPTION_CHANGED` or `SLOT_CONFLICT`, explained |
 | Model unreachable / times out twice | "cannot check bookings right now", a `MODEL_UNAVAILABLE` case, nothing promised |
 | Model claims "confirmed" with nothing committed | text replaced by a safe sentence |
 | Model leaks the prompt (even partly) | reply blocked |
@@ -243,7 +246,7 @@ Design: [superpowers/specs/2026-11-21-gps-eta-design.md](superpowers/specs/2026-
 * **Two effects in `derive_eta`** (new optional `gps_travel_minutes` argument; omit it and behaviour is exactly as before):
   1. `REPAIR` with no driver drive time: use the GPS travel time. Source `GPS_ASSISTED`, confidence capped at `MEDIUM`.
   2. `LATE_BY` / `EXPLICIT_ETA`: if the driver's ETA and the GPS ETA differ by more than 30 minutes (`gps_mismatch_minutes`; exactly 30 is not a discrepancy), keep the driver's ETA, lower confidence one level, set `gps_discrepancy_minutes`.
-* **Surfacing:** `tools._eta_for` loads the ping and passes it in; the driver's reply gets a note ("GPS suggests your arrival differs from your report by about N minutes"); the hand-off summary carries it. A normal menu turn opens no case, so the coordinator sees the discrepancy only when a search ends in a hand-off.
+* **Surfacing:** `tools._eta_for` loads the ping and passes it in; the driver's reply gets a note ("GPS suggests your arrival differs from your report by about N minutes"); the hand-off summary carries it. A normal offer opens no case, so the coordinator sees the discrepancy only when a search ends in a hand-off.
 * **Entry points** (both signed like the webhook; both reject bad coordinates and pings stamped more than 5 minutes in the future): `POST /v1/gps/pings` for a telematics sender that names the shipment, and `POST /v1/driver/location` for a driver-shared location, where the driver and their active shipment come from the sender's phone. Both were exercised on 2026-11-21 (see the running guide). The first production source intended is driver-shared location in the chat channel; a real messaging-channel adapter and fleet telematics are not built.
 * **Demo caveat:** the console's **Send ping** calls `store_ping` directly and skips the endpoint's signature, driver lookup and future-time guard; it also deletes pings stamped later than the one sent so a back-dated test ping becomes the latest.
 
@@ -263,38 +266,38 @@ Make a writable database with `make_working_db(Path('data/working.sqlite3'))`; n
 
 ## 11. Quality gates and evidence
 
-| Gate | Command | Result on 2026-11-21 |
+| Gate | Command | Result on 2026-11-26 |
 |---|---|---|
-| Tests | `python -m pytest -q` | **647 passed** in about 30 s |
+| Tests | `python -m pytest -q` | about 1,360 passed in under 2 minutes |
 | Lint | `python -m ruff check .` | all checks passed |
-| Types | `python -m mypy src` | no issues in 39 source files (`strict`) |
+| Types | `python -m mypy src` | no issues in 71 source files (`strict`) |
 | End-to-end scenario | `python scripts/run_scenario.py` | **23/23 checks** |
-| Trace replay | `python scripts/replay_traces.py` | **9/9 traces clean, 123/123 evaluator checks** (4 are live-model traces) |
-| Concurrency | `python scripts/run_integrity_proof.py` (about 8 min, not re-run here) | recorded in `docs/verification/concurrency-proof.md` |
+| Trace replay | `python scripts/replay_traces.py` | **6/6 traces clean, 58/58 evaluator checks**; live recordings of the earlier menu flow are retired |
+| Concurrency | `python scripts/run_integrity_proof.py` (about 8 min, not re-run) | recorded in `docs/verification/concurrency-proof.md` |
 
-Evidence files for every phase are in `docs/verification/`. The client-facing summary is [client-readout.md](client-readout.md): what is
-proven, what is not, and acceptance thresholds with numerators.
+Evidence files for every phase are in `docs/verification/`. The client-facing summary is [client-readout.md](client-readout.md).
 
 **Strong claims:** no double allocation (20 rounds of thread, process and mixed contention, zero invariant violations, for SQLite on one
-machine); wording always matches stored state on the deterministic path; failure paths safe; capacity search p95 about 13 ms.
-**Weak or absent claims:** model quality at scale, Hindi/Hinglish quality, auto-resolution rate, multi-worker behaviour, real Redis.
+machine); wording matches stored state on the deterministic path; failure paths safe; capacity search p95 about 13 ms.
+**Weak or absent claims:** real-model behaviour on the current flow, Hindi/Hinglish quality, auto-resolution rate, multi-worker behaviour, real Redis.
 
 ## 12. Decisions, open questions and risks
 
-* [decision-register.md](decision-register.md) lists decisions D1 onward with the reason for each (examples: D5 FCFS, D6 delay counted from planned ETA, D13 LangGraph, D64 demo console, D65 menu rendered from stored set).
+* [decision-register.md](decision-register.md) lists decisions D1 onward with the reason for each (examples: D5 FCFS, D6 delay counted from planned ETA, D13 LangGraph, D64 demo console, D93 one slot held instead of a menu).
 * [operations-questions.md](operations-questions.md) lists Q1-Q20, each an **engineering default awaiting an approver**. Blockers: model provider and data protection (Q9), labour/consignee data source (Q17), cancellation cut-off (Q6), ETA buffer and priority classes (Q3, Q4), unload longer than a slot (Q20).
 * Top risks from the readout: live-model evidence is thin (a handful of runs, English); Hindi/Hinglish wording is unreviewed by a native speaker and language detection and the claim guard are heuristics; no labour source means every case reaches a human; the messaging-provider integration and coordinator authentication are minimal; SQLite saturates around 245 writes/s (move to PostgreSQL before more than one sustained writer or more than four API workers; the invariants carry over).
 
-## 13. Known gaps and documentation drift (read before you trust a number)
+## 13. Known gaps (read before you trust a claim)
 
-* `README.md` still says **494 tests** and "has **not** been run against a real model". Measured today: **647** tests; `tests/traces/` holds four `live-*` traces and `client-readout.md` records live runs. Update the README.
-* The README's table of contents and layout predate GPS (migration 009, `gps.py`, `travel.py`) and the `/v1/gps/pings` route.
-* `scripts/show_phase8.py` crashes on Windows when printing the Hindi section with the default console encoding. Run it with `PYTHONUTF8=1`.
-* The rule-based stand-in recognises only "N minutes late/delay", "first"/"take", "confirm" and bare menu numbers. The console's **Breakdown**, **Keep my original slot** and **Cancel my appointment** buttons therefore return only "How late are you...?" with it, and the GPS repair scenario cannot be shown through the stub's chat. Those paths need the **Live model**; otherwise use `derive_eta` directly (snippet in the running guide), `show_phase6.py`, or the tests.
-* After a lapsed hold, the stub appends a generic question ("How late are you...?") to the lapse notice. Cosmetic, stub only.
-* The first-time Reset on the console asks for confirmation; the guide's "click Reset" means click, then confirm.
-* The README's "make the working database" command only copies and migrates. **It does not provision driver phone numbers**, so every message to a fresh working database is refused with `UNKNOWN_PHONE` until you also call `setuhaul.identity.provision_identities(conn)` and commit (the demo, scale fixture and `show_phase3.py` do this themselves). Add that step to the README.
+* No recorded real-model run of the current one-slot flow. The Telegram trial used the stand-in.
+* No data retention, export or erasure for personal data; no encryption at rest; no privacy notice. See the [FAQ](faq.md), section 6.
+* Notices for warehouse, customer and operations are queued; no sender is connected.
+* The demo console's quick button **Take the first option** predates the one-slot flow.
+* Telegram: over the rate limit, or for photos and voice notes from a linked driver, there is no reply.
+* The rule-based stand-in understands only set phrases.
+* `scripts/show_phase8.py` needs `PYTHONUTF8=1` on Windows to print Hindi.
 * The scripted scenario run rewrites `docs/verification/scenario-run.md`; restore it with `git checkout` if you only wanted to look.
+* A new working database needs `setuhaul.identity.provision_identities(conn)` before phone-based messages work (running guide, section 7).
 
 ## 14. Onboarding path and exercises
 
@@ -318,7 +321,7 @@ machine); wording always matches stored state on the deterministic path; failure
 | Slot | one time window on one dock |
 | Appointment | a shipment's booking of a slot (`CONFIRMED`, `IN_PROGRESS`, `CANCELLED`, ...) |
 | Hold | an appointment row with status `HELD`, 3 minutes, same unique index as a booking |
-| Option set / menu | up to three feasible slots stored for one driver, valid 15 minutes |
+| Option set | up to three feasible slots stored for one driver, valid 15 minutes; one is held at a time |
 | Hand-off / escalation / case | a queued task for a coordinator, with full context |
 | Outbox | notices queued in the booking transaction and delivered afterwards |
 | Idempotency | the same message id returns the same stored answer |

@@ -5,17 +5,19 @@ safely get a new dock slot. A model interprets the message and calls narrow tool
 identity, ETA derivation, feasibility, holds, expiry, confirmation, cancellation, idempotency, notifications and escalation.
 SQLite is the system of record for the prototype.
 
-> **Status:** all twelve phases are built and verified on Windows. The prototype has **not** been run against a real model,
-> and its Hindi/Hinglish wording has not been reviewed by a native speaker. Start with `docs/client-readout.md`.
+> **Status:** a working prototype, verified on Windows. Drivers use Telegram; warehouse staff and admins use signed-in web screens.
+> It has **not** been used with real drivers, has no recorded real-model run of the current flow, and its Hindi/Hinglish wording has
+> not been reviewed by a native speaker. Start with `docs/client-readout.md`; before a demonstration read `docs/faq.md`.
 
 ## Documentation
 
-* [Knowledge transfer](docs/knowledge-transfer.md): background to execution for a new engineer, in one document.
-* [Running and demonstrating](docs/running-and-demonstrating.md): setup, every demo scenario and the real API, with captured output.
+* [FAQ](docs/faq.md): questions you may be asked, including edge cases, personal data and Telegram, with honest answers and proof.
+* [Demonstration guide](docs/demonstration-guide.md): what to run, what to type and what you should see.
 * [Local run and Telegram setup](docs/telegram-local-setup.md): every step from install to a booking made by Telegram message.
+* [Running and demonstrating](docs/running-and-demonstrating.md): setup, evidence scripts, the real API and sign-in.
+* [Knowledge transfer](docs/knowledge-transfer.md): background to execution for a new engineer, in one document.
 * [Scheduling algorithm](docs/scheduling-algorithm.md): how slots are judged, ranked, held and confirmed.
 * [Code walkthrough](docs/code-walkthrough/README.md): the story behind each layer. Every source file also has line-by-line comments.
-* [Demonstration guide](docs/demonstration-guide.md): what to run, what to type and what you should see.
 * [Scenario catalogue](docs/scenario-catalogue.md): edge cases and failure scenarios, each with the test that proves it.
 
 **How a slot is offered:** the service holds the first feasible slot and the driver replies Yes or No; a driver may ask to change
@@ -25,7 +27,7 @@ facility, which the destination warehouse approves (see `docs/running-and-demons
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\python -m pip install -e ".[dev]"
-.\.venv\Scripts\python -m pytest -q          # 1302 tests
+.\.venv\Scripts\python -m pytest -q          # about 1,360 tests
 .\.venv\Scripts\python -m ruff check .
 .\.venv\Scripts\python -m mypy src
 ```
@@ -93,16 +95,17 @@ Settings (from the process environment, not loaded from `.env` at start-up; see 
 
 Owner setup (Google Cloud client, BotFather, `setWebhook`) and the known limitations are in
 [running-and-demonstrating.md](docs/running-and-demonstrating.md#7a-sign-in-roles-and-the-telegram-bot). Evidence:
-`docs/verification/auth-roles-run.md` (fake Google and Telegram; never run against the real services).
+`docs/verification/auth-roles-run.md` (fake Google and Telegram). Google sign-in has never been run against Google; Telegram was tried once with a real bot.
 
 ## Layout
 ```
 src/setuhaul/   config, clock, db, identity, rate_limit, memory, eta, feasibility, capacity, allocation, option_history,
                 booking (holds, confirmation), cancellation, events, notifications, escalation, coordinator, model_gateway,
                 prompts, tools, language, conversation, evaluation, integrity, proof, scale_fixture, stub_model, api, jobs/,
-                board, partner_booking, mail_transport, auth/ (sign-in, roles, onboarding, projects, audit, Telegram, screens)
-migrations/     001-012, applied in filename order to working copies
-tests/          1158 tests, traces/ (sanitised regression baselines), scenario_flow.py (the scenario)
+                board, partner_booking, mail_transport, position, gps, facility_change, langsmith_trace, demo_ui,
+                auth/ (sign-in, roles, onboarding, projects, audit, Telegram, screens)
+migrations/     001-013, applied in filename order to working copies
+tests/          about 1,360 tests, traces/ (sanitised regression baselines), scenario_flow.py (the scenario)
 scripts/        audit, replay, scenario, integrity proof, scale profile, live-model run, trace recording, set_admin_password
 load/           Locust profile
 docs/           problem definition, data audit, decision register, operations questions, model contract, client readout,

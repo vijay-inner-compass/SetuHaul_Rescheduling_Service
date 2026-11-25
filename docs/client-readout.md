@@ -1,18 +1,20 @@
 # Client readout: SetuHaul conversational rescheduling prototype
 
 ## In one paragraph
-A driver messages in English, Hindi or Hinglish; the service works out the real arrival time, shows up to three feasible dock
-slots, holds one for a few minutes, confirms it atomically, and tells the warehouse planner, the consignee and operations. When it
-cannot act safely it opens a case for a coordinator instead of guessing. The booking rules are enforced by the database and plain
-code, not by the model, and they held under 20 repeated rounds of contention. **What has not happened:** no real model has driven
-it, and the supplied snapshot has no labour or consignee data, so on that data alone the service hands every slot decision to a person.
+A driver messages in English, Hindi or Hinglish; the service works out the real arrival time, holds one feasible dock slot for a few
+minutes, confirms it atomically when the driver says yes, and queues notices for the warehouse planner, the consignee and operations.
+When it cannot act safely it opens a case for a coordinator instead of guessing. Drivers use Telegram; warehouse staff and admins have
+signed-in web screens. The booking rules are enforced by the database and plain code, not by the model, and they held under 20
+repeated rounds of contention. **What has not happened:** no real model has been recorded on the current one-slot flow, no real driver
+has used it, and the supplied snapshot has no labour or consignee data, so on that data alone every slot decision goes to a person.
+Questions an audience may ask are answered in [faq.md](faq.md). Updated 2026-11-26.
 
 ## The six deliverables
 | # | Deliverable | Where |
 |---|---|---|
 | 1 | Problem definition and data audit | `docs/problem-definition.md`, `docs/data-audit.md`, `docs/snapshot-limitations.md` |
-| 2 | Decision register | `docs/decision-register.md` (D1-D51), `docs/operations-questions.md` (Q1-Q20) |
-| 3 | Working prototype | `src/`, `migrations/`, `README.md` (494 tests) |
+| 2 | Decision register | `docs/decision-register.md` (D1 onward), `docs/operations-questions.md` (Q1-Q20) |
+| 3 | Working prototype | `src/`, `migrations/`, `README.md` (about 1,360 tests) |
 | 4 | Scenario run | `docs/verification/scenario-run.md` (`python scripts/run_scenario.py`, 23 checks) |
 | 5 | Integrity proof | `docs/verification/concurrency-proof.md`, `docs/verification/scale-test.md` |
 | 6 | This readout | `docs/client-readout.md` |
@@ -49,13 +51,13 @@ Nothing here supports a claim of operational success: the snapshot is 21 shipmen
   message, and a slot with a pending (not confirmed) appointment.
 
 ## Open risks, most important first
-1. **Live-model evidence is one run.** On 2026-11-20 OpenAI `gpt-6-luna` completed the four-message scenario (18/18 evaluator checks, replays clean; see `docs/verification/evaluation-plan.md`). It is one English scenario with no cost tracking, so model quality at scale, Hindi and Hinglish quality, and the two model-dependent thresholds remain unmeasured. Data protection for real driver messages (Q9) is still undecided.
+1. **No live-model evidence for the current flow.** Runs on 2026-11-20 with OpenAI `gpt-6-luna` used the earlier numbered menu and are retired. Model quality, Hindi and Hinglish quality and the two model-dependent thresholds are unmeasured. Data protection for real driver messages (Q9) is undecided, and there is no retention, export or erasure of personal data.
 2. **Hindi and Hinglish wording is unreviewed** and language detection and the claim guard are heuristics (word lists, regexes).
 3. **Labour and consignee evidence has no source** (Q17); the cancellation cutoff (Q6), ETA buffer (Q3) and priority classes (Q4) are defaults.
-4. **Coordinator and channel integration is minimal:** bearer tokens, a signed-webhook scheme I chose (HMAC-SHA256), updates posted to the chat
+4. **Channels are minimal:** Telegram was tried once with the stand-in assistant; warehouse, consignee and operations notices are queued with no sender; coordinator service calls use bearer tokens.
    transcript only. The real messaging provider's signature format and delivery are not integrated.
 5. **SQLite limits:** about 245 writes/s and multi-second lock waits from four writers up (see below).
-6. **Continuous integration:** the Windows and Ubuntu workflow passed on the Phase 2 commit; later commits had not been pushed to it when this
+6. **Continuous integration is not run** (D56): the workflow is in the repository, but later commits were checked locally on Windows, and Linux only at an earlier phase.
    was written. Ubuntu behaviour of the later phases is untested here.
 7. Single-day, 21-shipment snapshot; invented demand in the scale fixture; Redis behaviour verified only with an in-process fake.
 
@@ -81,5 +83,5 @@ The booking invariants (partial unique indexes, one transaction per change) carr
 1. Approve the provider and data-protection position (Q9), supply a key, and run the live scenario; read the trace; add evaluations only for failures it shows.
 2. Name the labour and consignee data source (Q17); until then expect every case to reach a coordinator.
 3. Decide Q6, Q20, Q3 and Q4; have a native speaker review the Hindi and Hinglish text.
-4. Integrate the real messaging provider's webhook and delivery; put real authentication in front of the coordinator tools.
-5. Push the branch and confirm the Windows and Ubuntu workflow is green on the final commit.
+4. Decide the personal-data position (notice, retention, erasure), host behind HTTPS with backups and monitoring, and connect senders for warehouse and consignee notices.
+5. Record a real-model run of the current flow and have it reviewed.

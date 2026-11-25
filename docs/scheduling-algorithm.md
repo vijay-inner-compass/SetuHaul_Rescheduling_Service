@@ -1,8 +1,5 @@
 # Scheduling algorithm
 
-> **Changed 2026-11-25 (D93):** the numbered three-option menu is gone. After a delay report the service **holds the first feasible
-> slot** and the driver replies **Yes** to book it or **No** for the next one. Steps or examples below that pick a number no longer apply.
-
 How SetuHaul decides which dock slots to offer a late truck, how it stops two drivers taking the same slot, and how it moves a
 driver from the old appointment to the new one. This describes the code as it stands; each section names the file and function.
 For a guided tour of the same files see [code-walkthrough/03](code-walkthrough/03-eta-feasibility-options.md) and
@@ -12,8 +9,8 @@ For a guided tour of the same files see [code-walkthrough/03](code-walkthrough/0
 
 The system does not optimise a schedule. It answers one question for one truck: **which slots at its destination can this
 truck use, given when it will really arrive?** It works out the arrival time (`eta.py`), judges every slot at the facility against
-hard rules and soft evidence (`feasibility.py`), shows the earliest three (`allocation.py`), and only then lets the driver
-claim one through a short database-enforced hold (`booking.py`). Nothing is assumed: missing evidence stops the search rather
+hard rules and soft evidence (`feasibility.py`), ranks the earliest three (`allocation.py`), holds the first one for the driver and only
+books it when the driver agrees, through a short database-enforced hold (`booking.py`). Nothing is assumed: missing evidence stops the search rather
 than being filled in.
 
 ## 2. Pipeline
@@ -31,14 +28,14 @@ than being filled in.
  4. Search       search_feasible_slots           → every slot judged: FEASIBLE / INFEASIBLE /
         │            └ evaluate_slot per slot       REQUIRES_APPROVAL / INCOMPLETE_FEASIBILITY_DATA
         ▼
- 5. Rank         rank_options (top 3)            → numbered menu, stored by record_option_set (valid 15 min)
+ 5. Rank         rank_options (top 3)            → stored by record_option_set (valid 15 min); the first is held
         ▼
  6. Hold         acquire_hold                    → HELD appointment, 180 s, FCFS at commit
         ▼
  7. Confirm      confirm_reschedule              → old appointment ended, hold promoted, one transaction
 ```
 
-![Scheduling pipeline: ETA, snapshot, judge slots, rank, menu, hold, confirm, and the GPS re-check](assets/scheduling-pipeline.svg)
+![Scheduling pipeline (the diagram predates the one-slot flow: where it shows a menu, the first option is now held)](assets/scheduling-pipeline.svg)
 
 Steps 1–5 are read-only and can run concurrently for any number of drivers. Steps 6–7 are the only writes, and each re-checks
 the slot inside the write lock.
@@ -162,7 +159,7 @@ Any status other than `OK` raises a hand-off to operations and the driver is tol
 Keep `FEASIBLE` only; sort by `(slot_start, dock_code, slot_id)` so ties are identical on every run; take the first **3**, ranked 1–3.
 The ranking is purely "earliest first". `wait_minutes` (floor of slot start minus release time) is reported but does not reorder.
 
-`record_option_set` stores the menu exactly as shown: each item's `slot_version` and decision hash, the context, and
+`record_option_set` stores the options exactly as judged: each item's `slot_version` and decision hash, the context, and
 `rules_version`. It is valid for **15 minutes** (`OPTION_TTL`, provisional Q19) and kept 30 days for audit.
 
 ## 8. Step 6: allocation and holds (`booking.acquire_hold`)
@@ -175,15 +172,15 @@ statement of the rule (each request in commit order takes its best still-free op
 
 `acquire_hold` runs in one `BEGIN IMMEDIATE` transaction (concurrent requests queue on the write lock):
 
-1. Load the menu (proves it belongs to this driver, thread and shipment) and find the chosen rank (`INVALID_OPTION` otherwise).
+1. Load the option set (proves it belongs to this driver, thread and shipment) and find the chosen rank (`INVALID_OPTION` otherwise).
 2. Expire any overdue hold on the same shipment or slot (lazy expiry).
-3. Menu past its 15 minutes → `OPTION_EXPIRED`.
+3. Option set past its 15 minutes → `OPTION_EXPIRED`.
 4. Shipment already holds a slot: the same slot is **idempotent** (returns the existing hold); a different slot is `SHIPMENT_ALREADY_HELD`
    unless `supersede` is set (switching options).
 5. **Re-judge** the chosen slot against a fresh snapshot and the truck's current GPS floor (`diff_option_set`). Only `UNCHANGED` and
    `CHANGED_STILL_FEASIBLE` pass. Taken by someone else (`NEWLY_HELD`, `NEWLY_OCCUPIED`) → `SLOT_CONFLICT`; any other change → `OPTION_CHANGED` with the diff.
 6. If superseding, release the old hold in the same transaction (rolled back with everything else if the insert fails).
-7. Insert an `appointments` row, status `HELD`, `is_current = 0`, plus `appointment_hold_meta` (owner, menu, expiry 180 s). Because the hold is in the
+7. Insert an `appointments` row, status `HELD`, `is_current = 0`, plus `appointment_hold_meta` (owner, option set, expiry 180 s). Because the hold is in the
    same table and the same active-slot **unique index** as real bookings, a race that gets past step 5 is rejected by the database
    (`sqlite3.IntegrityError` → `SLOT_CONFLICT`). The index, not application code, is the lock.
 
@@ -213,9 +210,9 @@ Every new GPS ping triggers `handle_new_position` for each of the driver's open 
    is released at once with reason `POSITION_CHANGED` and the driver is told. The original appointment is untouched.
 2. **Acknowledge.** Otherwise the driver is told the distance, drive time and earliest arrival.
 3. **Offer earlier slots.** If the shipment relies on a slot (live hold, else current appointment), the search is re-run from the earliest arrival. Candidates must start at least
-   `gps_reoffer_gain_minutes` (**30**) before the current slot and not be that slot. The top 3 become a numbered menu. **Nothing is held** until the driver picks one; picking swaps the hold (§8 step 4/6).
+   `gps_reoffer_gain_minutes` (**30**) before the current slot and not be that slot. The first is **held for 15 minutes** and offered with Yes or No; nothing is booked until the driver confirms.
    * If the driver earlier gave a later arrival figure that was the binding limit of the last menu (`release_source != GPS_ASSISTED`), it still stands: a closer GPS fix alone does not override it.
-   * The same offer is not re-sent: skipped if the latest unexpired menu already starts with the same slot.
+   * No offer is made while a hold is live, and the same offer is not repeated.
 
 ## 11. Parameters
 
@@ -223,8 +220,8 @@ Every new GPS ping triggers `handle_new_position` for each of the driver's open 
 |---|---|---|
 | Hold lifetime | 180 s | `config.hold_ttl_seconds` |
 | Expiry sweep | every 30 s | `config.expiry_sweep_seconds` |
-| Option menu lifetime | 15 min | `option_history.OPTION_TTL` (provisional, Q19) |
-| Options shown | 3 | `allocation.DEFAULT_OPTION_COUNT` |
+| Option set lifetime | 15 min | `option_history.OPTION_TTL` (provisional, Q19) |
+| Options ranked | 3 (one held at a time) | `allocation.DEFAULT_OPTION_COUNT` |
 | Max snapshot age | 5 min | `feasibility.DEFAULT_MAX_STATE_AGE` |
 | GPS freshness | 15 min | `config.gps_max_age_minutes` |
 | GPS vs driver ETA tolerance | 30 min | `config.gps_mismatch_minutes` |
@@ -236,7 +233,8 @@ Every new GPS ping triggers `handle_new_position` for each of the driver's open 
 
 ## 12. Design properties and limits
 
-* **Deterministic.** Same snapshot, same context, same menu. Every sort has a total tie-break.
+* **Deterministic.** Same snapshot, same context, same options. Every sort has a total tie-break.
+
 * **No assumed evidence.** Missing labour, consignee data, a stale snapshot, an unknown baseline or missing travel time each stop the flow (clarify, `INCOMPLETE`, or hand-off).
 * **Checked twice.** A slot is judged when shown, again at hold, and again at confirm, each time against fresh state and the truck's current position.
 * **The database arbitrates.** Capacity is enforced by one unique index over active appointments including holds; the application checks are for good messages, not for correctness.

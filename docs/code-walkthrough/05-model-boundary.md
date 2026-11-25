@@ -57,7 +57,7 @@ model that text in `untrusted_text` fields (load notes, remarks) is data, never 
 * Languages: English, Hindi (Devanagari) and Hinglish (Hindi in Latin letters). `detect_language` counts script letters
   (Devanagari 30% or more is Hindi; 30% other scripts is unsupported) and common Hindi/English marker words.
 * `T` is the wording table for every system-stated fact, with all three languages: hold placed, hold expired, hold released,
-  confirmed, cancelled, the **numbered option menu**, hand-off, case updates, outage text, and the two guard replacements.
+  confirmed, cancelled, the **held-slot offer**, hand-off, case updates, outage text, and the two guard replacements.
 * `claims_confirmed` / `claims_held` detect model text that claims a booking. Denials ("nothing has been booked") and talk
   about someone else's booking are not counted as claims.
 
@@ -67,11 +67,11 @@ model that text in `untrusted_text` fields (load notes, remarks) is data, never 
 
 1. Save the driver's original text (never altered).
 2. Language: read an answer to "English or Hindi?"; otherwise detect. Unsupported, or unclear twice: hand-off.
-3. Build the prompt with **system facts** (live hold, active shipments, latest menu) and run the bounded loop.
+3. Build the prompt with **system facts** (live hold, active shipments, latest option set) and run the bounded loop.
 4. `_finalize` builds the reply:
    * confirmed / cancelled / hold placed / released: **system wording from the committed row**;
    * a hand-off raised: record the case, say so with the reference;
-   * a menu shown: the **numbered list from the stored option set** (D65);
+   * a search that found slots: the system holds the first and words the offer itself (D93);
    * otherwise the model's text, **after the output guard** (`_guard`): prompt leaks and unbacked hold/confirmation claims are
      replaced with a safe sentence;
    * model unavailable or a loop cap hit: a hand-off or an "I cannot check right now" reply.
@@ -102,4 +102,4 @@ model that text in `untrusted_text` fields (load notes, remarks) is data, never 
 | Provider returns bad tool JSON | invalid call, not a crash | `test_openai_unparseable_tool_arguments_become_an_invalid_call_not_a_crash` |
 | Unsupported language | one question, then a hand-off | `test_unsupported_language_gets_one_choice_question_then_a_hand_off` |
 | Driver switches language | reply follows | `test_reply_language_follows_the_driver_when_they_switch` |
-| Menu wording | numbered list from the stored set | `test_the_numbered_menu_is_rendered_from_the_stored_option_set_not_the_models_wording` |
+| Offer wording | system-worded from the held row | `test_delay_report_holds_the_first_option` |
