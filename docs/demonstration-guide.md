@@ -16,7 +16,9 @@ This opens `http://127.0.0.1:8800/demo`. The driver chat is answered by the **la
 rule-based stand-in** any more. If no model is configured the page says so, the chat is switched off, and the dock board, planner
 bookings and operations panel still work. Use synthetic messages only.
 
-The page has three panels: **Driver console** (chat), **Dock board** (docks by hour) and **Operations** (cases, activity).
+> **The Driver console is now read-only** (decision D90): driver messages come from Telegram. For scenario steps that say to type or send as the driver, use the demo driver account instead: `http://127.0.0.1:8800/demo/driver-login` (`?driver=DRV006` picks the driver). GPS pings cannot be sent from either page.
+
+The page has three panels: **Driver console** (conversation, read only), **Dock board** (docks by hour) and **Operations** (cases, activity).
 The top bar has the simulated clock, the assistant switch, **+1 min**, **+3 min and sweep** and **Reset demo**.
 
 Press **Reset demo** between scenarios. The reset dialog offers **Supplied schedule** (the snapshot's existing bookings) or **Empty dock board** (every slot free, so you allocate from scratch). To start empty, run `python scripts/run_demo.py --fresh`. Scenarios A to F assume the supplied schedule; the empty-board walkthrough is scenario G.

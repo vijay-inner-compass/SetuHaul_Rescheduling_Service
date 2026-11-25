@@ -144,7 +144,7 @@ def test_cancelling_a_confirmed_appointment_frees_its_slot_on_the_board(tmp_path
 
     from setuhaul.demo_ui import build_demo_app
 
-    client = demo_client(build_demo_app(tmp_path / "cx", fresh=True, live_factory=StubGateway)[0])
+    client = demo_client(build_demo_app(tmp_path / "cx", fresh=True, live_factory=StubGateway, driver_simulation=True)[0])
     did = next(d["id"] for d in client.get("/demo/api/drivers").json()["drivers"] if d["name"] == "Manoj Sharma")
 
     def say(t: str) -> str:
@@ -161,7 +161,7 @@ def test_keeping_the_original_slot_releases_the_hold_on_the_board(tmp_path: Path
 
     from setuhaul.demo_ui import build_demo_app
 
-    client = demo_client(build_demo_app(tmp_path / "rel", fresh=True, live_factory=StubGateway)[0])
+    client = demo_client(build_demo_app(tmp_path / "rel", fresh=True, live_factory=StubGateway, driver_simulation=True)[0])
     did = next(d["id"] for d in client.get("/demo/api/drivers").json()["drivers"] if d["name"] == "Manoj Sharma")
 
     def say(t: str) -> str:
@@ -178,7 +178,7 @@ def test_cancelling_with_nothing_booked_says_so(tmp_path: Path) -> None:
 
     from setuhaul.demo_ui import build_demo_app
 
-    client = demo_client(build_demo_app(tmp_path / "none", fresh=True, live_factory=StubGateway)[0])
+    client = demo_client(build_demo_app(tmp_path / "none", fresh=True, live_factory=StubGateway, driver_simulation=True)[0])
     did = next(d["id"] for d in client.get("/demo/api/drivers").json()["drivers"] if d["name"] == "Manoj Sharma")
     reply = client.post("/demo/api/chat", json={"driver_id": did, "text": "cancel my appointment"}).json()["reply"]
     assert "could not find an appointment" in reply.lower()
@@ -189,7 +189,7 @@ def _gps_demo(tmp_path: Path):  # type: ignore[no-untyped-def]
 
     from setuhaul.demo_ui import build_demo_app
 
-    client = demo_client(build_demo_app(tmp_path / "gps", fresh=True, live_factory=StubGateway)[0])
+    client = demo_client(build_demo_app(tmp_path / "gps", fresh=True, live_factory=StubGateway, driver_simulation=True)[0])
     did = next(d["id"] for d in client.get("/demo/api/drivers").json()["drivers"] if d["name"] == "Manoj Sharma")
     fac = client.get(f"/demo/api/driver/{did}/gps").json()["facility"]
 
@@ -342,7 +342,7 @@ def test_a_position_update_reaches_the_load_with_the_late_booking_even_when_it_i
 
     from setuhaul.demo_ui import build_demo_app
 
-    client = demo_client(build_demo_app(tmp_path / "two", live_factory=StubGateway)[0])  # the supplied schedule, with its bookings
+    client = demo_client(build_demo_app(tmp_path / "two", live_factory=StubGateway, driver_simulation=True)[0])  # the supplied schedule, with its bookings
     sandeep = next(d for d in client.get("/demo/api/drivers").json()["drivers"] if d["name"] == "Sandeep Meena")
     late = next(s for s in sandeep["shipments"] if s["appointment"] and s["appointment"].startswith("18:00"))
     fac = client.get(f"/demo/api/driver/{sandeep['id']}/gps").json()["facility"]

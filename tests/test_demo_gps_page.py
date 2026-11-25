@@ -14,7 +14,7 @@ from tests.auth_helpers import demo_client
 # The served demo page as text.
 @pytest.fixture()
 def html(tmp_path: Path) -> str:
-    app, _ = build_demo_app(tmp_path / "demo", live_factory=StubGateway)
+    app, _ = build_demo_app(tmp_path / "demo", live_factory=StubGateway, driver_simulation=True)
     return demo_client(app).get("/demo").text
 
 

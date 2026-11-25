@@ -69,7 +69,13 @@ To guarantee the stand-in, start with `$env:SETUHAUL_DOTENV = "off"` first.
 
 The page has three panels and a top bar:
 
-* **Driver console** (left): pick a driver, see their loads, a GPS panel, the chat, and quick-message buttons.
+* **Driver console** (left): pick a driver, see their loads, GPS readout and conversation. **Read only** for every web user (decision D90):
+  no message box, quick replies or ping button, and the server refuses those requests (`403 READ_ONLY_CONSOLE`, audited). Drivers write from Telegram.
+  Walkthrough steps below that type as the driver can no longer be done in the console. The local demo has no Telegram connection, so its
+  conversations stay empty until someone uses the demo driver account below.
+* **Demo driver account** (separate page, decision D91): open `http://127.0.0.1:8800/demo/driver-login` (default driver Manoj Sharma,
+  `?driver=DRV007` for another). It sends messages as that one driver and shows only that driver's conversation: no dock board, no
+  operations. It has its own cookie, so you can keep the admin console open in another tab and watch. Local demo and loopback only.
 * **Dock board** (middle): docks by hour for one facility; Available, Held (amber, 3 min), Booked, Blocked, and the selected driver's own cells.
 * **Operations** (right): **Cases** (the hand-off queue) and **Activity** (appointment history, notification outbox, GPS pings).
 * **Top bar:** the model name, the simulated clock, **+1 min**, **+3 min and sweep**, **Reset demo**.

@@ -26,7 +26,7 @@ ADMIN = frozenset({"ADMIN"})
 # Open to anyone: no data, or their own credential check.
 PUBLIC = {
     ("GET", "/health"), ("GET", "/ready"), ("GET", "/auth/login"), ("GET", "/auth/callback"), ("POST", "/auth/logout"),
-    ("GET", "/auth/me"), ("POST", "/auth/local-admin"), ("GET", "/demo/login"),
+    ("GET", "/auth/me"), ("POST", "/auth/local-admin"), ("GET", "/demo/login"), ("GET", "/demo/driver-login"),
     # The sign-in landing page (it redirects signed-in users) and the whitelisted static assets (no secrets in them).
     ("GET", "/"), ("GET", "/app/assets/{name}"),
 }
@@ -34,6 +34,8 @@ PUBLIC = {
 EXEMPT_OWN_AUTH = {
     ("POST", "/v1/driver/messages"), ("POST", "/v1/gps/pings"), ("POST", "/v1/driver/location"),
     ("GET", "/v1/driver/status"), ("POST", "/v1/telegram/webhook"),
+    # The local demo driver account: its own cookie, loopback only, never in the production app.
+    ("GET", "/demo/driver"), ("GET", "/demo/driver/api/state"), ("POST", "/demo/driver/api/message"),
 }
 # Everything else needs a web session with one of these roles.
 ROLE_GUARDED: dict[tuple[str, str], frozenset[str]] = {

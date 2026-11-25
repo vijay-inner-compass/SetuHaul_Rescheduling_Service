@@ -104,6 +104,8 @@ def main() -> int:
     # Whether tracing is on and why.
     print(f"  LangSmith tracing: {tracing_status().reason}")
     # How to stop it.
+    print("  The driver console is read-only: driver messages come from Telegram.")
+    print(f"  To send messages as a demo driver, open {url.removesuffix('/login')}/driver-login (add ?driver=DRV007 for another driver).")
     print("  Ctrl+C to stop. Data is synthetic and resets from the Reset button.")
     # Open the page after a short delay, so the server is up first.
     if not args.no_browser:

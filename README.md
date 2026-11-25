@@ -37,7 +37,7 @@ resolved set is in `docs/requirements-lock.txt`.
 | `python scripts/run_integrity_proof.py` | 20x thread, process and mixed contention plus property tests; writes `concurrency-proof.md` (about 8 minutes) |
 | `python scripts/run_scale_profile.py` | generated 360-load fixture, spike and burst, SQLite saturation; writes `scale-test.md` data |
 | `python scripts/run_live_model_scenario.py` | one real-model scenario. **Blocked until you set a provider and key** (see below) |
-| `python scripts/run_demo.py` | demonstration console in the browser: open `http://127.0.0.1:8800/demo/login` first (it signs you in), then `/demo` (driver chat, dock board, operations; localhost only, simulated clock). `/` and `/warehouse` are the signed-in screens; `/admin` refuses the demo user |
+| `python scripts/run_demo.py` | demonstration console in the browser: open `http://127.0.0.1:8800/demo/login` first (it signs you in), then `/demo` (read-only driver console, dock board, operations; `/demo/driver-login` is a separate demo driver account that can send messages; localhost only, simulated clock). `/` and `/warehouse` are the signed-in screens; `/admin` refuses the demo user |
 
 ## Run the service
 Sign-in and Telegram settings are in the next section but one; without them those features stay off.

@@ -157,6 +157,10 @@ table.t td{padding:7px 6px;border-bottom:1px solid var(--line);vertical-align:to
 .toast{background:var(--ink);color:#fff;padding:10px 14px;border-radius:6px;box-shadow:var(--shadow);max-width:360px;font-size:13px}
 .toast.bad{background:var(--bad)}
 .toast.ok{background:var(--ok)}
+/* Read-only console: driver messages and positions come from Telegram, so nothing here sends as the driver. */
+.readonly .composer,.readonly #gpsForm{display:none!important}
+.readonly-note{display:none}
+.readonly .readonly-note{display:block}
 </style>
 </head>
 <body>
@@ -174,11 +178,12 @@ table.t td{padding:7px 6px;border-bottom:1px solid var(--line);vertical-align:to
   <div class="clock" aria-live="off"><b id="clockTime">--:--:--</b><span id="clockDate">Simulated time</span></div>
 </header>
 
-<main>
+<main class="readonly">
   <!-- Driver console -->
   <section class="panel" aria-labelledby="h-driver">
     <header><h2 id="h-driver">Driver console</h2><span class="muted" style="margin-left:auto">What the driver sees on their phone</span></header>
     <div class="panel-body" id="driverBody">
+      <div class="muted readonly-note" role="note">Read only. Drivers send their messages from Telegram.</div>
       <label class="field" for="driverSel">Driver</label>
       <select id="driverSel"></select>
       <div class="driver-card"><div class="avatar" id="avatar">--</div><div><h3 id="driverName">Select a driver</h3><div class="muted" id="driverSub"></div></div></div>
@@ -202,7 +207,7 @@ table.t td{padding:7px 6px;border-bottom:1px solid var(--line);vertical-align:to
       </div>
       <div id="banners"></div>
       <div class="section-title">Conversation</div>
-      <div class="thread" id="thread"><div class="empty">No messages yet. Pick a quick message below or type your own.</div></div>
+      <div class="thread" id="thread"><div class="empty">No messages yet.</div></div>
     </div>
     <div class="composer">
       <div class="seg light" style="margin-bottom:8px" role="group" aria-label="Quick message language" id="langSeg">
@@ -310,7 +315,7 @@ function renderChips(){
 }
 function renderThread(st){
   const t=$("#thread");const nearBottom=t.parentElement.scrollHeight-t.parentElement.scrollTop-t.parentElement.clientHeight<80;
-  t.innerHTML=st.messages.length?st.messages.map(m=>`<div class="msg ${m.who}">${m.who==="operations"?'<span class="who">Operations team</span>':""}${esc(m.text)}<span class="meta">${esc(m.time)}</span></div>`).join(""):`<div class="empty">No messages yet. Pick a quick message below or type your own.</div>`;
+  t.innerHTML=st.messages.length?st.messages.map(m=>`<div class="msg ${m.who}">${m.who==="operations"?'<span class="who">Operations team</span>':""}${esc(m.text)}<span class="meta">${esc(m.time)}</span></div>`).join(""):`<div class="empty">No messages yet.${state.cfg&&state.cfg.read_only?"":" Pick a quick message below or type your own."}</div>`;
   if(state.busy)t.insertAdjacentHTML("beforeend",`<div class="typing">Assistant is working…</div>`);
   if(nearBottom||state.busy)t.parentElement.scrollTop=t.parentElement.scrollHeight;
 }
@@ -327,7 +332,7 @@ async function refreshDriver(){
   refreshGps(false);
 }
 async function send(text){
-  if(!text.trim()||state.busy||!state.cfg.chat_enabled)return;
+  if(state.cfg.read_only||!text.trim()||state.busy||!state.cfg.chat_enabled)return;
   state.busy=true;$("#sendBtn").disabled=true;$("#msgInput").value="";
   const t=$("#thread");t.querySelector(".empty")?.remove();
   t.insertAdjacentHTML("beforeend",`<div class="msg driver">${esc(text)}<span class="meta">sending…</span></div><div class="typing">Assistant is working…</div>`);
@@ -396,7 +401,7 @@ async function refreshGps(force){
   else if(!g.dirty){g.fac=r.data.facility;renderGps(r.data);}
 }
 function sendPing(){
-  const g=state.gps;if(!g.ok)return;
+  const g=state.gps;if(state.cfg.read_only||!g.ok)return;
   // The driver this ping is for, fixed now: a reply that arrives after the driver changed is ignored below.
   const did=state.driverId;
   const body={driver_id:did,lat:parseFloat($("#gpsLat").value),lon:parseFloat($("#gpsLon").value),age_minutes:parseInt($("#gpsAge").value||"0",10)};
@@ -538,6 +543,7 @@ async function init(reset){
   const cfg=await api("/demo/api/config");if(!cfg.ok){toast("The demonstration service is not reachable.","bad");return;}
   state.cfg=cfg.data;state.facilities=cfg.data.facilities;state.coordinators=cfg.data.coordinators;
   state.facility=state.facility&&!reset?state.facility:(state.facilities.find(f=>f.id==="FAC-JAI-01")||state.facilities.find(f=>f.name.includes("Jaipur"))||state.facilities[0]).id;
+  document.querySelector("main").classList.toggle("readonly",!!cfg.data.read_only);
   setClock(cfg.data.clock);renderChips();paintModel();paintFacilities();
   await refreshDrivers();renderDrivers();await Promise.all([refreshDriver(),refreshBoard(),refreshOps()]);
 }
