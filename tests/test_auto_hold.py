@@ -149,3 +149,10 @@ def test_an_agreeing_message_can_never_decline(text: str) -> None:
 
     assert sounds_like_agreement(text)
     assert not sounds_like_agreement("No") and not sounds_like_agreement("no, next one please")
+
+
+def test_confirmation_names_the_facility_in_every_language(chat: Chat) -> None:
+    for lang in ("en", "hi", "hinglish"):
+        assert "FACILITY-X" in say("confirmed", lang, facility="FACILITY-X", dock="D1", date="d", start="s", end="e", ref="R")
+    chat.say(LATE)
+    assert "SetuHaul Jaipur Distribution Centre" in chat.say("Yes, confirm")

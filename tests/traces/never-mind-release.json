@@ -136,6 +136,7 @@
             "offer_original_slot",
             "request_hold",
             "confirm_reschedule",
+            "decline_held_slot",
             "release_pending_change",
             "cancel_appointment",
             "escalate_to_operations"
@@ -169,6 +170,7 @@
             "offer_original_slot",
             "request_hold",
             "confirm_reschedule",
+            "decline_held_slot",
             "release_pending_change",
             "cancel_appointment",
             "escalate_to_operations"

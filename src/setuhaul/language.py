@@ -220,9 +220,9 @@ T: dict[str, dict[str, str]] = {
     },
     # Told when a reschedule is confirmed. Built from the committed appointment row.
     "confirmed": {
-        "en": "Your appointment is confirmed: dock {dock}, {start}-{end} on {date}. Reference {ref}.",
-        "hi": "आपकी अपॉइंटमेंट कन्फर्म हो गई है: डॉक {dock}, {date} को {start}-{end}। रेफरेंस {ref}।",
-        "hinglish": "Aapki appointment confirm ho gayi hai: dock {dock}, {date} ko {start}-{end}. Reference {ref}.",
+        "en": "Your appointment is confirmed: dock {dock}, {start}-{end} on {date}. Reference {ref}. Warehouse: {facility}.",
+        "hi": "आपकी अपॉइंटमेंट कन्फर्म हो गई है: डॉक {dock}, {date} को {start}-{end}। रेफरेंस {ref}। वेयरहाउस: {facility}।",
+        "hinglish": "Aapki appointment confirm ho gayi hai: dock {dock}, {date} ko {start}-{end}. Reference {ref}. Warehouse: {facility}.",
     },
     # Told when an appointment was cancelled.
     "cancelled": {

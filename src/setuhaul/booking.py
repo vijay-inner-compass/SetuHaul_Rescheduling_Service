@@ -631,8 +631,9 @@ def confirmed_appointment_facts(conn: sqlite3.Connection, appointment_id: str) -
     """Facts of a committed CONFIRMED appointment. Raises ValueError for anything else."""
     # Read the facts back from the database, so wording shown to the driver comes from committed state only.
     r = conn.execute(
-        "select a.appointment_id, a.appointment_status, s.slot_start_ts, s.slot_end_ts, d.dock_code "
+        "select a.appointment_id, a.appointment_status, s.slot_start_ts, s.slot_end_ts, d.dock_code, f.facility_name "
         "from appointments a join appointment_slots s using(slot_id) join docks d on d.dock_id = s.dock_id "
+        "join facilities f on f.facility_id = d.facility_id "
         "where a.appointment_id=?", (appointment_id,),
     ).fetchone()
     if r is None:
@@ -644,7 +645,7 @@ def confirmed_appointment_facts(conn: sqlite3.Connection, appointment_id: str) -
     end = parse_operational_timestamp(r["slot_end_ts"])
     # Times as "HH:MM", date as "04 Aug 2026", plus the dock and the appointment reference.
     return {"dock": r["dock_code"], "start": f"{start:%H:%M}", "end": f"{end:%H:%M}",
-            "date": f"{start:%d %b %Y}", "ref": r["appointment_id"]}
+            "date": f"{start:%d %b %Y}", "ref": r["appointment_id"], "facility": r["facility_name"]}
 
 
 def render_confirmation_text(conn: sqlite3.Connection, appointment_id: str) -> str:

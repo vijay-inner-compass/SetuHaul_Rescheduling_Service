@@ -206,6 +206,7 @@
             "offer_original_slot",
             "request_hold",
             "confirm_reschedule",
+            "decline_held_slot",
             "release_pending_change",
             "cancel_appointment",
             "escalate_to_operations"
@@ -239,6 +240,7 @@
             "offer_original_slot",
             "request_hold",
             "confirm_reschedule",
+            "decline_held_slot",
             "release_pending_change",
             "cancel_appointment",
             "escalate_to_operations"
@@ -248,7 +250,7 @@
           "tool_events": []
         }
       ],
-      "reply_text": "Your appointment is confirmed: dock D2, 12:00-13:00 on 04 Aug 2026. Reference $HOLD1.",
+      "reply_text": "Your appointment is confirmed: dock D2, 12:00-13:00 on 04 Aug 2026. Reference $HOLD1. Warehouse: SetuHaul Jaipur Distribution Centre.",
       "reply_status": "REPLIED",
       "escalation_reason": null,
       "handoff_context_keys": [],
