@@ -67,6 +67,7 @@ from starlette.concurrency import run_in_threadpool
 from setuhaul.auth import same_origin, sessions
 from setuhaul.auth.authz import AuthzError, require_role
 from setuhaul.auth.google import GoogleVerifier
+from setuhaul.auth.onboarding import driver_eligible
 
 # The Telegram reply sender type.
 from setuhaul.auth.telegram import TelegramClient
@@ -260,6 +261,19 @@ def _reject(request_id: str, status: int, reason: str, **extra: Any) -> JSONResp
 
 
 # Build the FastAPI application from its dependencies.
+def resolve_eligible_driver(conn: sqlite3.Connection, raw_phone: str, clock: Clock) -> TrustedDriverContext:
+    """The phone channel's driver, refused like an inactive one unless eligible today (IST): approved with a valid licence.
+
+    Supplied drivers (no onboarding profile) stay eligible; the rule is the one allocation and the Telegram bot use.
+    """
+    # Phone lookup and the driver_status check first, unchanged.
+    trusted = resolve_driver(conn, raw_phone)
+    # Then the onboarding rule; the refusal is the same code an inactive driver gets.
+    if not driver_eligible(conn, trusted.driver_id, clock.now().astimezone(IST).date()):
+        raise AuthError("DRIVER_NOT_ALLOWED", "NOT_ELIGIBLE")
+    return trusted
+
+
 def create_app(deps: AppDeps) -> FastAPI:
     # Start-up and shut-down hook.
     @asynccontextmanager
@@ -383,7 +397,7 @@ def create_app(deps: AppDeps) -> FastAPI:
     def _process(conn: sqlite3.Connection, payload: MessageIn, request_id: str) -> JSONResponse:
         try:
             # Identify the driver from their phone number. The model never supplies identity.
-            trusted = resolve_driver(conn, payload.sender)
+            trusted = resolve_eligible_driver(conn, payload.sender, deps.clock)
         except AuthError as exc:
             # Unknown or disallowed sender.
             return _reject(request_id, 403, exc.code)
@@ -582,7 +596,7 @@ def create_app(deps: AppDeps) -> FastAPI:
         def store(conn: sqlite3.Connection, p: DriverLocationIn, rid: str) -> int | JSONResponse:
             try:
                 # Identity comes from the phone number, never from the body's content.
-                driver = resolve_driver(conn, p.sender)
+                driver = resolve_eligible_driver(conn, p.sender, deps.clock)
             except AuthError as exc:
                 return _reject(rid, 403, exc.code)
             # The shipment being driven now.
@@ -605,7 +619,7 @@ def create_app(deps: AppDeps) -> FastAPI:
         try:
             try:
                 # Identify the driver by phone.
-                driver = resolve_driver(conn, phone)
+                driver = resolve_eligible_driver(conn, phone, deps.clock)
             except AuthError as exc:
                 return _reject(rid, 403, exc.code)
             # Their current hand-off case, if any.
