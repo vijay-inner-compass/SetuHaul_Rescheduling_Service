@@ -368,7 +368,7 @@ def _chat_browser(chats: list[dict[str, Any]]) -> str:
     for number, d in enumerate(chats):
         name = d["driver_name"] or d["driver_id"]
         last = d["messages"][-1] if d["messages"] else {"text": "", "timestamp": ""}
-        names.append(f'<li><button type="button" data-thread="{number}"><span class="top"><b>{esc(name)}</b>'
+        names.append(f'<li><button type="button" data-thread="{number}" data-driver="{esc(d["driver_id"])}"><span class="top"><b>{esc(name)}</b>'
                      f'<time>{esc(_clock(last["timestamp"]))}</time></span><span class="preview">{esc(_short(last["text"]))}</span></button></li>')
         bubbles = []
         for m in d["messages"]:

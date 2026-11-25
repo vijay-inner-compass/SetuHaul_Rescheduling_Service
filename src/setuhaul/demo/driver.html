@@ -14,6 +14,12 @@ header h1{margin:0;font-size:16px}
 header div{opacity:.8;font-size:12px}
 #notice{padding:8px 16px;background:var(--brand-soft)}
 #notice:empty{display:none}
+#booking{padding:10px 16px;border-bottom:1px solid var(--line)}
+#booking .place{font-weight:600}
+#booking .order{color:var(--ink-3);font-size:12px}
+#booking .state{margin-top:6px;padding:8px 10px;border-radius:6px;background:#eef1f5}
+#booking .state.booked{background:#e3f5ec;color:#0b5f3a}
+#booking .state.held{background:#fff3dc;color:#7a4600}
 #thread{flex:1;overflow:auto;padding:12px 16px;display:flex;flex-direction:column;gap:8px}
 .msg{max-width:85%;padding:8px 10px;border-radius:8px;background:var(--brand-soft);white-space:pre-wrap;align-self:flex-start}
 .msg.driver{align-self:flex-end;background:var(--brand);color:#fff}
@@ -32,6 +38,7 @@ input{flex:1;font:inherit;padding:8px;border:1px solid var(--line);border-radius
 <body>
 <div class="phone">
   <header><h1 id="name">Demo driver</h1><div id="sub">Demo driver account (local only). Real drivers write from Telegram.</div></header>
+  <div id="booking" role="status"></div>
   <div id="notice" role="status"></div>
   <div id="thread" aria-live="polite"><div class="empty">No messages yet.</div></div>
   <footer>
@@ -50,6 +57,16 @@ const QUICK=["I will be about two hours late","What slots can I get?","1","Yes, 
 let busy=false,enabled=false;
 // Everything from the server is put on screen with textContent only.
 function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e;}
+// Where the driver is expected, and whether a slot is booked or only held.
+function card(b,hold){
+  const parts=[];
+  if(!b){parts.push(el("div","place","No active load."));}else{
+    parts.push(el("div","place",b.facility),el("div","order",`Order ${b.order}`));
+    parts.push(el("div",b.booked?"state booked":"state",b.booked?`Booked: ${b.booked}`:"No slot booked yet."));
+    if(hold)parts.push(el("div","state held",`Held, NOT booked yet: ${hold.slot}. Reply "Yes, confirm" within ${hold.seconds_left} seconds of demo time.`));
+  }
+  $("#booking").replaceChildren(...parts);
+}
 function controls(){for(const c of document.querySelectorAll("#chips button,#text,#send"))c.disabled=busy||!enabled;}
 async function refresh(){
   const r=await fetch("/demo/driver/api/state");
@@ -57,7 +74,8 @@ async function refresh(){
   const s=await r.json();enabled=s.chat_enabled;
   $("#name").textContent=s.driver.name;
   $("#sub").textContent=`${s.driver.carrier} · demo driver account. Real drivers write from Telegram.`;
-  $("#notice").textContent=[s.hold?`Slot held: ${s.hold.slot}`:"",s.case?s.case.text:""].filter(Boolean).join(" · ");
+  $("#notice").textContent=s.case?s.case.text:"";
+  card(s.booking,s.hold);
   const t=$("#thread");
   t.replaceChildren(...(s.messages.length?s.messages.map(m=>{const d=el("div",m.who==="driver"?"msg driver":"msg",m.text);d.appendChild(el("small",null,`${m.who==="operations"?"Operations team · ":""}${m.time}`));return d;}):[el("div","empty","No messages yet.")]));
   t.scrollTop=t.scrollHeight;
@@ -66,7 +84,11 @@ async function refresh(){
 }
 async function send(text){
   if(!text.trim()||busy||!enabled)return;
-  busy=true;controls();$("#error").textContent="Sending…";$("#text").value="";
+  busy=true;controls();$("#error").textContent="";$("#text").value="";
+  // Show the message at once, with the wait for the reply, before the server answers.
+  $("#thread").querySelector(".empty")?.remove();
+  $("#thread").append(el("div","msg driver",text),el("div","msg","Assistant is replying…"));
+  $("#thread").scrollTop=$("#thread").scrollHeight;
   try{
     const r=await fetch("/demo/driver/api/message",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text})});
     const d=await r.json();

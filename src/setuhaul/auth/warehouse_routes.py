@@ -102,10 +102,11 @@ def _windowed_chats(conn: sqlite3.Connection, user: User, now: datetime, limit: 
     # A coarse SQL pre-filter on the date prefix (two days of slack covers any offset); the exact test is on parsed instants below.
     floor = (min(starts.values()).date() - timedelta(days=2)).isoformat()
     rows = conn.execute(
-        "select t.driver_id, m.chat_message_id, m.sender_type, m.message_text, m.message_ts from chat_messages m"
+        "select t.driver_id, m.rowid as seq, m.sender_type, m.message_text, m.message_ts from chat_messages m"
         f" join chat_threads t on t.thread_id=m.thread_id where m.is_duplicate=0 and t.driver_id in ({','.join('?' * len(ids))})"
         " and m.message_ts>=?", (*ids, floor)).fetchall()
-    kept: dict[str, list[tuple[datetime, str, sqlite3.Row]]] = {}
+    # A question and its reply can share a timestamp, so ties follow insertion order (message ids are random).
+    kept: dict[str, list[tuple[datetime, int, sqlite3.Row]]] = {}
     for r in rows:
         # A stored time that cannot be read is never shown (fail closed).
         try:
@@ -113,7 +114,7 @@ def _windowed_chats(conn: sqlite3.Connection, user: User, now: datetime, limit: 
         except TimestampError:
             continue
         if ts >= starts[r["driver_id"]]:
-            kept.setdefault(r["driver_id"], []).append((ts, r["chat_message_id"], r))
+            kept.setdefault(r["driver_id"], []).append((ts, r["seq"], r))
     # Most recently active drivers first, capped; then each driver's newest messages, shown oldest first.
     order = sorted(kept, key=lambda d: (-max(k[0] for k in kept[d]).timestamp(), d))[:limit]
     out: list[dict[str, Any]] = []
@@ -146,7 +147,7 @@ def driver_chats_in_scope(conn: sqlite3.Connection, user: User, now: datetime, l
         name = conn.execute("select driver_name from drivers where driver_id=?", (row["driver_id"],)).fetchone()
         recent = conn.execute(
             "select m.sender_type, m.message_text, m.message_ts from chat_messages m join chat_threads t on t.thread_id=m.thread_id"
-            " where t.driver_id=? and m.is_duplicate=0 order by m.message_ts desc, m.chat_message_id desc limit ?",
+            " where t.driver_id=? and m.is_duplicate=0 order by m.message_ts desc, m.rowid desc limit ?",
             (row["driver_id"], per_driver)).fetchall()
         # Oldest first, so the list reads as a conversation.
         out.append({"driver_id": row["driver_id"], "driver_name": name["driver_name"] if name else None,

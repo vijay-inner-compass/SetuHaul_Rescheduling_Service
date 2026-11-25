@@ -32,7 +32,8 @@ from starlette.concurrency import run_in_threadpool
 # Audit, and the same eligibility rule the Telegram bot uses.
 from setuhaul.auth import audit
 from setuhaul.auth.onboarding import driver_eligible
-from setuhaul.db import IST, open_connection
+from setuhaul.db import IST, open_connection, parse_operational_timestamp
+from setuhaul.gps import active_shipment_for_driver
 
 # The demo driver's own cookie, deliberately not the web session cookie: both can be signed in in one browser.
 COOKIE_NAME = "setuhaul_demo_driver"
@@ -81,6 +82,30 @@ def register_demo_driver(app: FastAPI, deps: Any, send: Callable[[str, str, str]
             conn.close()
         return None if row is None else {"id": driver_id, "name": row["driver_name"], "carrier": row["carrier_name"]}
 
+    def booking(driver_id: str) -> dict[str, Any] | None:
+        # The driver's own current load: which facility, and the dock and time booked there. Nothing about other trucks.
+        conn = open_connection(path=deps.demo.db_path, readonly=True)
+        try:
+            shipment = active_shipment_for_driver(conn, driver_id)
+            if shipment is None:
+                return None
+            row = conn.execute(
+                "select s.order_reference, f.facility_name, sl.slot_start_ts, sl.slot_end_ts, dk.dock_code from shipments s "
+                "join facilities f on f.facility_id=s.destination_facility_id left join appointments a on a.shipment_id=s.shipment_id "
+                "and a.is_current=1 and a.appointment_status in ('PENDING_CONFIRMATION','CONFIRMED','IN_PROGRESS') "
+                "left join appointment_slots sl on sl.slot_id=a.slot_id left join docks dk on dk.dock_id=sl.dock_id where s.shipment_id=?",
+                (shipment,)).fetchone()
+        finally:
+            conn.close()
+        if row is None:
+            return None
+        booked = None
+        if row["slot_start_ts"]:
+            start = parse_operational_timestamp(row["slot_start_ts"]).astimezone(IST)
+            end = parse_operational_timestamp(row["slot_end_ts"]).astimezone(IST)
+            booked = f"Dock {row['dock_code']}, {start:%H:%M}-{end:%H:%M} on {start:%d %b}"
+        return {"order": row["order_reference"], "facility": row["facility_name"], "booked": booked}
+
     def who(request: Request) -> dict[str, Any] | None:
         # Only the demo driver cookie counts, and eligibility is re-checked on every request.
         if not local(request):
@@ -124,7 +149,7 @@ def register_demo_driver(app: FastAPI, deps: Any, send: Callable[[str, str, str]
             me = who(request)
             if me is None:
                 return _reject(401, "UNAUTHENTICATED")
-            return {"driver": me, "chat_enabled": deps.demo.live_factory is not None, **view(me["id"])}
+            return {"driver": me, "booking": booking(me["id"]), "chat_enabled": deps.demo.live_factory is not None, **view(me["id"])}
 
         return await run_in_threadpool(go)
 
