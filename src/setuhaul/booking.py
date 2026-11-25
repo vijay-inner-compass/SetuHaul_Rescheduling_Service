@@ -544,6 +544,11 @@ def confirm_reschedule(conn: sqlite3.Connection, cmd: ConfirmCommand, clock: Clo
 
             # Re-judge the held slot against the facility as it is right now, inside the lock.
             opt = get_option_set(conn, cmd.driver_id, cmd.thread_id, cmd.shipment_id, row["option_set_id"])
+            # The load was moved to another facility after this slot was held: booking it would send the truck to the wrong site.
+            bound_for = conn.execute("select destination_facility_id from shipments where shipment_id=?", (cmd.shipment_id,)).fetchone()[0]
+            if bound_for != opt.facility_id:
+                release_hold_in_txn(conn, cmd.hold_appointment_id, cmd.shipment_id, "SYSTEM", now, "SYSTEM", None, "DESTINATION_CHANGED")
+                return _store_result(conn, cmd, _result("FEASIBILITY_CHANGED", reason_codes=("DESTINATION_CHANGED",)), now)
             state = build_facility_state(conn, opt.facility_id, now)
             # Judged from where the truck is now: if it moved so far away that it cannot reach the slot, the hold is released.
             floor = gps_arrival_floor(conn, cmd.shipment_id, clock, load_settings())

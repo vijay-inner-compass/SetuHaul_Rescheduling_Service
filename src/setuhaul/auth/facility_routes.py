@@ -3,6 +3,7 @@
 # Lazy annotations.
 from __future__ import annotations
 
+import logging
 import sqlite3
 from typing import Annotated, Any
 
@@ -51,7 +52,13 @@ def register_facility_routes(app: FastAPI, deps: Any) -> None:
             if not approve:
                 facility_change.tell_rejected(conn, deps.redis, deps.clock, request_id)
                 return JSONResponse({"status": "REJECTED", "request_id": request_id})
-            outcome = facility_change.after_approval(conn, deps.redis, deps.clock, request_id)
+            try:
+                outcome: str = facility_change.after_approval(conn, deps.redis, deps.clock, request_id)
+            # The approval is already committed, so any failure here must be undone rather than reported as a bare error.
+            except Exception:
+                logging.getLogger(__name__).exception("facility change follow-up failed for %s", request_id)
+                facility_change.abandon(conn, deps.clock, request_id, "FOLLOW_UP_FAILED")
+                outcome = "NO_SLOT"
             return JSONResponse({"status": "APPROVED", "request_id": request_id, "outcome": outcome})
         finally:
             conn.close()

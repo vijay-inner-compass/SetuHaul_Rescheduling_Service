@@ -37,6 +37,9 @@ from setuhaul.config import load_settings
 # Stored times are parsed into aware datetimes.
 from setuhaul.db import IST, parse_operational_timestamp
 
+# The offer is also queued for the driver's phone.
+from setuhaul.events import queue_driver_notice
+
 # Feasibility context and slot search (the same rules as any other search).
 from setuhaul.feasibility import build_context, search_feasible_slots
 
@@ -173,9 +176,10 @@ def handle_new_position(conn: sqlite3.Connection, shipment_id: str, clock: Clock
             "join docks d using(dock_id) join facilities f on f.facility_id = d.facility_id where s.slot_id=?", (held.slot_id,)).fetchone()
         order = conn.execute("select order_reference from shipments where shipment_id=?", (shipment_id,)).fetchone()["order_reference"]
         start, end = parse_operational_timestamp(slot["slot_start_ts"]), parse_operational_timestamp(slot["slot_end_ts"])
-        memory.append(driver_id, thread_id, "AGENT", say(
-            "earlier_hold", lang, order=order, facility=slot["facility_name"], dock=slot["dock_code"], start=f"{start:%H:%M}",
-            end=f"{end:%H:%M}", date=f"{start:%d %b %Y}", until=f"{held.expires_at.astimezone(IST):%H:%M}"))
+        offer = say("earlier_hold", lang, order=order, facility=slot["facility_name"], dock=slot["dock_code"], start=f"{start:%H:%M}",
+                    end=f"{end:%H:%M}", date=f"{start:%d %b %Y}", until=f"{held.expires_at.astimezone(IST):%H:%M}")
+        memory.append(driver_id, thread_id, "AGENT", offer)
+        queue_driver_notice(conn, driver_id, shipment_id, offer, clock.now())
         return
 
 

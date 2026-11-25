@@ -10,6 +10,8 @@ CREATE TABLE facility_change_requests (
     decided_by TEXT,
     -- Why it was closed without moving the load, when it was not a person's refusal.
     reason TEXT,
+    -- After approval: WAITING for a booking at the new site, or BOOKED. NULL until the follow-up has run.
+    follow_up TEXT CHECK (follow_up IN ('WAITING','BOOKED')),
     created_at TEXT NOT NULL,
     decided_at TEXT,
     expires_at TEXT NOT NULL,

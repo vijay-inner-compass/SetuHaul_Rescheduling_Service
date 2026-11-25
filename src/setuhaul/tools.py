@@ -627,7 +627,8 @@ def _auto_hold(ctx: ToolContext, option_set_id: str, ranks: list[int]) -> dict[s
 
 
 # Words that mean agreement. A message carrying one is never read as declining, whatever else it says.
-_AGREE = re.compile(r"(?<!\w)(yes|yeah|ok(ay)?|confirm\w*|haan?|हाँ|हां|कन्फर्म)(?!\w)", re.IGNORECASE)
+_AGREE = re.compile(r"(?<!\w)(yes|yeah|ok(ay)?|confirm\w*|haan?|fine|sure|good|correct|th?eek|thik|chaleg[ai]|ac?cha|achha|"
+                    r"no\s+(problem|issue|worries)|हाँ|हां|कन्फर्म|ठीक|अच्छा|चलेगा)(?!\w)", re.IGNORECASE)
 
 
 def sounds_like_agreement(text: str) -> bool:

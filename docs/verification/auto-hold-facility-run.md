@@ -7,7 +7,7 @@ sign-in was used.**
 ```
 ruff check src tests    All checks passed!
 mypy src                Success: no issues found in 71 source files
-pytest tests -q         1305 passed
+pytest tests -q         1335 passed
 ```
 Evidence scripts `show_phase3/4/5/6/8/9.py`, `run_scenario.py` (23/23) and `replay_traces.py` (6/6 traces, 58/58 checks) ran
 with exit code 0. `run_integrity_proof.py`, `run_scale_profile.py` and `run_live_model_scenario.py` were **not** run.
@@ -35,6 +35,11 @@ DRIVER: Yes, confirm
 | Approve and Reject (and every other action button inside a refreshed section) did nothing after the warehouse screen refreshed itself | One click listener on the document | reproduced and re-checked in the browser; `tests/test_live_chat.py` |
 | After an approved partner move, the hold at the old warehouse stayed live and "Yes" could book it | The hold is released when the partner is asked | `tests/test_facility_follow_up.py` |
 | The driver card listed the old booking under the new warehouse's name | The booking says which warehouse it is at | `tests/test_facility_follow_up.py` |
+
+## Final review (fresh reviewer): five important findings, fixed test-first
+Agreeing replies such as "no, that is fine" declined the slot; an approved move that never got booked left the load pointed at the
+new site; system messages were never queued for Telegram; a crash after approval left the move half done; approval messages were
+English only. Proof: `tests/test_move_lifecycle.py`, `tests/test_auto_hold.py`.
 
 ## Not verified
 Real model wording and tool choice; Telegram; real partner email; Hindi and Hinglish by a native speaker; phone-width layout

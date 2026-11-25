@@ -7,6 +7,7 @@ on the request. Booking a slot at the new facility is a separate step (``after_a
 # Lazy annotations.
 from __future__ import annotations
 
+import json
 import sqlite3
 import uuid
 from datetime import timedelta
@@ -25,8 +26,10 @@ from setuhaul.config import load_settings
 from setuhaul.db import IST, immediate, parse_operational_timestamp
 from setuhaul.escalation import HandoffRequest, SqlEscalationSink
 from setuhaul.eta import load_eta_records
+from setuhaul.events import queue_driver_notice
 from setuhaul.feasibility import build_context, search_feasible_slots
 from setuhaul.gps import gps_arrival_floor
+from setuhaul.language import say
 from setuhaul.memory import ConversationMemoryStore, HoldRef
 from setuhaul.option_history import record_option_set
 from setuhaul.partner_booking import request_slot
@@ -105,6 +108,15 @@ def decide(conn: sqlite3.Connection, clock: Clock, *, actor: User, request_id: s
         status: Status = "APPROVED" if approve else "REJECTED"
         conn.execute("update facility_change_requests set status=?, decided_by=?, decided_at=? where request_id=?",
                      (status, actor.user_id, clock.now().isoformat(), request_id))
+        if approve:
+            # An earlier move that was never booked: "going back" must still mean back to where the booking is.
+            earlier = conn.execute("select request_id, from_facility_id from facility_change_requests "
+                                   "where shipment_id=? and follow_up='WAITING'", (row["shipment_id"],)).fetchone()
+            if earlier is not None:
+                conn.execute("update facility_change_requests set from_facility_id=? where request_id=?",
+                             (earlier["from_facility_id"], request_id))
+                conn.execute("update facility_change_requests set status='REJECTED', reason='SUPERSEDED', follow_up=NULL "
+                             "where request_id=?", (earlier["request_id"],))
         audit.record(conn, actor_user_id=actor.user_id, actor_email=actor.email, action=f"FACILITY_CHANGE_{status}",
                      target_type="shipment", target_id=row["shipment_id"], outcome="OK", ip=None,
                      detail={"request_id": request_id, "to": row["to_facility_id"]}, clock=clock)
@@ -118,15 +130,99 @@ APPROVAL_HOLD_SECONDS = 15 * 60
 Outcome = Literal["HELD", "PARTNER_REQUESTED", "NO_SLOT"]
 
 
-def _release_live_holds(conn: sqlite3.Connection, clock: Clock, memory: ConversationMemoryStore, driver_id: str, thread_id: str,
-                        shipment_id: str) -> None:
-    """Cancel every hold the load still has, whichever conversation made it, and forget the remembered one."""
+def _thread_of(conn: sqlite3.Connection, driver_id: str) -> str | None:
+    row = conn.execute("select thread_id from chat_threads where driver_id=? and thread_status<>'CLOSED' order by opened_at desc, rowid desc limit 1",
+                       (driver_id,)).fetchone()
+    return row["thread_id"] if row else None
+
+
+def _language(conn: sqlite3.Connection, driver_id: str, thread_id: str | None) -> str:
+    # The language the driver has been writing in; English until one is established.
+    row = conn.execute("select state_json from conversation_state where driver_id=? and thread_id=?", (driver_id, thread_id)).fetchone()
+    return (json.loads(row["state_json"]).get("language") if row else None) or "en"
+
+
+def _tell(conn: sqlite3.Connection, clock: Clock, memory: ConversationMemoryStore | None, driver_id: str, thread_id: str | None,
+          shipment_id: str, key: str, **fields: str) -> None:
+    """Put a message in the driver's chat, in their language, and queue it for their phone."""
+    text = say(key, _language(conn, driver_id, thread_id), **fields)
+    now = clock.now()
+    if thread_id is not None and memory is not None:
+        memory.append(driver_id, thread_id, "OPERATIONS", text)
+    elif thread_id is not None:
+        # Callers without the cache (the sweeps) write the durable log; the cache is rebuilt from it.
+        conn.execute("insert into chat_messages (chat_message_id, thread_id, sender_type, message_text, message_ts) "
+                     "values (?,?, 'OPERATIONS', ?, ?)", ("MSG-" + uuid.uuid4().hex[:12].upper(), thread_id, text, now.isoformat()))
+    queue_driver_notice(conn, driver_id, shipment_id, text, now)
+
+
+def _release_live_holds(conn: sqlite3.Connection, clock: Clock, driver_id: str, shipment_id: str) -> None:
+    """Cancel every hold the load still has, whichever conversation made it."""
     rows = conn.execute(
         "select a.appointment_id, m.thread_id from appointments a join appointment_hold_meta m using(appointment_id) "
         "where a.shipment_id=? and a.appointment_status='HELD' and m.driver_id=?", (shipment_id, driver_id)).fetchall()
     for row in rows:
         release_hold(conn, driver_id, row["thread_id"], row["appointment_id"], "SYSTEM", clock)
-    memory.save_structured_state(driver_id, thread_id, memory.load(driver_id, thread_id).state.model_copy(update={"hold": None}))
+
+
+def _facility_name(conn: sqlite3.Connection, facility_id: str) -> str:
+    return str(conn.execute("select facility_name from facilities where facility_id=?", (facility_id,)).fetchone()[0])
+
+
+def _revert(conn: sqlite3.Connection, clock: Clock, request_id: str, reason: str, message_key: str, *,
+            case_summary: str | None = None, memory: ConversationMemoryStore | None = None) -> bool:
+    """Send an approved but unbooked move back: never leave a load pointing at a site where it has no booking."""
+    with immediate(conn):
+        req = conn.execute("select * from facility_change_requests where request_id=? and status='APPROVED' "
+                           "and coalesce(follow_up,'')<>'BOOKED'", (request_id,)).fetchone()
+        if req is None:
+            return False
+        conn.execute("update shipments set destination_facility_id=? where shipment_id=?", (req["from_facility_id"], req["shipment_id"]))
+        conn.execute("update facility_change_requests set status='REJECTED', reason=?, follow_up=NULL where request_id=?", (reason, request_id))
+        audit.record(conn, actor_user_id=None, actor_email=None, action="FACILITY_CHANGE_REVERTED", target_type="shipment",
+                     target_id=req["shipment_id"], outcome="OK", ip=None, detail={"request_id": request_id, "reason": reason}, clock=clock)
+    driver_id, shipment_id = req["driver_id"], req["shipment_id"]
+    _release_live_holds(conn, clock, driver_id, shipment_id)
+    thread_id = _thread_of(conn, driver_id)
+    if case_summary is not None and thread_id is not None:
+        SqlEscalationSink(conn, clock).record(HandoffRequest(
+            reason_code="NO_SLOT", driver_id=driver_id, thread_id=thread_id, shipment_id=shipment_id,
+            summary=case_summary, created_at=clock.now()))
+    _tell(conn, clock, memory, driver_id, thread_id, shipment_id, message_key,
+          facility=_facility_name(conn, req["to_facility_id"]), origin=_facility_name(conn, req["from_facility_id"]))
+    return True
+
+
+def abandon(conn: sqlite3.Connection, clock: Clock, request_id: str, reason: str) -> None:
+    """The follow-up to an approval failed: undo the move, tell the driver and ask a person to look."""
+    _revert(conn, clock, request_id, reason, "move_no_slot",
+            case_summary="A facility move was approved but the follow-up failed.")
+
+
+def settle(conn: sqlite3.Connection, clock: Clock, driver_id: str | None = None) -> int:
+    """Close approved moves that are waiting: booked ones stay; ones that can no longer be booked go back."""
+    rows = conn.execute("select * from facility_change_requests where status='APPROVED' and follow_up='WAITING'").fetchall()
+    reverted = 0
+    for req in rows:
+        if driver_id is not None and req["driver_id"] != driver_id:
+            continue
+        shipment_id = req["shipment_id"]
+        booked = conn.execute(
+            "select 1 from appointments a join appointment_slots s on s.slot_id=a.slot_id join docks d on d.dock_id=s.dock_id "
+            "where a.shipment_id=? and a.is_current=1 and a.appointment_status in ('PENDING_CONFIRMATION','CONFIRMED','IN_PROGRESS') "
+            "and d.facility_id=?", (shipment_id, req["to_facility_id"])).fetchone()
+        if booked is not None:
+            with immediate(conn):
+                conn.execute("update facility_change_requests set follow_up='BOOKED' where request_id=?", (req["request_id"],))
+            continue
+        # Still possible: a hold the driver can answer, or a partner who has not replied.
+        held = conn.execute(
+            "select 1 from appointments a join appointment_hold_meta m using(appointment_id) where a.shipment_id=? "
+            "and a.appointment_status='HELD' and m.expires_epoch > ?", (shipment_id, int(clock.now().timestamp()))).fetchone()
+        asked = conn.execute("select 1 from partner_requests where shipment_id=? and status='PENDING_PARTNER'", (shipment_id,)).fetchone()
+        if held is None and asked is None:
+            reverted += _revert(conn, clock, req["request_id"], "NOT_CONFIRMED", "move_lapsed")
+    return reverted
 
 
 def after_approval(conn: sqlite3.Connection, redis: Any, clock: Clock, request_id: str) -> Outcome:
@@ -136,30 +232,19 @@ def after_approval(conn: sqlite3.Connection, redis: Any, clock: Clock, request_i
         raise ValueError(f"no approved request {request_id}")
     driver_id, shipment_id = req["driver_id"], req["shipment_id"]
     new = conn.execute("select facility_name, is_partner from facilities where facility_id=?", (req["to_facility_id"],)).fetchone()
-    old_name = conn.execute("select facility_name from facilities where facility_id=?", (req["from_facility_id"],)).fetchone()[0]
     memory = ConversationMemoryStore(conn, redis, clock, load_settings(), hold_checker=make_hold_checker(conn, clock))
-    row = conn.execute("select thread_id from chat_threads where driver_id=? and thread_status<>'CLOSED' order by opened_at desc, rowid desc limit 1",
-                       (driver_id,)).fetchone()
-    thread_id = row["thread_id"] if row else memory.open_thread(driver_id, shipment_id)
+    thread_id = _thread_of(conn, driver_id) or memory.open_thread(driver_id, shipment_id)
     now = clock.now()
     planned, current = load_eta_records(conn, shipment_id)
     record = current or planned
 
-    def tell(text: str) -> None:
-        memory.append(driver_id, thread_id, "OPERATIONS", text)
+    def waiting() -> None:
+        with immediate(conn):
+            conn.execute("update facility_change_requests set follow_up='WAITING' where request_id=?", (request_id,))
 
     def give_back(reason: str) -> Outcome:
-        # Never leave a load pointing at a site where nothing could be offered.
-        with immediate(conn):
-            conn.execute("update shipments set destination_facility_id=? where shipment_id=?", (req["from_facility_id"], shipment_id))
-            conn.execute("update facility_change_requests set status='REJECTED', reason=? where request_id=?", (reason, request_id))
-            audit.record(conn, actor_user_id=None, actor_email=None, action="FACILITY_CHANGE_REVERTED", target_type="shipment",
-                         target_id=shipment_id, outcome="OK", ip=None, detail={"request_id": request_id, "reason": reason}, clock=clock)
-        SqlEscalationSink(conn, clock).record(HandoffRequest(
-            reason_code="NO_SLOT", driver_id=driver_id, thread_id=thread_id, shipment_id=shipment_id,
-            summary=f"A move to {new['facility_name']} was approved but nothing could be offered there.", created_at=now))
-        tell(f"There is no free slot at {new['facility_name']}, so your load is still going to {old_name}. "
-             "Your booking there is unchanged. The operations team will help.")
+        _revert(conn, clock, request_id, reason, "move_no_slot", memory=memory,
+                case_summary=f"A move to {new['facility_name']} was approved but nothing could be offered there.")
         return "NO_SLOT"
 
     if record is None:
@@ -172,9 +257,11 @@ def after_approval(conn: sqlite3.Connection, redis: Any, clock: Clock, request_i
         if asked.status not in ("REQUESTED", "ALREADY_PENDING"):
             return give_back("NO_PARTNER_REQUEST")
         # A slot still held at the old facility must go: the driver's next "Yes" would otherwise book it.
-        _release_live_holds(conn, clock, memory, driver_id, thread_id, shipment_id)
-        tell(f"The move to {new['facility_name']} is approved. I have asked them for {start:%H:%M} on {start:%d %b}. "
-             "It is NOT booked until they reply.")
+        _release_live_holds(conn, clock, driver_id, shipment_id)
+        memory.save_structured_state(driver_id, thread_id, memory.load(driver_id, thread_id).state.model_copy(update={"hold": None}))
+        waiting()
+        _tell(conn, clock, memory, driver_id, thread_id, shipment_id, "move_partner",
+              facility=new["facility_name"], time=f"{start:%H:%M}", date=f"{start:%d %b}")
         return "PARTNER_REQUESTED"
 
     eta = EtaEvidence(eta=record.eta, source="DRIVER_DECLARED", confidence="MEDIUM", baseline_type=BaselineType.CURRENT_ETA)
@@ -202,22 +289,18 @@ def after_approval(conn: sqlite3.Connection, redis: Any, clock: Clock, request_i
         memory.save_structured_state(driver_id, thread_id, memory_state.model_copy(update={
             "selected_shipment_id": shipment_id, "latest_option_set_id": shown.option_set_id, "offered_slot_ids": (),
             "hold": HoldRef(appointment_id=held.appointment_id, expires_at=held.expires_at, created_message_id="SYSTEM")}))
-        tell(f"The move to {new['facility_name']} is approved. I am holding {start:%H:%M}-{end:%H:%M} at dock {slot['dock_code']} "
-             f"on {start:%d %b %Y} until {held.expires_at.astimezone(IST):%H:%M}. It is not booked yet. "
-             "Reply Yes to confirm, or No for the next slot.")
+        waiting()
+        _tell(conn, clock, memory, driver_id, thread_id, shipment_id, "move_held", facility=new["facility_name"], dock=slot["dock_code"],
+              start=f"{start:%H:%M}", end=f"{end:%H:%M}", date=f"{start:%d %b %Y}", until=f"{held.expires_at.astimezone(IST):%H:%M}")
         return "HELD"
     return give_back("NO_SLOT")
 
 
 def tell_rejected(conn: sqlite3.Connection, redis: Any, clock: Clock, request_id: str) -> None:
     """Tell the driver a request was refused; nothing about their booking changed."""
-    req = conn.execute(
-        "select q.driver_id, q.shipment_id, t.facility_name as destination, f.facility_name as origin from facility_change_requests q "
-        "join facilities t on t.facility_id=q.to_facility_id join facilities f on f.facility_id=q.from_facility_id where q.request_id=?",
-        (request_id,)).fetchone()
+    req = conn.execute("select driver_id, shipment_id, from_facility_id, to_facility_id from facility_change_requests where request_id=?",
+                       (request_id,)).fetchone()
     memory = ConversationMemoryStore(conn, redis, clock, load_settings(), hold_checker=make_hold_checker(conn, clock))
-    row = conn.execute("select thread_id from chat_threads where driver_id=? and thread_status<>'CLOSED' order by opened_at desc, rowid desc limit 1",
-                       (req["driver_id"],)).fetchone()
-    thread_id = row["thread_id"] if row else memory.open_thread(req["driver_id"], req["shipment_id"])
-    memory.append(req["driver_id"], thread_id, "OPERATIONS",
-                  f"The move to {req['destination']} was not approved. Your load is still going to {req['origin']}; your booking is unchanged.")
+    thread_id = _thread_of(conn, req["driver_id"]) or memory.open_thread(req["driver_id"], req["shipment_id"])
+    _tell(conn, clock, memory, req["driver_id"], thread_id, req["shipment_id"], "move_rejected",
+          facility=_facility_name(conn, req["to_facility_id"]), origin=_facility_name(conn, req["from_facility_id"]))

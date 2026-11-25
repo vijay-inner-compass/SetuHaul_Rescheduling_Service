@@ -194,6 +194,43 @@ T: dict[str, dict[str, str]] = {
         "hinglish": "Thanks, mujhe aapki nayi position mil gayi hai: dock se lagbhag {km} km door, lagbhag {minutes} minute ki doori, yaani aap "
                     "lagbhag {eta} tak pahunch sakte hain.",
     },
+    # A move to another facility was approved and a slot there is held.
+    "move_held": {
+        "en": "The move to {facility} is approved. I am holding {start}-{end} at dock {dock} on {date} until {until}. It is not "
+              "booked yet. Reply Yes to confirm, or No for the next slot.",
+        "hi": "{facility} में जाना मंज़ूर हो गया है। मैंने {date} को डॉक {dock} पर {start}-{end} का स्लॉट {until} तक होल्ड किया है। "
+              "अभी बुक नहीं हुआ है। कन्फर्म करने के लिए Yes लिखें, या अगले स्लॉट के लिए No।",
+        "hinglish": "{facility} mein jaana manzoor ho gaya hai. Maine {date} ko dock {dock} par {start}-{end} ka slot {until} tak hold "
+                    "kiya hai. Abhi book nahi hua hai. Confirm karne ke liye Yes likhein, ya agle slot ke liye No.",
+    },
+    # Approved, but the new facility is a partner who decides by email.
+    "move_partner": {
+        "en": "The move to {facility} is approved. I have asked them for {time} on {date}. It is NOT booked until they reply.",
+        "hi": "{facility} में जाना मंज़ूर हो गया है। मैंने उनसे {date} को {time} का समय मांगा है। उनके जवाब तक यह बुक नहीं है।",
+        "hinglish": "{facility} mein jaana manzoor ho gaya hai. Maine unse {date} ko {time} ka time maanga hai. Unke jawab tak yeh book NAHI hai.",
+    },
+    # Approved, but nothing could be offered there.
+    "move_no_slot": {
+        "en": "There is no free slot at {facility}, so your load is still going to {origin}. Your booking there is unchanged. "
+              "The operations team will help.",
+        "hi": "{facility} में कोई खाली स्लॉट नहीं है, इसलिए आपका लोड {origin} ही जाएगा। वहां की आपकी बुकिंग वैसी ही है। ऑपरेशन टीम मदद करेगी।",
+        "hinglish": "{facility} mein koi free slot nahi hai, isliye aapka load {origin} hi jayega. Wahan ki aapki booking waisi hi hai. "
+                    "Operations team madad karegi.",
+    },
+    # The warehouse refused the move.
+    "move_rejected": {
+        "en": "The move to {facility} was not approved. Your load is still going to {origin}; your booking is unchanged.",
+        "hi": "{facility} में जाना मंज़ूर नहीं हुआ। आपका लोड {origin} ही जाएगा; आपकी बुकिंग वैसी ही है।",
+        "hinglish": "{facility} mein jaana manzoor nahi hua. Aapka load {origin} hi jayega; aapki booking waisi hi hai.",
+    },
+    # Approved, but no booking came of it (not confirmed, every slot declined, or the partner did not accept).
+    "move_lapsed": {
+        "en": "No slot was booked at {facility}, so your load is still going to {origin}; your booking is unchanged. "
+              "Ask again if you still want to move.",
+        "hi": "{facility} में कोई स्लॉट बुक नहीं हुआ, इसलिए आपका लोड {origin} ही जाएगा; आपकी बुकिंग वैसी ही है। अब भी बदलना हो तो दोबारा कहें।",
+        "hinglish": "{facility} mein koi slot book nahi hua, isliye aapka load {origin} hi jayega; aapki booking waisi hi hai. "
+                    "Ab bhi badalna ho toh dobara bataiye.",
+    },
     # One earlier slot, held because the truck has come closer. The current booking stays unless the driver says yes.
     "earlier_hold": {
         "en": "For order {order}: your truck is closer now, so I am holding an earlier slot at {facility}: {start}-{end} at dock "

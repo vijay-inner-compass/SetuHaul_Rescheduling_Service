@@ -143,7 +143,8 @@ def test_yes_after_expiry_does_not_confirm(chat: Chat) -> None:
     assert chat.rows("select count(*) from appointments where appointment_id like 'APT-H-%' and appointment_status='CONFIRMED'")[0][0] == 0
 
 
-@pytest.mark.parametrize("text", ["yes, no problem", "confirm, there is no issue", "haan, koi problem nahi"])
+@pytest.mark.parametrize("text", ["yes, no problem", "confirm, there is no issue", "haan, koi problem nahi", "no, that is fine",
+                                  "nahi, theek hai", "नहीं, ठीक है", "no problem", "sure, no changes", "nahi, chalega"])
 def test_an_agreeing_message_can_never_decline(text: str) -> None:
     from setuhaul.tools import sounds_like_agreement
 
@@ -156,3 +157,10 @@ def test_confirmation_names_the_facility_in_every_language(chat: Chat) -> None:
         assert "FACILITY-X" in say("confirmed", lang, facility="FACILITY-X", dock="D1", date="d", start="s", end="e", ref="R")
     chat.say(LATE)
     assert "SetuHaul Jaipur Distribution Centre" in chat.say("Yes, confirm")
+
+
+def test_no_that_is_fine_keeps_the_held_slot(chat: Chat) -> None:
+    chat.say(LATE)
+    before = [r["slot_id"] for r in chat.held()]
+    chat.say("no, that is fine")
+    assert [r["slot_id"] for r in chat.held()] == before

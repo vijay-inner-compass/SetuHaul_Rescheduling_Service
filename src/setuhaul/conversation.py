@@ -9,6 +9,8 @@ if it claims a hold or confirmation the database does not back.
 # Lazy annotations.
 from __future__ import annotations
 
+import contextlib
+
 # re finds clock times in model text for the output guard.
 import re
 
@@ -25,6 +27,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 # Reads facts of committed holds and confirmations.
+from setuhaul import facility_change
 from setuhaul.booking import confirmed_appointment_facts, get_hold
 
 # Injectable clock.
@@ -145,7 +148,14 @@ def handle_message(
         # Run the turn. Database failures and service outages are caught here and turned into a safe reply.
         try:
             # The normal path.
+            # An approved move that can no longer be booked goes back before the message is read.
+            if facility_change.settle(services.conn, clock, trusted.driver.driver_id):
+                services.memory.invalidate(trusted.driver.driver_id, trusted.thread_id)
             reply = _handle(message, trusted, clock, services, rctx)
+            # And again afterwards: this message may have declined the last slot on offer. The reply already stands.
+            with contextlib.suppress(sqlite3.Error):
+                if facility_change.settle(services.conn, clock, trusted.driver.driver_id):
+                    services.memory.invalidate(trusted.driver.driver_id, trusted.thread_id)
         # A failing database or service: reply that nothing can be promised, and record a hand-off.
         except (sqlite3.Error, ServiceUnavailable) as exc:
             # Mark the span with the reason.

@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 # The transactional expiry of one hold (releases the slot, writes history, queues the notice).
+from setuhaul import facility_change
 from setuhaul.booking import expire_hold_in_txn
 
 # The injectable clock.
@@ -121,6 +122,8 @@ class MaintenanceRunner:
     def run_once(self) -> MaintenanceResult:
         # Always expire overdue holds first: that is time-critical.
         expired = expire_due_holds(self._db(), self._clock).expired
+        # An approved facility move whose offer just lapsed goes back to where the booking is.
+        facility_change.settle(self._db(), self._clock)
         purged = 0
         # The housekeeping purge only runs once a day.
         if self._purge_due():
