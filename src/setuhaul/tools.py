@@ -631,8 +631,22 @@ _AGREE = re.compile(r"(?<!\w)(yes|yeah|ok(ay)?|confirm\w*|haan?|fine|sure|good|c
                     r"no\s+(problem|issue|worries)|हाँ|हां|कन्फर्म|ठीक|अच्छा|चलेगा)(?!\w)", re.IGNORECASE)
 
 
+# An agreeing word that is negated is a refusal ("nahi chalega", "theek nahi", "not good"). Only the words next to each other
+# count: after a comma ("nahi, theek hai") it is agreement or unclear, and stays so.
+_NEGATED = re.compile(
+    # English puts the negation first; "no" counts only in "no good".
+    r"(?<!\w)(?:not|never|\w+n['’]t|no(?=\s+good(?!\w)))\s+(?:so\s+|very\s+|really\s+)?"
+    r"(?:ok(?:ay)?|confirm\w*|fine|sure|good|correct)(?!\w)"
+    # Hindi and Hinglish: "nahi chalega" puts it first. "nahi theek hai" can mean either, so it is not listed here.
+    r"|(?<!\w)(?:nahi|nahin|mat|नहीं|मत)\s+(?:chaleg[aei]|confirm\w*|चलेगा|चलेगी|कन्फर्म)(?!\w)"
+    # ...or after the word: "theek nahi", "chalega nahi", "confirm mat karo".
+    r"|(?<!\w)(?:ok(?:ay)?|confirm\w*|fine|good|correct|th?eek|thik|chaleg[aei]|ac?cha|achha|ठीक|अच्छा|चलेगा|चलेगी|कन्फर्म)"
+    r"\s+(?:nahi|nahin|mat|नहीं|मत)(?!\w)",
+    re.IGNORECASE)
+
+
 def sounds_like_agreement(text: str) -> bool:
-    return _AGREE.search(text) is not None
+    return _AGREE.search(_NEGATED.sub(" ", text)) is not None
 
 
 # WRITE tool: the driver says no to the held slot. Release it and hold the next one they have not been offered.
