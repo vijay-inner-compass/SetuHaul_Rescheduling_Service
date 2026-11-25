@@ -6,7 +6,7 @@ from __future__ import annotations
 import html
 import json
 import sqlite3
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
@@ -230,14 +230,14 @@ def _board_section(board: dict[str, Any] | None, options: list[tuple[str, str]],
             f"<h3>Waiting for partner reply</h3>{waiting}</section>")
 
 
-def _messages_section(conn: sqlite3.Connection, user: User) -> str:
+def _messages_section(conn: sqlite3.Connection, user: User, now: datetime) -> str:
     cases = [c for c in (get_case(conn, i) for i in case_ids_in_scope(conn, user, ("OPEN", "CLAIMED"))) if c is not None]
     case_rows = [[esc(c.case_id), esc(c.status), esc(c.reason_code), esc(c.summary), esc(c.shipment_id or ""),
                   esc(claim_label(conn, c.claimed_by) or "")] for c in cases]
     reqs = [[esc(r["request_ref"]), esc(r["facility_id"]), esc(r["shipment_id"]), esc(r["status"]), esc(r["email_status"]),
              esc(f"{r['proposed_start']} - {r['proposed_end']}")] for r in partner_requests_in_scope(conn, user)]
     chats = []
-    for d in driver_chats_in_scope(conn, user):
+    for d in driver_chats_in_scope(conn, user, now):
         lines = "".join(f"<li><span class=\"role\">{esc(m['role'])}</span> {esc(m['text'])} <time>{esc(m['timestamp'])}</time></li>"
                         for m in d["messages"])
         chats.append(f"<div class=\"chat\"><h4>{esc(d['driver_name'])} ({esc(d['driver_id'])})</h4><ul>{lines}</ul></div>")
@@ -252,7 +252,7 @@ def _messages_section(conn: sqlite3.Connection, user: User) -> str:
 
 def _projects_section(conn: sqlite3.Connection, user: User, today: date, facility_options: list[tuple[str, str]]) -> str:
     # Drivers who may be allocated: in the user's scope and eligible to work today.
-    eligible = [(r["driver_id"], f"{r['driver_id']} - {r['driver_name']}") for r in drivers_in_scope(conn, user)
+    eligible = [(r["driver_id"], f"{r['driver_id']} - {r['driver_name']}") for r in drivers_in_scope(conn, user, today)
                 if onboarding.driver_eligible(conn, r["driver_id"], today)]
     rows = []
     for p in projects.list_projects(conn, user):
@@ -322,7 +322,7 @@ def render_warehouse(conn: sqlite3.Connection, user: User, now: Any, facility: s
         if board is None:
             return _message_page("Not found", "No such facility.", 404, user)
     today = now.date()
-    body = (_board_section(board, options, chosen) + _messages_section(conn, user) + _projects_section(conn, user, today, options)
+    body = (_board_section(board, options, chosen) + _messages_section(conn, user, now) + _projects_section(conn, user, today, options)
             + _drivers_section(conn, user, today))
     nav = '<a href="/warehouse">Warehouse</a>' + (' <a href="/admin">Admin</a>' if user.role == "ADMIN" else "")
     return _respond(_layout("Warehouse", body, ("common.js", "warehouse.js"), user, nav))

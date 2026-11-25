@@ -238,15 +238,15 @@ def test_visibility_scoped_per_warehouse(env: Env) -> None:
     projects.allocate(env.conn, actor=env.wh_a, project_id=pa, driver_id="DRV001", clock=env.clock)
     projects.allocate(env.conn, actor=env.wh_b, project_id=pb, driver_id="DRV002", clock=env.clock)
     # Each authority sees only its own project's drivers; the admin sees all.
-    assert projects.visible_driver_ids(env.conn, env.wh_a) == {"DRV001"}
-    assert projects.visible_driver_ids(env.conn, env.wh_b) == {"DRV002"}
-    assert projects.visible_driver_ids(env.conn, env.admin) == {"DRV001", "DRV002"}
+    assert projects.visible_driver_ids(env.conn, env.wh_a, env.clock.now().date()) == {"DRV001"}
+    assert projects.visible_driver_ids(env.conn, env.wh_b, env.clock.now().date()) == {"DRV002"}
+    assert projects.visible_driver_ids(env.conn, env.admin, env.clock.now().date()) == {"DRV001", "DRV002"}
     assert [p["project_id"] for p in projects.list_projects(env.conn, env.wh_a)] == [pa]
     assert [p["project_id"] for p in projects.list_projects(env.conn, env.wh_b)] == [pb]
     assert {p["project_id"] for p in projects.list_projects(env.conn, env.admin)} == {pa, pb}
     # Released drivers drop out of visibility.
     projects.release(env.conn, actor=env.wh_a, project_id=pa, driver_id="DRV001", clock=env.clock)
-    assert projects.visible_driver_ids(env.conn, env.wh_a) == set()
+    assert projects.visible_driver_ids(env.conn, env.wh_a, env.clock.now().date()) == set()
 
 
 def test_no_facilities_sees_nothing(env: Env) -> None:
@@ -254,7 +254,7 @@ def test_no_facilities_sees_nothing(env: Env) -> None:
     projects.allocate(env.conn, actor=env.admin, project_id=pid, driver_id="DRV001", clock=env.clock)
     # Even a project in a facility the user might once have had is invisible when they hold none.
     assert projects.list_projects(env.conn, env.wh_none) == []
-    assert projects.visible_driver_ids(env.conn, env.wh_none) == set()
+    assert projects.visible_driver_ids(env.conn, env.wh_none, env.clock.now().date()) == set()
 
 
 def test_visible_drivers_exclude_unbound_facility_and_non_creator(env: Env) -> None:
@@ -262,10 +262,10 @@ def test_visible_drivers_exclude_unbound_facility_and_non_creator(env: Env) -> N
     pid = env.create(env.wh_a)
     projects.allocate(env.conn, actor=env.wh_a, project_id=pid, driver_id="DRV001", clock=env.clock)
     moved = env.wh_a.model_copy(update={"facilities": (env.fac_b,)})
-    assert projects.visible_driver_ids(env.conn, moved) == set()
+    assert projects.visible_driver_ids(env.conn, moved, env.clock.now().date()) == set()
     # A colleague in the same facility who did not create it does not see its drivers.
     other = env.wh_a.model_copy(update={"user_id": "USR-OTHER"})
-    assert projects.visible_driver_ids(env.conn, other) == set()
+    assert projects.visible_driver_ids(env.conn, other, env.clock.now().date()) == set()
 
 
 def _client(env: Env, tmp_path: Path) -> tuple[TestClient, dict[str, str]]:
