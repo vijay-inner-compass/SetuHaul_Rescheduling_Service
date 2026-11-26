@@ -107,7 +107,8 @@ def _table(headers: tuple[str, ...], rows: list[list[str]], empty: str = "Nothin
         return f'<p class="empty">{esc(empty)}</p>'
     head = "".join(f"<th>{esc(h)}</th>" for h in headers)
     body = "".join("<tr>" + "".join(f"<td>{c}</td>" for c in row) + "</tr>" for row in rows)
-    return f"<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+    # A wide table scrolls inside its own box, so it never widens the page on a narrow screen.
+    return f'<div class="scroll"><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>'
 
 
 def _button(label: str, api: str, body: dict[str, object] | None = None, confirm: str | None = None,
@@ -346,9 +347,9 @@ def _model_figures(conn: sqlite3.Connection, now: datetime) -> str:
           esc(f"{r['input_tokens']} / {r['output_tokens']}"),
           esc("-" if r["cost_usd"] is None else f"${r['cost_usd']:.4f}")] for r in calls],
         "No model calls recorded yet.")
-    return (f'<p>Health: {esc(health)}</p><div class="scroll">{summary}</div>'
-            f'<h3>Per driver message</h3><div class="scroll">{per_message}</div>'
-            f'<h3>Recent messages</h3><div class="scroll">{turns}</div><h3>Recent calls</h3><div class="scroll">{each}</div>')
+    return (f'<p>Health: {esc(health)}</p>{summary}'
+            f'<h3>Per driver message</h3>{per_message}'
+            f'<h3>Recent messages</h3>{turns}<h3>Recent calls</h3>{each}')
 
 
 _LANGSMITH_PANEL = (
@@ -529,9 +530,9 @@ def _board_section(board: dict[str, Any] | None, options: list[tuple[str, str]],
             for p in board["pending_partner"]]
     waiting = _table(("Request", "Order", "Driver", "Proposed"), pend, "No requests are waiting for a partner.")
     return (f'<section id="board" data-panel="board"><h2>Dock board</h2>{selector}'
-            f'<p class="legend">Facility {esc(board["facility"])}, {esc(f"{moment.astimezone(IST):%a %d %b, %H:%M}")}</p>'
+            f'<p class="legend asof">Facility {esc(board["facility"])}, {esc(f"{moment.astimezone(IST):%a %d %b, %H:%M}")}</p>'
             f'<h3>On the bays now</h3><ul class="bays">{bays}</ul>'
-            f'<h3>Today by hour</h3><p class="keys">{legend}</p>{table}<h3>Waiting for partner reply</h3>{waiting}</section>')
+            f'<h3>Today by hour</h3><p class="keys">{legend}</p>{table}<h3>Waiting for partner reply</h3><div class="waiting">{waiting}</div></section>')
 
 
 def _clock(stamp: str) -> str:
@@ -650,7 +651,7 @@ def _facility_requests(conn: sqlite3.Connection, user: User) -> str:
                    + _button("Reject", f"{base}/reject", confirm=f"Refuse the move of {r['order_reference']}?", key=f"reject:{r['request_id']}"))
         rows.append([esc(r["request_id"]), esc(r["driver_name"]), esc(r["order_reference"]), esc(r["origin"]), esc(r["destination"]), actions])
     table = _table(("Request", "Driver", "Order", "From", "To", ""), rows, "No requests are waiting.")
-    return f'<h3>Facility change requests</h3><div class="scroll">{table}</div>'
+    return f'<h3>Facility change requests</h3>{table}'
 
 
 def _messages_section(conn: sqlite3.Connection, user: User, now: datetime) -> str:
@@ -705,7 +706,7 @@ def _projects_section(conn: sqlite3.Connection, user: User, today: date, facilit
               f'<label>Starts on <input name="starts_on" type="date" value="{esc(today.isoformat())}" required></label>'
               '<label>Ends on <input name="ends_on" type="date"></label><button type="submit">Create</button></form>')
     table = _table(("Project", "Customer", "Contract", "Facility", "Status", "Dates", "Drivers"), rows, "No projects yet.")
-    return f'<section id="projects" data-panel="projects"><h2>Projects</h2><div class="scroll">{table}</div>{create}</section>'
+    return f'<section id="projects" data-panel="projects"><h2>Projects</h2><p class="note">This tab does not update by itself. Reload the page to see changes.</p>{table}{create}</section>'
 
 
 def _drivers_section(conn: sqlite3.Connection, user: User, today: date) -> str:
@@ -737,7 +738,7 @@ def _drivers_section(conn: sqlite3.Connection, user: User, today: date) -> str:
            f'<label>Vehicle <select name="vehicle_id" id="vehicle">{vehicle_options}</select></label>'
            '<button type="submit">Add driver</button></form>')
     table = _table(("Driver", "Name", "Phone", "Approval", "Licence valid", "Telegram", ""), rows, "No drivers yet.")
-    return f'<section id="drivers" data-panel="drivers"><h2>Drivers</h2><div class="scroll">{table}</div>{add}</section>'
+    return f'<section id="drivers" data-panel="drivers"><h2>Drivers</h2><p class="note">This tab does not update by itself. Reload the page to see changes.</p>{table}{add}</section>'
 
 
 def render_warehouse(conn: sqlite3.Connection, user: User, now: Any, facility: str | None) -> HTMLResponse:
@@ -766,7 +767,9 @@ def render_warehouse(conn: sqlite3.Connection, user: User, now: Any, facility: s
 
     tabs = _tabs((("board", "Dock board"), ("messages", "Messages"), ("projects", "Projects"), ("shipments", "Shipments"),
                   ("drivers", "Drivers")))
-    body = ('<div class="wh">' + _attention(conn, user, today, board) + tabs
+    # warehouse.js writes how fresh the live parts are here.
+    fresh = '<p class="live" data-live><span data-live-state role="status"></span> <span data-live-time></span></p>'
+    body = ('<div class="wh">' + _attention(conn, user, today, board) + tabs + fresh
             + _board_section(board, options, chosen, now) + _messages_section(conn, user, now)
             + _projects_section(conn, user, today, options) + shipments_section(conn, user, now, options)
             + _drivers_section(conn, user, today) + "</div>")

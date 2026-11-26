@@ -29,7 +29,7 @@
 (function () {
   "use strict";
   // The parts that change on their own. Forms are left alone so nothing being typed is lost.
-  var LIVE = [".wh .attention", "#board .bays", "#board .scroll", "#messages"];
+  var LIVE = [".wh .attention", "#board .asof", "#board .bays", "#board .scroll", "#board .waiting", "#messages"];
   var EVERY_MS = 3000;
   var seen = {};
   // What the server last sent, taken before any script changes the page.
@@ -130,7 +130,10 @@
       var node = document.importNode(fresh, true);
       node.hidden = current.hidden;
       var restore = remember(current);
+      var across = current.scrollLeft;
       current.replaceWith(node);
+      // The hour the reader scrolled the board to stays in view.
+      node.scrollLeft = across;
       // The chat shown is chosen first, so a focused control inside it is visible when focus returns.
       if (sel === "#messages") { reopen(keep); }
       restore(node);
@@ -139,24 +142,60 @@
     if (changed) { reopen(keep); }
   }
 
+  // Say how fresh the live parts are. The state is written only when it changes, so it is announced once.
+  var STALE_MS = 6000;
+  var line = document.querySelector("[data-live]");
+  function freshness(state, stale) {
+    if (!line) { return; }
+    var node = line.querySelector("[data-live-state]");
+    if (node.textContent !== state) { node.textContent = state; }
+    line.classList.toggle("stale", stale);
+  }
+  function updated() {
+    failures = 0;
+    freshness("Live updates on.", false);
+    if (line) { line.querySelector("[data-live-time]").textContent = "Last updated " + new Date().toLocaleTimeString() + "."; }
+  }
+  function paused() {
+    freshness("Updates paused: the service is not answering. Retrying. What you see may be out of date.", true);
+  }
+
   var busy = false;
+  var asked = 0;
+  var failures = 0;
+  updated();
   var timer = window.setInterval(function () {
-    if (document.hidden || busy) { return; }
+    if (document.hidden) { return; }
+    if (busy) {
+      // A request that hangs is as stale as one that fails.
+      if (Date.now() - asked > STALE_MS) { paused(); }
+      return;
+    }
     busy = true;
-    fetch(window.location.pathname + window.location.search, { credentials: "same-origin", redirect: "manual" })
+    asked = Date.now();
+    fetch(window.location.pathname + window.location.search,
+      { credentials: "same-origin", redirect: "manual", signal: AbortSignal.timeout(2 * STALE_MS) })
       .then(function (response) {
         // Signed out or refused: stop asking and say so.
-        if (!response.ok) {
+        if (response.type === "opaqueredirect" || response.status === 401 || response.status === 403) {
           window.clearInterval(timer);
-          window.SH.say("Live updates stopped. Reload the page and sign in again.");
+          freshness("Live updates stopped. Reload the page and sign in again.", true);
           return null;
         }
+        // Any other failure (a busy database, say) is tried again.
+        if (!response.ok) { throw new Error("unavailable"); }
         return response.text();
       })
       .then(function (text) {
-        if (text) { apply(new DOMParser().parseFromString(text, "text/html")); }
+        if (text) {
+          apply(new DOMParser().parseFromString(text, "text/html"));
+          updated();
+        }
       })
-      .catch(function () { /* A dropped request: the next tick tries again. */ })
+      .catch(function () {
+        failures += 1;
+        if (failures >= 2) { paused(); }
+      })
       .then(function () { busy = false; });
   }, EVERY_MS);
 })();
