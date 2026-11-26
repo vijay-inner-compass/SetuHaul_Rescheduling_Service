@@ -67,7 +67,9 @@
   // The words for a refused call. A code with no sentence yet is still named, so it can be reported.
   function reason(status, data) {
     var code = data && typeof data.reason_code === "string" ? data.reason_code : status === 422 ? "INVALID_REQUEST" : "";
-    var text = Object.prototype.hasOwnProperty.call(MESSAGES, code) ? MESSAGES[code] :
+    // A sentence from the server says the most (which dock rule failed, say); then ours; then at least the code.
+    var text = data && typeof data.message === "string" ? data.message :
+      Object.prototype.hasOwnProperty.call(MESSAGES, code) ? MESSAGES[code] :
       "The request was refused (" + (code || status) + "). Nothing was changed.";
     // A claim lost to someone else names them (a web identity is "web:" plus their email).
     if (code === "ALREADY_CLAIMED" && data.claimed_by) {
@@ -93,7 +95,8 @@
         return;
       }
     }
-    var box = holder.querySelector(":scope > .action-note");
+    // A form that has its own place for the answer gets it there.
+    var box = holder.querySelector("[data-form-result]") || holder.querySelector(":scope > .action-note");
     if (!box) {
       box = document.createElement("p");
       box.className = "action-note";

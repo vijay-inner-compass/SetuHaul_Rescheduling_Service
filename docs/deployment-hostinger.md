@@ -147,7 +147,7 @@ docker exec -it setuhaul-app-1 python scripts/set_admin_password.pyc you@example
 ## Limits
 
 - Run **one** application container: SQLite, and a second copy could send duplicate Telegram notices.
-- The data is the dated sample (August 2026): with the real clock its slots are in the past, and delay requests go to a person
-  because labour and consignee evidence is missing.
+- The supplied data is the dated sample (August 2026): with the real clock its slots are in the past, and delay requests on those
+  shipments go to a person. Shipments created on **Warehouse > Shipments**, with availability opened there, can be booked.
 - Partner email in live mode also needs the jobs in `src/setuhaul/jobs/` scheduled; this set-up does not schedule them.
 - Never run `docker compose down -v` or prune volumes: that deletes the database.

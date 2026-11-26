@@ -118,3 +118,12 @@ def test_a_partner_facility_is_refused(world: World) -> None:
     query(world, "update facilities set is_partner=1 where facility_id='FAC-JAI-01'")
     with pytest.raises(AuthError, match="PARTNER_FACILITY"):
         open_av(world, dock_ids=[D1])
+
+
+def test_slots_outside_a_days_recorded_labour_are_not_added(world: World) -> None:
+    open_av(world)
+    again = open_av(world, from_time="12:00", to_time="16:00")
+    assert again.slots_created == 0 and again.days_unchanged == [DAY] and again.slots_skipped == 3
+    assert count(world, "appointment_slots", f"slot_start_ts>='{DAY}T13:00' and slot_start_ts<'{DAY}T16:00' and dock_id='{D1}'") == 0
+    # Another dock inside the recorded hours is still added.
+    assert open_av(world, dock_ids=["DOCK-JAI-D2"]).slots_created == 4

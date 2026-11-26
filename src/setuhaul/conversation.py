@@ -327,7 +327,7 @@ def _handle(
         # First time: remember that we asked.
         mem.save_structured_state(driver_id, thread_id, state.model_copy(update={"language_prompts": 1}))
         return _persist(services, driver_id, thread_id, ConversationReply(
-            text=LANGUAGE_PROMPT + ("\n" + say("order_waiting", "en") if order_check.has_waiting(services.conn, driver_id) else ""),
+            text=LANGUAGE_PROMPT + (("\n" + say(key, "en")) if (key := order_check.prompt_key(services.conn, driver_id)) else ""),
             language="unknown", status="LANGUAGE_PROMPT"))
     # The language to reply in.
     lang = str(det.language) if det.language in LANGS else (state.language or "en")
@@ -456,8 +456,9 @@ def _finalize(
         parts.insert(0, say("hold_expired", lang))
 
     # The system, not the model, asks for the order number.
-    if order_check.has_waiting(conn, driver_id):
-        parts.append(say("order_waiting", lang))
+    prompt = order_check.prompt_key(conn, driver_id)
+    if prompt:
+        parts.append(say(prompt, lang))
 
     # Assemble the reply.
     reply = ConversationReply(

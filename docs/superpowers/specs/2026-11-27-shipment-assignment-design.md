@@ -86,7 +86,8 @@ conversation. It therefore applies to the HMAC channel too.
 | A fifth wrong number | Their waiting shipments lock and a case opens. Fixed reply: contact the warehouse. |
 | Anything else | The normal conversation, so breakdowns and requests for a person still work. A fixed line is added asking for the order number. |
 
-- A message with several order numbers confirms every one that matches; it counts as a wrong attempt only if none do.
+- A message with several order numbers confirms every one that matches. Every different number that matches none of the
+  driver's orders is one wrong attempt, and if they reach five nothing in that message confirms (changed after review).
 - A locked shipment cannot be confirmed, even with the right number, until the warehouse unlocks it.
 - The model is told only that a shipment is waiting for its order number: no identifier, number, destination or time.
 - A number the driver has already confirmed is not an attempt; the message goes to the normal conversation.
