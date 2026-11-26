@@ -84,6 +84,26 @@ def test_ready_when_everything_is_up_and_not_ready_without_the_cache(env, monkey
     assert r.status_code == 503 and r.json()["reason_code"] == "CACHE_UNAVAILABLE" and "redis down" not in r.text
 
 
+def test_health_ready_is_the_same_check_as_ready(env) -> None:  # type: ignore[no-untyped-def]
+    deps, client, *_ = env
+    assert client.get("/health/ready").json()["ready"] is True
+    deps.db_path = deps.db_path.parent / "missing.sqlite3"
+    r = client.get("/health/ready")
+    assert r.status_code == 503 and r.json()["reason_code"] == "DATABASE_UNAVAILABLE"
+
+
+@pytest.mark.parametrize(("stamped", "reported"), [("e202c90abc", "e202c90abc"), (None, "unknown"), ("", "unknown")])
+def test_version_names_the_commit_the_image_was_built_from(  # type: ignore[no-untyped-def]
+        env, monkeypatch: pytest.MonkeyPatch, stamped: str | None, reported: str) -> None:
+    _, client, *_ = env
+    if stamped is None:
+        monkeypatch.delenv("GIT_COMMIT", raising=False)
+    else:
+        monkeypatch.setenv("GIT_COMMIT", stamped)
+    r = client.get("/version")
+    assert r.status_code == 200 and r.json() == {"commit": reported}
+
+
 # --- signature, identity, validation --------------------------------------------------------------------
 def test_bad_or_missing_signature_is_refused_before_the_body_is_parsed(env) -> None:  # type: ignore[no-untyped-def]
     _, client, calls, *_ = env

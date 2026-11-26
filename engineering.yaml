@@ -1,0 +1,27 @@
+schemaVersion: 1
+
+project:
+  id: setuhaul
+  name: SetuHaul
+  repository:
+    type: git
+    mainBranch: main
+
+# "Build latest, then deploy" runs the fast pipeline, so fast runs every check too. Commands are for the Mac that runs ForgeCI.
+pipelines:
+  fast:
+    description: "Lint, types and tests"
+    command: python3.12 -m venv .venv && .venv/bin/pip install -q -e ".[dev]" && .venv/bin/ruff check . && .venv/bin/mypy src && .venv/bin/python -m pytest --junitxml=.engineering/results/junit.xml
+    timeout: 900
+  full:
+    description: "Lint, types and tests"
+    command: python3.12 -m venv .venv && .venv/bin/pip install -q -e ".[dev]" && .venv/bin/ruff check . && .venv/bin/mypy src && .venv/bin/python -m pytest --junitxml=.engineering/results/junit.xml
+    timeout: 900
+
+results:
+  directory: .engineering/results
+
+quality:
+  tests:
+    required: true
+    allowFailures: 0

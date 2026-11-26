@@ -1,0 +1,11 @@
+# Send only what the image needs; .env and the local databases can never be copied in.
+*
+!pyproject.toml
+!docs/requirements-lock.txt
+!src
+!migrations
+!data/setuhaul.sqlite3
+!deploy/start.py
+!scripts/set_admin_password.py
+**/__pycache__
+**/*.pyc

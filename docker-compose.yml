@@ -1,0 +1,22 @@
+# Used on the server together with a server-only compose.server.yml (docs/deployment-hostinger.md).
+name: setuhaul
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # .db matters: the server backup takes a consistent copy of files with that ending only.
+      SETUHAUL_DB_PATH: /app/state/setuhaul.db
+      SETUHAUL_REDIS_URL: redis://redis:6379/0
+      SETUHAUL_FALLBACK_ESCALATIONS: /app/state/escalations-fallback.jsonl
+      SETUHAUL_RUN_MAINTENANCE: "1"
+    volumes:
+      - state:/app/state
+    depends_on:
+      - redis
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+volumes:
+  state:
