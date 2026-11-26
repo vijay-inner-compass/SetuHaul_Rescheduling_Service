@@ -124,9 +124,9 @@ Owner setup (Google Cloud client, BotFather, `setWebhook`) and the known limitat
 [running-and-demonstrating.md](docs/running-and-demonstrating.md#7a-sign-in-roles-and-the-telegram-bot). Evidence:
 `docs/verification/auth-roles-run.md` (fake Google and Telegram). Google sign-in has never been run against Google; Telegram was tried once with a real bot.
 
-## Assigning a shipment
+## Shipments and the Dock Access Pass
 
-On **Warehouse > Shipments**: open availability for the facility and dates, then create the shipment with its order number (`ORD` followed by at least six digits) and driver. The driver sends that number to the bot once; until then the bot cannot show or book the shipment. After five wrong numbers it locks until **Unlock**. Change driver and Cancel work only before the driver confirms.
+On **Warehouse > Shipments**: open availability, then create the shipment with its order number and driver. The bot sends the driver a **Dock Access Pass**, which they send back once before the bot will show or book the shipment. A **Security** user checks the pass, vehicle and licence on the **Gate** screen to check the truck in and out. See [docs/dock-access-pass.md](docs/dock-access-pass.md).
 
 ## Layout
 ```

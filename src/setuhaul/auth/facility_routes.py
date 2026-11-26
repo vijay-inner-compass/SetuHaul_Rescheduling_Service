@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from setuhaul import facility_change
+from setuhaul import facility_change, passes
 from setuhaul.auth.authz import facility_clause, require_role
 from setuhaul.auth.http import reject
 from setuhaul.auth.users import User
@@ -59,6 +59,13 @@ def register_facility_routes(app: FastAPI, deps: Any) -> None:
                 logging.getLogger(__name__).exception("facility change follow-up failed for %s", request_id)
                 facility_change.abandon(conn, deps.clock, request_id, "FOLLOW_UP_FAILED")
                 outcome = "NO_SLOT"
+            # The old pass stopped working with the move; send the new one now rather than at the next sweep.
+            try:
+                from setuhaul.api import telegram_in_force
+
+                passes.send_pending(conn, telegram_in_force(deps)[1], deps.clock)
+            except Exception:
+                logging.getLogger(__name__).exception("sending the new pass failed for %s", request_id)
             return JSONResponse({"status": "APPROVED", "request_id": request_id, "outcome": outcome})
         finally:
             conn.close()

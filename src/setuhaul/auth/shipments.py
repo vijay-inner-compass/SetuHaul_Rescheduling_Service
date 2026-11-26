@@ -14,6 +14,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from setuhaul import passes
 from setuhaul.auth import audit
 from setuhaul.auth.authz import facility_clause, facility_ids
 from setuhaul.auth.onboarding import driver_eligible
@@ -175,8 +176,11 @@ def _driver(conn: sqlite3.Connection, actor: User, driver_id: str, vehicle_id: s
     return carrier
 
 
-def create_shipment(conn: sqlite3.Connection, *, actor: User, data: NewShipment, clock: Clock) -> str:
-    """The shipment, its planned appointment, the receiver's commitment and the pending assignment, or nothing at all."""
+def create_shipment(conn: sqlite3.Connection, *, actor: User, data: NewShipment, clock: Clock) -> tuple[str, str]:
+    """The shipment, its planned appointment, the receiver's commitment, the pending assignment and its pass, or nothing at all.
+
+    Returns the id and the pass code, which exists nowhere else: the caller delivers it.
+    """
     if not is_valid(data.order_number):
         raise AuthError("BAD_ORDER_NUMBER")
     order = data.order_number.strip().upper()
@@ -224,10 +228,17 @@ def create_shipment(conn: sqlite3.Connection, *, actor: User, data: NewShipment,
         audit.record(conn, actor_user_id=actor.user_id, actor_email=actor.email, action="SHIPMENT_CREATED", target_type="shipment",
                      target_id=shipment_id, outcome="OK", ip=None,
                      detail={"driver_id": data.driver_id, "facility_id": data.facility_id}, clock=clock)
-    return shipment_id
+        code = passes.issue(conn, shipment_id, clock, actor)
+    return shipment_id, code
 
 
 # ---- list and manage -----------------------------------------------------------------------------------
+def _pass_columns(conn: sqlite3.Connection, shipment_id: str) -> dict[str, Any]:
+    row, visit = passes.state_for(conn, shipment_id), passes.visit_for(conn, shipment_id)
+    return {"pass_state": row["status"] if row else None, "delivered": bool(row and row["delivered_at"]),
+            "visit_state": visit["status"] if visit else None}
+
+
 def list_shipments(conn: sqlite3.Connection, user: User) -> list[dict[str, Any]]:
     """Shipments created in the app and bound for the user's facilities (an admin: all), newest first."""
     clause, params = facility_clause(user, "s.destination_facility_id")
@@ -245,7 +256,7 @@ def list_shipments(conn: sqlite3.Connection, user: User) -> list[dict[str, Any]]
         else:
             state = "CONFIRMED" if r["confirmed_at"] else ("LOCKED" if r["locked_at"] else "WAITING")
         out.append({k: r[k] for k in ("shipment_id", "order_reference", "driver_id", "driver_name", "facility_id", "planned_start")}
-                   | {"state": state})
+                   | {"state": state} | _pass_columns(conn, r["shipment_id"]))
     return out
 
 
@@ -275,8 +286,8 @@ def _record(conn: sqlite3.Connection, actor: User, action: str, shipment_id: str
                  target_id=shipment_id, outcome="OK", ip=None, detail=detail, clock=clock)
 
 
-def change_driver(conn: sqlite3.Connection, *, actor: User, shipment_id: str, driver_id: str, vehicle_id: str, clock: Clock) -> None:
-    """Give an unconfirmed shipment to another driver, who starts with no wrong attempts."""
+def change_driver(conn: sqlite3.Connection, *, actor: User, shipment_id: str, driver_id: str, vehicle_id: str, clock: Clock) -> str:
+    """Give an unconfirmed shipment to another driver, who starts with no wrong attempts. Returns their new pass code."""
     with immediate(conn):
         _unconfirmed(conn, actor, shipment_id)
         carrier = _driver(conn, actor, driver_id, vehicle_id, clock.now().astimezone(IST).date())
@@ -284,6 +295,8 @@ def change_driver(conn: sqlite3.Connection, *, actor: User, shipment_id: str, dr
                      (driver_id, vehicle_id, carrier, clock.now().isoformat(), shipment_id))
         conn.execute("update shipment_assignments set failed_attempts=0, locked_at=null where shipment_id=?", (shipment_id,))
         _record(conn, actor, "SHIPMENT_DRIVER_CHANGED", shipment_id, clock, {"driver_id": driver_id})
+        code = passes.issue(conn, shipment_id, clock, actor)
+    return code
 
 
 def cancel_shipment(conn: sqlite3.Connection, *, actor: User, shipment_id: str, clock: Clock) -> None:
@@ -301,6 +314,7 @@ def cancel_shipment(conn: sqlite3.Connection, *, actor: User, shipment_id: str, 
             append_appointment_event(
                 conn, appt["appointment_id"], shipment_id, "APPOINTMENT_CANCELLED", from_status=appt["appointment_status"],
                 to_status="CANCELLED", actor_type="WAREHOUSE", actor_id=actor.user_id, reason="SHIPMENT_CANCELLED", occurred_at=now)
+        passes.cancel(conn, shipment_id, clock)
         conn.execute("update shipments set current_status='CANCELLED', updated_at=? where shipment_id=?", (stamp, shipment_id))
         _record(conn, actor, "SHIPMENT_CANCELLED", shipment_id, clock)
 

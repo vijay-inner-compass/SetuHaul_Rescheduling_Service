@@ -11,6 +11,7 @@ import time
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
+from setuhaul import passes
 from setuhaul.auth import telegram
 from setuhaul.auth.onboarding import driver_eligible
 from setuhaul.clock import Clock
@@ -141,6 +142,8 @@ class DriverNoticeRunner:
                 return None
             conn = self._factory()
             try:
+                # A warehouse move revokes the old pass; the replacement goes out from here, where the bot is.
+                passes.send_pending(conn, client, self._clock)
                 return send_driver_notifications(conn, self._clock, client, not_before=self._not_before)
             finally:
                 conn.close()

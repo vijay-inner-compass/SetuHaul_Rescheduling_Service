@@ -9,11 +9,13 @@ from datetime import UTC, datetime, timedelta
 
 from setuhaul.auth import audit
 from setuhaul.auth.authz import facility_ids
+from setuhaul.auth.telegram import TelegramClient, TelegramSendError, bound_chat
 from setuhaul.auth.users import User
 from setuhaul.clock import Clock
 from setuhaul.db import immediate, parse_operational_timestamp
 from setuhaul.dock_pass import hash_code, new_code
 from setuhaul.identity import AuthError
+from setuhaul.language import say
 
 # A pass in one of these states still stands for its visit.
 LIVE = "('ISSUED','VALIDATED','ACTIVE','COMPLETED')"
@@ -130,6 +132,39 @@ def sync_window(conn: sqlite3.Connection, shipment_id: str, clock: Clock) -> Non
         record(conn, None, "PASS_WINDOW_MOVED", shipment_id, clock, detail={"from": start, "until": end})
 
 
+def move_warehouse(conn: sqlite3.Connection, shipment_id: str, clock: Clock) -> None:
+    """The shipment now goes elsewhere: the visit follows and the old code stops working. Call inside the transaction.
+
+    A new code is sent by `send_pending`, from wherever there is a Telegram client.
+    """
+    visit = visit_for(conn, shipment_id)
+    if visit is None or visit["status"] != "EXPECTED":
+        return
+    warehouse = conn.execute("select destination_facility_id from shipments where shipment_id=?", (shipment_id,)).fetchone()[0]
+    conn.execute("update truck_visits set warehouse_id=?, row_version=row_version+1 where truck_visit_id=?",
+                 (warehouse, visit["truck_visit_id"]))
+    if _end_live(conn, visit["truck_visit_id"], "REVOKED", "WAREHOUSE_CHANGED", clock):
+        record(conn, None, "PASS_REVOKED", shipment_id, clock, detail={"reason": "WAREHOUSE_CHANGED"})
+
+
+def send_pending(conn: sqlite3.Connection, client: TelegramClient | None, clock: Clock) -> int:
+    """Send a new pass for each shipment whose pass was revoked by a warehouse move. Partner warehouses issue none."""
+    rows = conn.execute(
+        "select s.shipment_id from shipments s join facilities f on f.facility_id=s.destination_facility_id"
+        " join visit_shipments v using(shipment_id) join truck_visits t using(truck_visit_id)"
+        " join dock_access_authorizations p on p.rowid=(select max(q.rowid) from dock_access_authorizations q"
+        " where q.truck_visit_id=t.truck_visit_id) where p.status='REVOKED' and p.revocation_reason='WAREHOUSE_CHANGED'"
+        " and t.status='EXPECTED' and f.is_partner=0 and s.current_status<>'CANCELLED'").fetchall()
+    count = 0
+    for r in rows:
+        try:
+            send_new(conn, client, actor=None, shipment_id=r["shipment_id"], clock=clock)
+            count += 1
+        except AuthError:
+            continue
+    return count
+
+
 def revoke(conn: sqlite3.Connection, *, actor: User, shipment_id: str, reason: str, clock: Clock) -> None:
     if not reason.strip():
         raise AuthError("REASON_REQUIRED")
@@ -150,6 +185,57 @@ def cancel(conn: sqlite3.Connection, shipment_id: str, clock: Clock) -> None:
     conn.execute("update truck_visits set status='CANCELLED', row_version=row_version+1 where truck_visit_id=? and status='EXPECTED'",
                  (visit["truck_visit_id"],))
     record(conn, None, "PASS_CANCELLED", shipment_id, clock)
+
+
+def _language(conn: sqlite3.Connection, driver_id: str) -> str:
+    # The language the driver last wrote in, if they have written.
+    row = conn.execute("select json_extract(state_json, '$.language') from conversation_state where driver_id=?"
+                       " order by updated_at desc limit 1", (driver_id,)).fetchone()
+    return str(row[0]) if row and row[0] else "en"
+
+
+def deliver(conn: sqlite3.Connection, client: TelegramClient | None, shipment_id: str, code: str, clock: Clock) -> bool:
+    """Send the code to the driver's linked chat. Call outside a transaction: it talks to the network."""
+    ship = conn.execute("select driver_id, order_reference from shipments where shipment_id=?", (shipment_id,)).fetchone()
+    chat_id = bound_chat(conn, ship["driver_id"])
+    reason = None
+    if client is None:
+        reason = "NOT_CONFIGURED"
+    elif chat_id is None:
+        reason = "DRIVER_NOT_LINKED"
+    else:
+        try:
+            client.send(chat_id, say("pass_delivery", _language(conn, ship["driver_id"]), order=ship["order_reference"], code=code))
+        except TelegramSendError:
+            reason = "SEND_FAILED"
+    with immediate(conn):
+        if reason is None:
+            conn.execute("update dock_access_authorizations set delivered_at=? where token_hash=?", (utc(clock.now()), hash_code(code)))
+        record(conn, None, "PASS_DELIVERED" if reason is None else "PASS_DELIVERY_FAILED", shipment_id, clock,
+               "OK" if reason is None else "FAILED", {"reason": reason} if reason else None)
+    return reason is None
+
+
+def send_new(conn: sqlite3.Connection, client: TelegramClient | None, *, actor: User | None, shipment_id: str, clock: Clock) -> bool:
+    """Replace the shipment's pass and send it. When a person asks (lost or compromised), the driver must send it back again."""
+    with immediate(conn):
+        code = issue(conn, shipment_id, clock, actor)
+        if actor is not None:
+            conn.execute("update shipment_assignments set confirmed_at=null, failed_attempts=0, locked_at=null where shipment_id=?",
+                         (shipment_id,))
+    return deliver(conn, client, shipment_id, code, clock)
+
+
+def send_waiting(conn: sqlite3.Connection, client: TelegramClient | None, driver_id: str, clock: Clock) -> None:
+    """A driver has just linked Telegram: send a pass for each shipment still waiting for them."""
+    rows = conn.execute("select s.shipment_id from shipments s join shipment_assignments a using(shipment_id)"
+                        " where s.driver_id=? and a.confirmed_at is null and s.current_status<>'CANCELLED'", (driver_id,)).fetchall()
+    for r in rows:
+        try:
+            send_new(conn, client, actor=None, shipment_id=r["shipment_id"], clock=clock)
+        except AuthError:
+            # No appointment or a visit under way: nothing to send for that one.
+            continue
 
 
 def expire_due(conn: sqlite3.Connection, clock: Clock) -> int:
