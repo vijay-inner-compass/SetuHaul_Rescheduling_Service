@@ -7,15 +7,16 @@ project:
     type: git
     mainBranch: main
 
-# "Build latest, then deploy" runs the fast pipeline, so fast runs every check too. Commands are for the Mac that runs ForgeCI.
+# "Build latest, then deploy" runs the fast pipeline, so fast runs every check too.
+# "py" is the Windows launcher: where ForgeCI runs on macOS or Linux, use "python3.12 scripts/ci.py".
 pipelines:
   fast:
     description: "Lint, types and tests"
-    command: python3.12 -m venv .venv && .venv/bin/pip install -q -e ".[dev]" && .venv/bin/ruff check . && .venv/bin/mypy src && .venv/bin/python -m pytest --junitxml=.engineering/results/junit.xml
+    command: py -3.12 scripts/ci.py
     timeout: 900
   full:
     description: "Lint, types and tests"
-    command: python3.12 -m venv .venv && .venv/bin/pip install -q -e ".[dev]" && .venv/bin/ruff check . && .venv/bin/mypy src && .venv/bin/python -m pytest --junitxml=.engineering/results/junit.xml
+    command: py -3.12 scripts/ci.py
     timeout: 900
 
 results:
