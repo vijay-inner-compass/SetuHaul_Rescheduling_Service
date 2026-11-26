@@ -51,6 +51,7 @@ token and webhook secret, from the next message. **Register webhook** there repl
   holds the keys and the means to decrypt them.
 - Losing or changing `SETUHAUL_SETTINGS_KEY` means entering the saved keys again; until then the model is treated as unavailable
   if its saved key cannot be read.
+- Saving a different bot's token also makes a new webhook secret, so the old bot is no longer accepted. Press **Register webhook**.
 - Every save, reset and test is in the audit log, without key values. Any admin can replace keys or switch tracing on.
 
 ## 2. `compose.server.yml`
