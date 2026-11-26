@@ -29,11 +29,12 @@
 (function () {
   "use strict";
   var tabs = document.querySelectorAll(".tabs a[data-tab]");
-  var panels = document.querySelectorAll("[data-panel]");
   if (!tabs.length) {
     return;
   }
   function show() {
+    // Looked up each time: the live refresh replaces whole sections.
+    var panels = document.querySelectorAll("[data-panel]");
     var wanted = window.location.hash.slice(1);
     var known = Array.prototype.some.call(panels, function (p) { return p.getAttribute("data-panel") === wanted; });
     var key = known ? wanted : "board";
