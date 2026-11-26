@@ -79,15 +79,22 @@ setuhaul.yuktelos.com {
 
 ## 4. Backup and status scripts (Pravetra repository, `deploy/hostinger`)
 
-Both hold fixed lists of applications. Without these changes a deployment passes while SetuHaul is neither backed up nor checked.
+Both hold fixed lists of applications. Until they list SetuHaul, it is neither backed up nor checked. Both run for **every**
+application's deployment, so a wrong entry blocks the others too. The two are changed at different times.
 
-1. **First**, on the server: `docker volume create setuhaul_state`. The backup fails on a missing volume, which would block every
-   application's deployment.
-2. `backup-now.sh`: add `setuhaul_state:setuhaul` to the volumes, and `/opt/apps/setuhaul/.env` and
+**Before the first deployment: backup.** Do these in order.
+
+1. Create `.env` and `compose.server.yml` (sections 1 and 2).
+2. On the server: `docker volume create setuhaul_state`. The backup fails on a missing volume.
+3. `backup-now.sh`: add `setuhaul_state:setuhaul` to the volumes, and `/opt/apps/setuhaul/.env` and
    `/opt/apps/setuhaul/compose.server.yml` to the configuration files.
-3. `status.sh`: add the container `setuhaul-app-1`, the certificate host and the public check
-   `https://setuhaul.yuktelos.com/ready`.
-4. Confirm how a changed script reaches the server (it was linked into Pravetra's folder, and Pravetra now deploys images).
+
+**After the first deployment is running: status.**
+
+4. `status.sh`: add the container `setuhaul-app-1`, the certificate host and the public check
+   `https://setuhaul.yuktelos.com/ready`. Added any earlier, the check fails because SetuHaul is not running yet.
+
+Confirm how a changed script reaches the server (it was linked into Pravetra's folder, and Pravetra now deploys images).
 
 ## 5. ForgeCI `config/forgeci.yaml`
 
@@ -112,16 +119,21 @@ Add `setuhaul: {}` under `builds.isolated`, and this target:
       build_images: setuhaul=Dockerfile
 ```
 
-`engineering.yaml` expects `python3.12` on the build machine.
+`engineering.yaml` runs `py -3.12 scripts/ci.py`, so the build machine needs Windows with Python 3.12. If ForgeCI runs on macOS or
+Linux, change both commands to `python3.12 scripts/ci.py`.
 
 ## 6. First deployment
 
-1. Push the commit; add the project in ForgeCI (**+ Add Project**, From GitHub); run a Full build.
-2. Take a Hostinger snapshot.
-3. A first image deployment uses ForgeCI's two steps or **Build latest, then deploy** with the `hostinger-setuhaul` target.
-4. Check `/health/ready` and `/version` from outside.
-5. Add `https://setuhaul.yuktelos.com/auth/callback` to the Google OAuth client, and register the Telegram webhook if used
-   (section 7a of [running-and-demonstrating.md](running-and-demonstrating.md)).
+Before it: sections 1 to 3, steps 1 to 3 of section 4, and the target in section 5.
+
+1. Add `https://setuhaul.yuktelos.com/auth/callback` to the Google OAuth client.
+2. Push the commit; add the project in ForgeCI (**+ Add Project**, From GitHub); run a Full build.
+3. Take a Hostinger snapshot.
+4. A first image deployment uses ForgeCI's two steps or **Build latest, then deploy** with the `hostinger-setuhaul` target.
+5. Check `/health/ready` and `/version` from outside.
+6. Add SetuHaul to `status.sh` (section 4, step 4).
+7. Sign in as the bootstrap admin. Under **Admin > Configuration**, press **Test connection**; for Telegram, save the token and
+   secret, then press **Test bot** and **Register webhook**.
 
 There is no earlier release to roll back to, so leave auto-deploy off.
 
