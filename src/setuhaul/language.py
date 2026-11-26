@@ -363,6 +363,27 @@ T: dict[str, dict[str, str]] = {
         "hi": "मैं यह साझा नहीं कर सकता। मैं आपके डिलीवरी स्लॉट में मदद कर सकता हूँ: बताइए क्या हो रहा है।",
         "hinglish": "Main yeh share nahi kar sakta. Main aapke delivery slot mein madad kar sakta hoon: bataiye kya ho raha hai.",
     },
+    # An assigned shipment: the driver confirms it with the order number before anything else.
+    "order_confirmed": {
+        "en": "Order {order} is confirmed. Deliver to {facility}, planned {when}. How can I help?",
+        "hi": "ऑर्डर {order} कन्फर्म हो गया है। डिलीवरी {facility} पर, तय समय {when}। मैं कैसे मदद करूँ?",
+        "hinglish": "Order {order} confirm ho gaya hai. Delivery {facility} par, planned {when}. Main kaise madad karun?",
+    },
+    "order_mismatch": {
+        "en": "That order number does not match. Please check it and send it again.",
+        "hi": "यह ऑर्डर नंबर मेल नहीं खाता। कृपया जाँचकर दोबारा भेजें।",
+        "hinglish": "Yeh order number match nahi karta. Check karke dobara bhejiye.",
+    },
+    "order_locked": {
+        "en": "I cannot confirm that order. Please contact your warehouse.",
+        "hi": "मैं यह ऑर्डर कन्फर्म नहीं कर सकता। कृपया अपने वेयरहाउस से संपर्क करें।",
+        "hinglish": "Main yeh order confirm nahi kar sakta. Apne warehouse se sampark kijiye.",
+    },
+    "order_waiting": {
+        "en": "A shipment is waiting for you. Send its order number to confirm it.",
+        "hi": "एक शिपमेंट आपका इंतज़ार कर रही है। कन्फर्म करने के लिए उसका ऑर्डर नंबर भेजें।",
+        "hinglish": "Ek shipment aapka intezaar kar rahi hai. Confirm karne ke liye uska order number bhejiye.",
+    },
 }
 
 

@@ -334,7 +334,13 @@ class ConversationMemoryStore:
                 state = state.model_copy(update={"hold": None, "pending_events": [*state.pending_events, event]})
                 self.save_structured_state(driver_id, thread_id, state)
         # Always refresh the list of active shipments from the database, never from cache.
-        live = state.model_copy(update={"active_shipment_ids": self._active_shipments(driver_id)})
+        update: dict[str, Any] = {"active_shipment_ids": self._active_shipments(driver_id)}
+        # A remembered selection is dropped while that shipment waits for its order number.
+        if state.selected_shipment_id is not None and self._db.execute(
+                "select 1 from shipment_assignments where shipment_id=? and confirmed_at is null",
+                (state.selected_shipment_id,)).fetchone() is not None:
+            update["selected_shipment_id"] = None
+        live = state.model_copy(update=update)
         return ConversationContext(
             driver_id=driver_id,
             thread_id=thread_id,

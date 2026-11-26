@@ -146,6 +146,7 @@ REASON_TEXT = {
     "MODEL_LOOP_LIMIT": "The assistant hit its safety limit", "LANGUAGE_UNSUPPORTED": "Unsupported language",
     "CANCELLATION_CUTOFF": "Cancellation too close to the slot", "CUSTOMER_COMMITMENT": "Customer commitment at stake",
     "CUSTOMER_COMMITMENT_UNKNOWN": "Customer commitment unknown", "DRIVER_REQUESTED": "Driver asked for a person",
+    "ORDER_CONFIRMATION_LOCKED": "Order number not confirmed",
     "OTHER_UNCERTAINTY": "The assistant was unsure",
 }
 

@@ -28,7 +28,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 # Reads facts of committed holds and confirmations.
-from setuhaul import facility_change
+from setuhaul import facility_change, order_check
 from setuhaul.booking import confirmed_appointment_facts, get_hold
 
 # Injectable clock.
@@ -327,7 +327,9 @@ def _handle(
         # First time: remember that we asked.
         mem.save_structured_state(driver_id, thread_id, state.model_copy(update={"language_prompts": 1}))
         return _persist(services, driver_id, thread_id, ConversationReply(
-            text=LANGUAGE_PROMPT, language="unknown", status="LANGUAGE_PROMPT"))
+            text=LANGUAGE_PROMPT + ("
+" + say("order_waiting", "en") if order_check.has_waiting(services.conn, driver_id) else ""),
+            language="unknown", status="LANGUAGE_PROMPT"))
     # The language to reply in.
     lang = str(det.language) if det.language in LANGS else (state.language or "en")
     # A new language was detected: remember it.
@@ -343,7 +345,11 @@ def _handle(
     # The tool checkpoints for this message.
     registry = ToolRegistry(tctx)
     # The prompt (with system facts) plus conversation.
-    messages = _to_model_messages(build_system_prompt(_facts(ctx, services, clock, lang)), ctx)
+    facts = _facts(ctx, services, clock, lang)
+    # Only that something is waiting: no id, number, destination or time. Absent otherwise.
+    if order_check.has_waiting(services.conn, driver_id):
+        facts["shipment_waiting_for_order_number"] = True
+    messages = _to_model_messages(build_system_prompt(facts), ctx)
     # Time the model loop.
     with start_span("model.loop", rctx, exporter=services.exporter) as span:
         # Run the model with its caps: rounds, tool executions, deadline and cost.
@@ -449,6 +455,10 @@ def _finalize(
     # If a hold lapsed while the driver was away, say so first, once.
     if any(e.type == "HOLD_EXPIRED" for e in ctx.events):
         parts.insert(0, say("hold_expired", lang))
+
+    # The system, not the model, asks for the order number.
+    if order_check.has_waiting(conn, driver_id):
+        parts.append(say("order_waiting", lang))
 
     # Assemble the reply.
     reply = ConversationReply(

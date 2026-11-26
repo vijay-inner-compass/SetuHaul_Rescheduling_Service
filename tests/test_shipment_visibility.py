@@ -96,3 +96,12 @@ def test_a_confirmed_row_is_visible(db: sqlite3.Connection) -> None:
     confirm_row(db, SHIP)
     assert SHIP in _listed(db)
     authorize_shipment(db, _context_for(db, DRIVER), SHIP)
+
+
+def test_a_thread_does_not_keep_an_unconfirmed_shipment_selected(db: sqlite3.Connection, clock: FakeClock,
+                                                                 redis_client: fakeredis.FakeRedis) -> None:
+    memory = _memory(db, clock, redis_client)
+    thread = memory.open_thread(DRIVER, SHIP)
+    assert memory.load(DRIVER, thread).state.selected_shipment_id == SHIP
+    mark_unconfirmed(db, SHIP)
+    assert memory.load(DRIVER, thread).state.selected_shipment_id is None
