@@ -28,7 +28,7 @@ import sqlite3
 import uuid
 
 # Typing helpers.
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 
 # Builds the application's start-up and shut-down hook.
 from contextlib import asynccontextmanager
@@ -212,6 +212,11 @@ def model_in_force(deps: AppDeps, conn: sqlite3.Connection) -> tuple[ModelGatewa
     if deps.settings is None:
         return deps.gateway_factory(), deps.policy
     return deps.settings.model(conn)
+
+
+def env_in_force(deps: AppDeps, conn: sqlite3.Connection) -> Mapping[str, str] | None:
+    """The settings in force, or None to read the process environment."""
+    return None if deps.settings is None else deps.settings.effective(conn).env
 
 
 class MessageIn(BaseModel):
@@ -496,7 +501,8 @@ def create_app(deps: AppDeps) -> FastAPI:
             gateway, policy = model_in_force(deps, conn)
             services = ConversationServices(
                 conn=conn, memory=memory, gateway=recorder.wrap(gateway), policy=policy, sink=SqlEscalationSink(conn, clock),
-                fallback_sink=JsonlEscalationSink(deps.fallback_path), exporter=deps.exporter)
+                fallback_sink=JsonlEscalationSink(deps.fallback_path), exporter=deps.exporter,
+                trace_env=env_in_force(deps, conn))
             # Run the conversation (this is where the model is called).
             reply = handle_message(InboundMessage(message_id=payload.message_id, text=payload.text),
                                    TrustedConversationContext(driver=trusted, thread_id=thread_id), clock, services)

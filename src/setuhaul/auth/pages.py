@@ -6,6 +6,7 @@ from __future__ import annotations
 import html
 import json
 import sqlite3
+from collections.abc import Mapping
 from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -14,7 +15,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
-from setuhaul.api import claim_label, model_in_force
+from setuhaul.api import claim_label, env_in_force, model_in_force
 from setuhaul.auth import audit, onboarding, projects, sessions, telegram, users
 from setuhaul.auth.admin_api import DEFAULT_AUDIT_LIMIT, parse_since
 from setuhaul.auth.authz import AuthzError, assert_facility, require_role
@@ -295,7 +296,7 @@ def _model_in_use(gateway: ModelGateway, policy: ModelPolicy) -> str:
     return f"{provider} / {model_id}" if model_id else "No model configured"
 
 
-def _model_limits(p: ModelPolicy) -> str:
+def _model_limits(p: ModelPolicy, env: Mapping[str, str] | None) -> str:
 
     def price(value: float) -> str:
         return f"USD {value:g}" if value > 0 else "price not set"
@@ -304,7 +305,7 @@ def _model_limits(p: ModelPolicy) -> str:
              ("Tool runs per message", str(p.max_tool_executions)), ("Message deadline", f"{p.request_deadline_s:g} s"),
              ("Cost budget per message", f"USD {p.cost_budget_usd:g}"), ("Output length", f"{p.max_output_tokens} tokens"),
              ("Input price per million tokens", price(p.price_in_per_mtok)),
-             ("Output price per million tokens", price(p.price_out_per_mtok)), ("LangSmith tracing", tracing_status().reason))
+             ("Output price per million tokens", price(p.price_out_per_mtok)), ("LangSmith tracing", tracing_status(env).reason))
     return "<h3>Limits in force</h3>" + _table(("Limit", "Value"), [[esc(k), esc(v)] for k, v in items])
 
 
@@ -359,7 +360,7 @@ def _model_section(conn: sqlite3.Connection, deps: AppDeps) -> str:
         figures = '<p class="empty">This database has no model records yet. Apply the migrations, then restart.</p>'
     gateway, policy = model_in_force(deps, conn)
     return ('<section id="model" data-panel="model"><h2>Model</h2>'
-            f"<p>In use: {esc(_model_in_use(gateway, policy))}</p>{figures}{_model_limits(policy)}{_LANGSMITH_PANEL}</section>")
+            f"<p>In use: {esc(_model_in_use(gateway, policy))}</p>{figures}{_model_limits(policy, env_in_force(deps, conn))}{_LANGSMITH_PANEL}</section>")
 
 
 def render_admin(conn: sqlite3.Connection, me: User, query: dict[str, str], deps: AppDeps) -> str:

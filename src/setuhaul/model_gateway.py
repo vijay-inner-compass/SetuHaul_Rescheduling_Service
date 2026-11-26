@@ -530,6 +530,7 @@ def run_bounded_loop(
     tool_schemas: Sequence[dict[str, Any]],
     executor: ToolExecutor,
     clock: Clock,
+    trace_env: Mapping[str, str] | None = None,
 ) -> LoopOutcome:
     # Make sure no tracing leaves the machine unless the opt-in tracer is explicitly built below.
     disable_external_tracing()
@@ -609,7 +610,7 @@ def run_bounded_loop(
     )
 
     # None unless LangSmith is switched on, approved AND a key is set.
-    tracer = build_tracer()
+    tracer = build_tracer(trace_env)
     # Run settings. The recursion limit is only a backstop; the real caps are enforced in the nodes above.
     config: RunnableConfig = {"recursion_limit": 2 * policy.max_rounds + 10}  # backstop only
     # Attach the scrubbing tracer only when enabled.
