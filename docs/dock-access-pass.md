@@ -36,7 +36,7 @@ The pass works from the facility's early-arrival limit (60 minutes if unset) bef
 
 Once a truck is checked in, its booking cannot be moved, cancelled or sent to another warehouse.
 
-A warehouse move revokes the pass at once and sends a new one; the gate admits the truck only once a slot at the new
+A warehouse move revokes the pass at once and sends a new one (retried about every minute until it reaches the driver); the gate admits the truck only once a slot at the new
 warehouse is booked. A move to a partner warehouse leaves no pass.
 
 ## Security

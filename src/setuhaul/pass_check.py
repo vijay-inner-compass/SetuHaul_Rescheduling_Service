@@ -21,7 +21,11 @@ MAX_ATTEMPTS = 5
 _MINE = ("select s.shipment_id, s.order_reference, s.original_eta_ts, s.current_status, f.facility_name, a.shipment_id as assigned,"
          " a.confirmed_at, a.locked_at, a.failed_attempts, (select p.token_hash from dock_access_authorizations p"
          " join visit_shipments v using(truck_visit_id) where v.shipment_id=s.shipment_id and p.driver_id=s.driver_id"
-         f" and p.status in {LIVE}) as live_hash"
+         f" and p.status in {LIVE}) as live_hash,"
+         # The booked slot, which a reschedule moves; the original plan only if nothing is booked.
+         " coalesce((select sl.slot_start_ts from appointments ap join appointment_slots sl using(slot_id)"
+         " where ap.shipment_id=s.shipment_id and ap.is_current=1 and ap.appointment_status in"
+         " ('PENDING_CONFIRMATION','CONFIRMED','IN_PROGRESS')), s.original_eta_ts) as planned_ts"
          " from shipments s join facilities f on f.facility_id=s.destination_facility_id"
          " left join shipment_assignments a on a.shipment_id=s.shipment_id where s.driver_id=? order by s.shipment_id")
 
@@ -83,7 +87,7 @@ def check(conn: sqlite3.Connection, clock: Clock, *, driver_id: str, thread_id: 
                 conn.execute("update shipment_assignments set failed_attempts=? where shipment_id=?", (attempts, r["shipment_id"]))
     if confirmed:
         text_out = "\n".join(say("pass_confirmed", lang, order=r["order_reference"], facility=r["facility_name"],
-                                 when=f"{parse_operational_timestamp(r['original_eta_ts']):%d %b %Y %H:%M}") for r in confirmed)
+                                 when=f"{parse_operational_timestamp(r['planned_ts']):%d %b %Y %H:%M}") for r in confirmed)
         kind: Literal["CONFIRMED", "MISMATCH", "LOCKED"] = "CONFIRMED"
     elif newly_locked or named or all(r["locked_at"] is not None for r in waiting):
         # Repeating a pass that is already theirs is not about a locked shipment.

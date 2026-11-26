@@ -117,7 +117,10 @@ def shipments_section(conn: sqlite3.Connection, user: User, now: datetime, facil
             actions += _button("Unloading complete", f"/v1/warehouse/visits/{_segment(visit['truck_visit_id'])}/unloading-complete",
                                confirm=f"Has {s['order_reference']} been unloaded?")
         pass_text = _PASS.get(s["pass_state"] or "", "None")
-        if s["pass_state"] == "ISSUED" and not s["delivered"]:
+        latest = passes.state_for(conn, s["shipment_id"])
+        # A replacement still on its way reads the same as one that has not arrived.
+        waiting = latest is not None and latest["revocation_reason"] in ("WAREHOUSE_CHANGED", "SEND_FAILED")
+        if waiting or (s["pass_state"] == "ISSUED" and not s["delivered"]):
             pass_text = "Pass not delivered"
         rows.append([esc(s["order_reference"]), esc(f"{s['driver_id']} - {s['driver_name']}"), esc(s["facility_id"]),
                      esc(_when(s["planned_start"])), esc(_STATES[s["state"]]), esc(pass_text), actions])

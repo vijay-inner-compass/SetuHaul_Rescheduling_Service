@@ -23,6 +23,8 @@ LIVE = "('ISSUED','VALIDATED','ACTIVE','COMPLETED')"
 DEFAULT_EARLY_MIN = 60
 # How long after the slot ends the pass still works.
 GRACE = timedelta(hours=4)
+# The wait before a replacement that could not be sent is tried again.
+RETRY_AFTER = timedelta(seconds=60)
 _APPOINTMENT = ("select a.appointment_id, sl.dock_id, sl.slot_start_ts, sl.slot_end_ts, sl.facility_id from appointments a"
                 " join appointment_slots sl using(slot_id) where a.shipment_id=? and a.is_current=1"
                 " and a.appointment_status in ('PENDING_CONFIRMATION','CONFIRMED','IN_PROGRESS')")
@@ -153,25 +155,47 @@ def move_warehouse(conn: sqlite3.Connection, shipment_id: str, clock: Clock) -> 
     warehouse = conn.execute("select destination_facility_id from shipments where shipment_id=?", (shipment_id,)).fetchone()[0]
     conn.execute("update truck_visits set warehouse_id=?, row_version=row_version+1 where truck_visit_id=?",
                  (warehouse, visit["truck_visit_id"]))
-    if _end_live(conn, visit["truck_visit_id"], "REVOKED", "WAREHOUSE_CHANGED", clock):
+    # A pass that had already run out needs replacing too: a later booking would otherwise revive it for the old warehouse.
+    expired = conn.execute(
+        "update dock_access_authorizations set status='REVOKED', revoked_at=?, revocation_reason='WAREHOUSE_CHANGED',"
+        " row_version=row_version+1 where status='EXPIRED' and rowid=(select max(q.rowid) from dock_access_authorizations q"
+        " where q.truck_visit_id=?)", (utc(clock.now()), visit["truck_visit_id"])).rowcount
+    if _end_live(conn, visit["truck_visit_id"], "REVOKED", "WAREHOUSE_CHANGED", clock) or expired:
         record(conn, None, "PASS_REVOKED", shipment_id, clock, detail={"reason": "WAREHOUSE_CHANGED"})
 
 
 def send_pending(conn: sqlite3.Connection, client: TelegramClient | None, clock: Clock) -> int:
-    """Send a new pass for each shipment whose pass was revoked by a warehouse move. Partner warehouses issue none."""
+    """Send a new pass for each shipment whose pass was revoked by a warehouse move; returns how many reached the driver.
+
+    Nothing is issued while it could not be sent, and a pass whose sending failed is withdrawn and tried again later, so
+    the shipment stays pending until the driver has received one. Partner warehouses issue none.
+    """
+    if client is None:
+        return 0
     rows = conn.execute(
-        "select s.shipment_id from shipments s join facilities f on f.facility_id=s.destination_facility_id"
+        "select s.shipment_id, s.driver_id, t.truck_visit_id, p.revocation_reason, p.revoked_at from shipments s"
+        " join facilities f on f.facility_id=s.destination_facility_id"
         " join visit_shipments v using(shipment_id) join truck_visits t using(truck_visit_id)"
         " join dock_access_authorizations p on p.rowid=(select max(q.rowid) from dock_access_authorizations q"
-        " where q.truck_visit_id=t.truck_visit_id) where p.status='REVOKED' and p.revocation_reason='WAREHOUSE_CHANGED'"
-        " and t.status='EXPECTED' and f.is_partner=0 and s.current_status<>'CANCELLED'").fetchall()
+        " where q.truck_visit_id=t.truck_visit_id) where p.status='REVOKED' and p.revocation_reason in"
+        " ('WAREHOUSE_CHANGED','SEND_FAILED') and t.status='EXPECTED' and f.is_partner=0 and s.current_status<>'CANCELLED'").fetchall()
     count = 0
     for r in rows:
+        if r["revocation_reason"] == "SEND_FAILED" and clock.now() - parse_operational_timestamp(r["revoked_at"]) < RETRY_AFTER:
+            continue
+        if bound_chat(conn, r["driver_id"]) is None:
+            continue
         try:
-            send_new(conn, client, actor=None, shipment_id=r["shipment_id"], clock=clock)
-            count += 1
+            sent = send_new(conn, client, actor=None, shipment_id=r["shipment_id"], clock=clock)
         except AuthError:
             continue
+        if sent:
+            count += 1
+            continue
+        with immediate(conn):
+            conn.execute("update dock_access_authorizations set status='REVOKED', revoked_at=?, revocation_reason='SEND_FAILED',"
+                         " row_version=row_version+1 where truck_visit_id=? and status='ISSUED' and delivered_at is null",
+                         (utc(clock.now()), r["truck_visit_id"]))
     return count
 
 
