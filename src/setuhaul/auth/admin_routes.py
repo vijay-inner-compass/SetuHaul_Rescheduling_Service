@@ -18,6 +18,7 @@ from setuhaul.auth.http import reject as _reject
 from setuhaul.auth.users import User
 from setuhaul.db import open_connection
 from setuhaul.identity import AuthError
+from setuhaul.langsmith_report import load_summary
 
 if TYPE_CHECKING:
     from setuhaul.api import AppDeps
@@ -100,6 +101,11 @@ def register_admin_routes(app: FastAPI, deps: AppDeps) -> None:
                                  "request_id": rid}, status_code=201)
 
         return await run_in_threadpool(with_conn, rid, write)
+
+    # The LangSmith summary for the Model tab, read only when the admin presses the button.
+    @app.get("/v1/admin/model/langsmith")
+    async def langsmith_summary(user: Annotated[User, Depends(require_role("ADMIN"))]) -> Response:
+        return JSONResponse(await run_in_threadpool(load_summary))
 
     @app.get("/v1/drivers/pending")
     async def pending(request: Request, user: Annotated[User, Depends(require_role("ADMIN"))]) -> Response:

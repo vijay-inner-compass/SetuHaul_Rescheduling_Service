@@ -44,6 +44,7 @@ if TYPE_CHECKING:
 ASSET_DIR = Path(__file__).parent / "assets"
 ASSET_TYPES = {"app.css": "text/css; charset=utf-8", "common.js": "text/javascript; charset=utf-8",
                "admin.js": "text/javascript; charset=utf-8", "tabs.js": "text/javascript; charset=utf-8",
+               "model.js": "text/javascript; charset=utf-8",
                "warehouse.js": "text/javascript; charset=utf-8"}
 # Sent with every HTML response: nothing but our own files may run or load, and nothing is cached.
 SECURITY_HEADERS = {
@@ -336,6 +337,12 @@ def _model_figures(conn: sqlite3.Connection, now: datetime) -> str:
             f'<h3>Recent messages</h3><div class="scroll">{turns}</div><h3>Recent calls</h3><div class="scroll">{each}</div>')
 
 
+_LANGSMITH_PANEL = (
+    '<h3>LangSmith</h3><p class="note">LangSmith traces the conversation loop, not the provider request: it has no reliable token or '
+    'cost figures, and a handled model failure can appear as a successful run.</p>'
+    '<button type="button" id="langsmith-load">Load from LangSmith</button><div id="langsmith-result"></div>')
+
+
 def _model_section(conn: sqlite3.Connection, deps: AppDeps) -> str:
     try:
         figures = _model_figures(conn, deps.clock.now())
@@ -345,7 +352,7 @@ def _model_section(conn: sqlite3.Connection, deps: AppDeps) -> str:
             raise
         figures = '<p class="empty">This database has no model records yet. Apply the migrations, then restart.</p>'
     return ('<section id="model" data-panel="model"><h2>Model</h2>'
-            f"<p>In use: {esc(_model_in_use(deps))}</p>{figures}{_model_limits(deps)}</section>")
+            f"<p>In use: {esc(_model_in_use(deps))}</p>{figures}{_model_limits(deps)}{_LANGSMITH_PANEL}</section>")
 
 
 def render_admin(conn: sqlite3.Connection, me: User, query: dict[str, str], deps: AppDeps) -> str:
@@ -355,7 +362,7 @@ def render_admin(conn: sqlite3.Connection, me: User, query: dict[str, str], deps
     # The "wh" class gives the same tab styling as the warehouse screen.
     body = ('<div class="wh">' + tabs + _users_section(conn, me) + _pending_section(conn) + _decided_section(conn)
             + _audit_section(conn, query) + _model_section(conn, deps) + "</div>")
-    return _layout("Admin", body, ("common.js", "tabs.js", "admin.js"), me, nav)
+    return _layout("Admin", body, ("common.js", "tabs.js", "admin.js", "model.js"), me, nav)
 
 
 # ---- warehouse screen -------------------------------------------------------------------------------------
