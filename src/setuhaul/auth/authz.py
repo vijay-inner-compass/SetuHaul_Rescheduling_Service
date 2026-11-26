@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from fastapi import Request
 
 from setuhaul.auth import audit, sessions
-from setuhaul.auth.users import Role, User
+from setuhaul.auth.users import FACILITY_BOUND, Role, User
 from setuhaul.db import open_connection
 
 if TYPE_CHECKING:
@@ -56,8 +56,8 @@ def require_role(*roles: Role) -> Callable[[Request], User]:
             user = sessions.resolve(conn, token, deps.clock)
             if user is None:
                 raise AuthzError(401, "UNAUTHENTICATED")
-            # A warehouse authority bound to no facility can do nothing safely, so is refused too.
-            no_facilities = user.role == "WAREHOUSE_AUTHORITY" and not user.facilities
+            # A facility-bound user with no facility can do nothing safely, so is refused too.
+            no_facilities = user.role in FACILITY_BOUND and not user.facilities
             if user.role not in roles or no_facilities:
                 # Prefer the route template over the attacker-shaped raw path.
                 route = request.scope.get("route")

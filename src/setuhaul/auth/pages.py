@@ -214,7 +214,7 @@ def _users_section(conn: sqlite3.Connection, me: User) -> str:
     invite = ('<h3>Invite a user</h3><form data-api="/v1/admin/users"><label>Email <input name="email" type="email" required></label>'
               '<label>Display name <input name="display_name" required maxlength="120"></label>'
               '<label>Role <select name="role"><option value="WAREHOUSE_AUTHORITY">Warehouse authority</option>'
-              '<option value="ADMIN">Admin</option></select></label>'
+              '<option value="SECURITY">Security (gate)</option><option value="ADMIN">Admin</option></select></label>'
               f'<label>Facilities <select name="facilities" multiple size="4">{_options(facilities)}</select></label>'
               '<button type="submit">Invite</button></form>')
     table = _table(("Email", "Name", "Role", "Status", "Facilities", "Last login", ""), rows)
@@ -774,7 +774,7 @@ def register_pages(app: FastAPI, deps: AppDeps) -> None:
             finally:
                 conn.close()
             if user is not None:
-                return _redirect("/admin" if user.role == "ADMIN" else "/warehouse")
+                return _redirect({"ADMIN": "/admin", "SECURITY": "/gate"}.get(user.role, "/warehouse"))
         # The same condition the Google routes use (a client and a signing secret of at least 32 bytes).
         google = deps.google is not None and len(deps.session_secret) >= 32
         # Only a listed category selects a message; the parameter itself is never shown.
