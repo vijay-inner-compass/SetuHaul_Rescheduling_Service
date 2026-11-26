@@ -7,7 +7,7 @@ import html
 import json
 import sqlite3
 from collections.abc import Mapping
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
@@ -15,7 +15,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
-from setuhaul.api import claim_label, env_in_force, model_in_force
+from setuhaul.api import WEB_PREFIX, claim_label, env_in_force, model_in_force
 from setuhaul.auth import audit, onboarding, projects, sessions, telegram, users
 from setuhaul.auth.admin_api import DEFAULT_AUDIT_LIMIT, parse_since
 from setuhaul.auth.authz import AuthzError, assert_facility, require_role
@@ -32,8 +32,9 @@ from setuhaul.auth.warehouse_routes import (
     partner_requests_in_scope,
 )
 from setuhaul.board import build_board
+from setuhaul.config import load_settings
 from setuhaul.db import IST, open_connection
-from setuhaul.escalation import get_case
+from setuhaul.escalation import CaseView, case_events, get_case
 from setuhaul.identity import AuthError
 from setuhaul.langsmith_trace import tracing_status
 from setuhaul.model_gateway import ModelGateway, ModelPolicy
@@ -109,11 +110,15 @@ def _table(headers: tuple[str, ...], rows: list[list[str]], empty: str = "Nothin
     return f"<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
 
 
-def _button(label: str, api: str, body: dict[str, object] | None = None, confirm: str | None = None) -> str:
-    # An action button: the script posts JSON to `api`, then reloads.
+def _button(label: str, api: str, body: dict[str, object] | None = None, confirm: str | None = None,
+            done: str | None = None, key: str | None = None) -> str:
+    # An action button: the script posts JSON to `api`, then reloads. `done` is what it says afterwards; `key` lets the
+    # script find the same button again after a refresh.
     data = f' data-body="{esc(json.dumps(body))}"' if body is not None else ""
     ask = f' data-confirm="{esc(confirm)}"' if confirm else ""
-    return f'<button type="button" data-api="{esc(api)}"{data}{ask}>{esc(label)}</button>'
+    after = f' data-done="{esc(done)}"' if done else ""
+    mark = f' data-key="{esc(key)}"' if key else ""
+    return f'<button type="button" data-api="{esc(api)}"{data}{ask}{after}{mark}>{esc(label)}</button>'
 
 
 def _options(items: list[tuple[str, str]], selected: str | None = None, extra: dict[str, str] | None = None) -> str:
@@ -542,20 +547,77 @@ def _short(text: str, limit: int = 90) -> str:
     return flat if len(flat) <= limit else flat[:limit].rstrip() + "\u2026"
 
 
-def _case_cards(cases: list[dict[str, str]]) -> str:
+# The outcomes a coordinator may record, in plain words (the codes are the service's RESOLUTION_CODES).
+_OUTCOMES = (("ASSIGNED_SLOT", "Assigned a slot"), ("ADVISED_DRIVER", "Advised the driver"),
+             ("CANCELLED_BY_OPERATIONS", "Cancelled by operations"), ("NO_ACTION_NEEDED", "No action needed"), ("OTHER", "Other"))
+
+
+def _case_actions(c: CaseView, me: str, owner: str) -> str:
+    # Only what the service would accept from this user is drawn: claim an open case, resolve your own claim, reopen a resolved one.
+    cid = c.case_id
+    base = f"/v1/coordinator/cases/{_segment(cid)}"
+    if c.status == "OPEN":
+        return _button("Claim", f"{base}/claim", done="Case claimed.", key=f"claim:{cid}")
+    if c.status == "RESOLVED":
+        return _button("Reopen", f"{base}/reopen", confirm=f"Reopen case {cid}?", done="Case reopened.", key=f"reopen:{cid}")
+    if c.claimed_by != me:
+        return f'<p class="note">{esc(owner)} is working this case.</p>'
+    # Nothing is preselected or prefilled: the driver receives exactly what the coordinator writes.
+    options = '<option value="" selected disabled>Choose an outcome</option>' + _options(list(_OUTCOMES))
+    return (f'<form class="case-resolve" data-api="{esc(base)}/resolve" '
+            f'data-confirm="{esc(f"Send this message to the driver and close case {cid}?")}" '
+            'data-done="Case resolved. Your message was added to the driver\'s chat.">'
+            f'<label>Outcome <select name="resolution_code" required data-key="{esc(f"outcome:{cid}")}">{options}</select></label>'
+            f'<label>Message to the driver <textarea name="note" rows="3" maxlength="500" required data-key="{esc(f"note:{cid}")}">'
+            f'</textarea></label><button type="submit" data-key="{esc(f"resolve:{cid}")}">Resolve</button></form>')
+
+
+def _case_history(conn: sqlite3.Connection, case_id: str) -> str:
+    # Who did what and when, folded away. A stored web identity is shown as the person's name.
+    lines = []
+    for e in case_events(conn, case_id):
+        who = claim_label(conn, e["actor_id"]) if e["actor_type"] == "COORDINATOR" else str(e["actor_type"]).lower()
+        what = str(e["event_type"]).replace("_", " ").capitalize()
+        note = f": {e['note']}" if e["note"] else ""
+        lines.append(f"<li><time>{esc(_clock(e['occurred_at']))}</time> {esc(what)} by {esc(who)}{esc(note)}</li>")
+    if not lines:
+        return ""
+    return (f'<details class="history" data-key="{esc(f"history:{case_id}")}"><summary data-key="{esc(f"history-toggle:{case_id}")}">History</summary>'
+            f'<ol>{"".join(lines)}</ol></details>')
+
+
+def _case_cards(conn: sqlite3.Connection, user: User, cases: list[CaseView], empty: str) -> str:
     if not cases:
-        return '<p class="empty">No open cases.</p>'
+        return f'<p class="empty">{esc(empty)}</p>'
+    me = WEB_PREFIX + user.email
     cards = []
     for c in cases:
         # A long note is folded to one line; opening it shows the whole text.
-        summary = c["summary"]
-        note = (f'<details class="note-fold"><summary>{esc(_short(summary))}</summary><p>{esc(summary)}</p></details>'
-                if len(summary) > 90 else f"<p>{esc(summary)}</p>")
-        claimed = f"Claimed by {c['claimed']}" if c["claimed"] else "Not claimed"
-        cards.append(f'<li class="case"><div class="case-head"><b>{esc(c["id"])}</b><span class="pill">{esc(c["status"])}</span>'
-                     f'<span class="reason">{esc(c["reason"])}</span></div>{note}'
-                     f'<div class="meta"><span>Load {esc(c["load"] or "none")}</span><span>{esc(claimed)}</span></div></li>')
+        summary = c.summary or ""
+        note = (f'<details class="note-fold" data-key="{esc(f"summary:{c.case_id}")}"><summary data-key="{esc(f"summary-toggle:{c.case_id}")}">{esc(_short(summary))}</summary>'
+                f"<p>{esc(summary)}</p></details>" if len(summary) > 90 else f"<p>{esc(summary)}</p>")
+        owner = claim_label(conn, c.claimed_by) or ""
+        claimed = f"Claimed by {owner}" if owner else "Not claimed"
+        outcome = (f'<p>{esc(dict(_OUTCOMES).get(c.resolution_code or "", c.resolution_code))}: {esc(c.resolution_note)}</p>'
+                   if c.status == "RESOLVED" else "")
+        # The closing comment marks where one card ends, for the tests.
+        cards.append(f'<li class="case" data-key="{esc(f"case:{c.case_id}")}" tabindex="-1"><div class="case-head"><b>{esc(c.case_id)}</b>'
+                     f'<span class="pill">{esc(c.status)}</span><span class="reason">{esc(c.reason_code)}</span></div>{note}{outcome}'
+                     f'<div class="meta"><span>Load {esc(c.shipment_id or "none")}</span><span>{esc(claimed)}</span></div>'
+                     f"{_case_history(conn, c.case_id)}{_case_actions(c, me, owner)}</li><!--case-->")
     return f'<ul class="cases">{"".join(cards)}</ul>'
+
+
+def _recently_resolved(conn: sqlite3.Connection, user: User, now: datetime) -> str:
+    # Resolved cases that may still be reopened, newest first, folded away.
+    since = now - timedelta(hours=load_settings().escalation_reopen_window_hours)
+    ids = case_ids_in_scope(conn, user, ("RESOLVED",), resolved_since=since.isoformat())
+    recent = [c for c in (get_case(conn, i) for i in ids) if c is not None]
+    if not recent:
+        return ""
+    recent.sort(key=lambda c: c.resolved_at or since, reverse=True)
+    return (f'<details class="resolved" data-key="resolved"><summary data-key="resolved-toggle">Recently resolved ({len(recent)})</summary>'
+            f'{_case_cards(conn, user, recent, "")}</details>')
 
 
 def _chat_browser(chats: list[dict[str, Any]]) -> str:
@@ -584,8 +646,8 @@ def _facility_requests(conn: sqlite3.Connection, user: User) -> str:
     rows = []
     for r in pending_changes_in_scope(conn, user):
         base = f"/v1/warehouse/facility-changes/{_segment(r['request_id'])}"
-        actions = (_button("Approve", f"{base}/approve", confirm=f"Move {r['order_reference']} to {r['destination']}?")
-                   + _button("Reject", f"{base}/reject", confirm=f"Refuse the move of {r['order_reference']}?"))
+        actions = (_button("Approve", f"{base}/approve", confirm=f"Move {r['order_reference']} to {r['destination']}?", key=f"approve:{r['request_id']}")
+                   + _button("Reject", f"{base}/reject", confirm=f"Refuse the move of {r['order_reference']}?", key=f"reject:{r['request_id']}"))
         rows.append([esc(r["request_id"]), esc(r["driver_name"]), esc(r["order_reference"]), esc(r["origin"]), esc(r["destination"]), actions])
     table = _table(("Request", "Driver", "Order", "From", "To", ""), rows, "No requests are waiting.")
     return f'<h3>Facility change requests</h3><div class="scroll">{table}</div>'
@@ -593,14 +655,12 @@ def _facility_requests(conn: sqlite3.Connection, user: User) -> str:
 
 def _messages_section(conn: sqlite3.Connection, user: User, now: datetime) -> str:
     found = [c for c in (get_case(conn, i) for i in case_ids_in_scope(conn, user, ("OPEN", "CLAIMED"))) if c is not None]
-    cases = [{"id": c.case_id, "status": c.status, "reason": c.reason_code, "summary": c.summary or "", "load": c.shipment_id or "",
-              "claimed": claim_label(conn, c.claimed_by) or ""} for c in found]
     reqs = [[esc(r["request_ref"]), esc(r["facility_id"]), esc(r["shipment_id"]), esc(r["status"]), esc(r["email_status"]),
              esc(f"{r['proposed_start']} - {r['proposed_end']}")] for r in partner_requests_in_scope(conn, user)]
     note = ('<p class="note">Drivers on projects created by an administrator do not appear in a warehouse authority\'s chats; '
             "only drivers on projects you created are shown.</p>")
-    return (f'<section id="messages" data-panel="messages" data-count="{len(cases)}"><h2>Messages</h2>' + _facility_requests(conn, user) + '<h3>Open cases</h3>'
-            + _case_cards(cases)
+    return (f'<section id="messages" data-panel="messages" data-count="{len(found)}"><h2>Messages</h2>' + _facility_requests(conn, user) + '<h3>Open cases</h3>'
+            + _case_cards(conn, user, found, "No open cases.") + _recently_resolved(conn, user, now)
             + f"<h3>Driver chats</h3>{note}" + _chat_browser(driver_chats_in_scope(conn, user, now))
             + "<h3>Partner slot requests</h3>"
             + _table(("Request", "Facility", "Load", "Status", "Email", "Proposed"), reqs, "No partner requests.")

@@ -475,9 +475,11 @@ $("#opsBody").addEventListener("click",async e=>{
     toast(r.ok?`Claimed by ${who}.`:`Already claimed by ${r.data.claimed_by||"someone else"}.`,r.ok?"ok":"bad");refreshOps();refreshDriver();}
   if(res){const id=res.dataset.resolve,by=res.dataset.by;
     modal("Resolve case",`<div><label class="field" for="rc">Outcome</label><select id="rc"><option value="ASSIGNED_SLOT">Assigned a slot</option><option value="ADVISED_DRIVER">Advised the driver</option><option value="CANCELLED_BY_OPERATIONS">Cancelled by operations</option><option value="NO_ACTION_NEEDED">No action needed</option><option value="OTHER">Other</option></select></div>
-      <div><label class="field" for="rn">Message to the driver</label><textarea id="rn" rows="3" maxlength="500">We have booked a suitable dock for you. Please follow the new time.</textarea></div>`,
-      [{label:"Cancel"},{label:"Resolve",primary:true,run:async()=>{const r=await api(`/demo/api/cases/${encodeURIComponent(id)}/resolve`,{coordinator:by,resolution_code:$("#rc").value,note:$("#rn").value});
-        toast(r.ok?"Case resolved. The driver was notified in the chat.":"Could not resolve.",r.ok?"ok":"bad");refreshOps();refreshDriver();}}]);}
+      <div><label class="field" for="rn">Message to the driver</label><textarea id="rn" rows="3" maxlength="500" required></textarea><div class="gpsmsg" id="rnError" role="alert"></div></div>`,
+      [{label:"Cancel"},{label:"Resolve",primary:true,run:()=>{const note=$("#rn").value.trim(),code=$("#rc").value;
+        if(!note){$("#rnError").textContent="Write the message the driver will receive.";$("#rn").focus();return false;}
+        api(`/demo/api/cases/${encodeURIComponent(id)}/resolve`,{coordinator:by,resolution_code:code,note}).then(r=>{
+        toast(r.ok?"Case resolved. Your message was added to the chat.":"Could not resolve.",r.ok?"ok":"bad");refreshOps();refreshDriver();});}}]);}
 });
 async function refreshCases(){const r=await api("/demo/api/cases");if(r.ok){renderCases(r.data);setClock(r.data.clock);}}
 async function refreshActivity(){

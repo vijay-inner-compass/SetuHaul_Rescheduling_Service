@@ -75,17 +75,65 @@
   window.addEventListener("hashchange", function () { reopen(null); });
   reopen(null);
 
+  // What identifies a control across a refresh: its key, or the driver a chat button belongs to.
+  function find(root, mark) {
+    return mark ? root.querySelector("[" + mark[0] + "='" + CSS.escape(mark[1]) + "']") : null;
+  }
+  function markOf(node) {
+    var name = node && node.getAttribute && (node.hasAttribute("data-key") ? "data-key" : node.hasAttribute("data-driver") ? "data-driver" : "");
+    return name ? [name, node.getAttribute(name)] : null;
+  }
+
+  // Remember what the user had in a section that is about to be replaced; returns how to put it back.
+  function remember(section) {
+    var active = section.contains(document.activeElement) ? document.activeElement : null;
+    var focus = markOf(active);
+    // A control that disappears (a Claim button, say) hands focus to its card.
+    var card = active && markOf(active.closest("[data-key^='case:']"));
+    var open = Array.prototype.map.call(section.querySelectorAll("details[open][data-key]"), markOf);
+    var typed = Array.prototype.filter.call(section.querySelectorAll("textarea[data-key], select[data-key]"), function (f) {
+      return f.value !== "";
+    }).map(function (f) { return [markOf(f), f.value]; });
+    var errors = Array.prototype.map.call(section.querySelectorAll("[data-key^='case:'] > .action-note"), function (e) {
+      return [markOf(e.parentNode), e];
+    });
+    var chats = section.querySelector(".chat-list");
+    var listTop = chats ? chats.scrollTop : 0;
+    return function (fresh) {
+      open.forEach(function (mark) { var d = find(fresh, mark); if (d) { d.open = true; } });
+      typed.forEach(function (pair) { var f = find(fresh, pair[0]); if (f) { f.value = pair[1]; } });
+      errors.forEach(function (pair) {
+        var holder = find(fresh, pair[0]);
+        if (holder) { holder.appendChild(pair[1]); } else { window.SH.say(pair[1].textContent); }
+      });
+      var list = fresh.querySelector(".chat-list");
+      if (list) { list.scrollTop = listTop; }
+      var target = find(fresh, focus) || find(fresh, card);
+      if (target) { target.focus({ preventScroll: true }); }
+    };
+  }
+
+  // Replacing a box mid-sentence would break the caret and Hindi input composition, so that section waits.
+  function typing(section) {
+    var active = document.activeElement;
+    return !!active && active.tagName === "TEXTAREA" && section.contains(active);
+  }
+
   function apply(page) {
     var keep = position();
     var changed = false;
     LIVE.forEach(function (sel) {
       var fresh = page.querySelector(sel);
       var current = document.querySelector(sel);
-      if (!fresh || !current || (seen[sel] && fresh.isEqualNode(seen[sel]))) { return; }
+      if (!fresh || !current || (seen[sel] && fresh.isEqualNode(seen[sel])) || typing(current)) { return; }
       seen[sel] = fresh.cloneNode(true);
       var node = document.importNode(fresh, true);
       node.hidden = current.hidden;
+      var restore = remember(current);
       current.replaceWith(node);
+      // The chat shown is chosen first, so a focused control inside it is visible when focus returns.
+      if (sel === "#messages") { reopen(keep); }
+      restore(node);
       changed = true;
     });
     if (changed) { reopen(keep); }

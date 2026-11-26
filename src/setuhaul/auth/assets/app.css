@@ -16,6 +16,10 @@ button, a.button { cursor: pointer; padding: 0.35rem 0.8rem; border: 1px solid #
 button[type=submit], a.button { background: #17324d; color: #fff; }
 .status { min-height: 1.2rem; margin: 0.4rem 1.2rem; color: #9a1b1b; font-weight: 600; }
 .error { color: #9a1b1b; }
+.status.ok { color: #1c6b41; }
+.action-note { flex-basis: 100%; margin: 0.4rem 0; color: #9a1b1b; font-weight: 600; font-size: 0.85rem; }
+.action-note.ok { color: #1c6b41; }
+button:disabled { opacity: 0.6; cursor: progress; }
 .empty, .note, .legend { color: #5b6570; }
 code { white-space: pre-wrap; word-break: break-word; }
 .board .cell { text-align: center; min-width: 5rem; }
@@ -124,6 +128,15 @@ body.login { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1
 .wh .case-head, .wh .case .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; }
 .wh .case .meta, .wh .case .reason { font-size: 0.8rem; color: #5b6570; }
 .wh .note-fold { margin: 0.5rem 0; }
+.wh .case .history { margin: 0.5rem 0; font-size: 0.8rem; }
+.wh .case .history ol { margin-top: 0.3rem; }
+.wh .case .case-resolve { flex-direction: column; align-items: stretch; margin-bottom: 0; }
+.wh .case .case-resolve label, .wh .case .case-resolve select { width: 100%; }
+.wh .case .case-resolve textarea { box-sizing: border-box; width: 100%; font: inherit; resize: vertical; }
+.wh .case .case-resolve button { align-self: flex-start; }
+.wh .resolved { margin-top: 0.8rem; }
+.wh .resolved > summary { cursor: pointer; font-weight: 600; margin-bottom: 0.6rem; }
+.wh .case:focus-visible, .wh textarea:focus-visible, .wh select:focus-visible { outline: 3px solid #17324d; outline-offset: 1px; }
 .wh .note-fold summary { cursor: pointer; }
 .wh .chats { display: grid; grid-template-columns: minmax(14rem, 19rem) minmax(0, 1fr); height: 32rem; border: 1px solid #dde1e6; border-radius: 6px; overflow: hidden; }
 .wh .chat-list { overflow-y: auto; border-right: 1px solid #dde1e6; background: #f8f9fb; }

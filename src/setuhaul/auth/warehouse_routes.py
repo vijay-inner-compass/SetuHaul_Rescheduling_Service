@@ -38,7 +38,7 @@ def clamp(value: int, default: int, ceiling: int) -> int:
 
 
 def case_ids_in_scope(conn: sqlite3.Connection, user: User, statuses: tuple[str, ...] | None = None, limit: int = MAX_LIMIT,
-                      case_id: str | None = None) -> list[str]:
+                      case_id: str | None = None, resolved_since: str | None = None) -> list[str]:
     """Ids of the cases whose load is bound for one of the user's facilities (an admin: every case, even one naming no load)."""
     # The facility of a case is the destination facility of its shipment; the scope is applied in the query.
     clause, params = facility_clause(user, "s.destination_facility_id")
@@ -49,6 +49,10 @@ def case_ids_in_scope(conn: sqlite3.Connection, user: User, statuses: tuple[str,
     if case_id is not None:
         where.append("c.case_id=?")
         args.append(case_id)
+    if resolved_since is not None:
+        # julianday compares moments, whatever offset each timestamp was written with.
+        where.append("julianday(c.resolved_at) >= julianday(?)")
+        args.append(resolved_since)
     rows = conn.execute("select c.case_id from escalation_cases c left join shipments s on s.shipment_id=c.shipment_id "
                         f"where {' and '.join(where)} order by c.created_at, c.case_id limit ?", (*args, limit))
     return [r["case_id"] for r in rows]
