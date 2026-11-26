@@ -28,7 +28,7 @@ import sqlite3
 import uuid
 
 # Typing helpers.
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping
 
 # Builds the application's start-up and shut-down hook.
 from contextlib import asynccontextmanager
@@ -128,10 +128,8 @@ from setuhaul.memory import ConversationMemoryStore
 # Model types.
 from setuhaul.model_gateway import (
     ModelGateway,
-    ModelMessage,
     ModelPolicy,
-    ModelResponse,
-    ModelUnavailable,
+    UnconfiguredGateway,
 )
 
 # Records model calls for the admin Model tab.
@@ -146,6 +144,7 @@ from setuhaul.position import handle_driver_position, handle_new_position
 
 # Per-driver rate limiting.
 from setuhaul.rate_limit import RateLimits, check_rate_limit
+from setuhaul.runtime_settings import MIN_TELEGRAM_SECRET_LEN, SettingsSource
 
 # The validated ping shape.
 from setuhaul.schemas import GpsPing
@@ -156,14 +155,6 @@ STALE_PROCESSING_SECONDS = 60
 SIGNATURE_WINDOW_SECONDS = 300
 # A GPS ping may be stamped at most this far (5 minutes) ahead of the server clock; allows small device clock drift only.
 GPS_MAX_FUTURE_SECONDS = 300
-
-
-class UnconfiguredGateway:
-    """Used when no provider is set: every turn takes the safe model-outage path."""
-
-    # Always fails with MODEL_NOT_CONFIGURED, which sends the turn down the safe outage path.
-    def complete(self, messages: Sequence[ModelMessage], tools: Sequence[dict[str, Any]], policy: ModelPolicy) -> ModelResponse:
-        raise ModelUnavailable("MODEL_NOT_CONFIGURED")
 
 
 @dataclass
@@ -182,6 +173,8 @@ class AppDeps:
     policy: ModelPolicy = field(default_factory=ModelPolicy)
     # Builds the model gateway for each message.
     gateway_factory: Callable[[], ModelGateway] = UnconfiguredGateway
+    # The real service's saved settings; None (tests, demo) uses policy and gateway_factory as given.
+    settings: SettingsSource | None = None
     # The clock.
     clock: Clock = field(default_factory=SystemClock)
     # Override for the rate limits.
@@ -214,6 +207,29 @@ class AppDeps:
 
 
 # The inbound webhook body. Unknown fields are rejected (extra='forbid').
+def model_in_force(deps: AppDeps, conn: sqlite3.Connection) -> tuple[ModelGateway, ModelPolicy]:
+    """The gateway and limits for the next call."""
+    if deps.settings is None:
+        return deps.gateway_factory(), deps.policy
+    return deps.settings.model(conn)
+
+
+def env_in_force(deps: AppDeps, conn: sqlite3.Connection) -> Mapping[str, str] | None:
+    """The settings in force, or None to read the process environment."""
+    return None if deps.settings is None else deps.settings.effective(conn).env
+
+
+def telegram_in_force(deps: AppDeps) -> tuple[bytes, TelegramClient | None]:
+    """The webhook secret and reply client to use now."""
+    if deps.settings is None:
+        return deps.telegram_secret, deps.telegram
+    conn = open_connection(path=deps.db_path, readonly=True)
+    try:
+        return deps.settings.telegram(conn)
+    finally:
+        conn.close()
+
+
 class MessageIn(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -291,7 +307,8 @@ def create_app(deps: AppDeps) -> FastAPI:
         # No background runner unless enabled.
         runner = None
         # Start the hold-expiry sweep in a background thread.
-        if deps.run_maintenance:
+        # With saved settings a bot may appear at any time, so both runners always start.
+        if deps.run_maintenance or deps.settings is not None:
             # The runner opens its own connection (SQLite connections cannot cross threads).
             runner = MaintenanceRunner(None, deps.clock, deps.maintenance_interval_s,
                                        conn_factory=lambda: open_connection(path=deps.db_path))
@@ -299,7 +316,11 @@ def create_app(deps: AppDeps) -> FastAPI:
             await run_in_threadpool(runner.start)
         # Messages written outside a driver's turn reach their phone only through this sender.
         notices = None
-        if deps.run_driver_notices and deps.telegram is not None:
+        if deps.settings is not None:
+            notices = DriverNoticeRunner(deps.clock, None, lambda: open_connection(path=deps.db_path), deps.notice_interval_s,
+                                         client_source=lambda: telegram_in_force(deps)[1])
+            notices.start()
+        elif deps.run_driver_notices and deps.telegram is not None:
             notices = DriverNoticeRunner(deps.clock, deps.telegram, lambda: open_connection(path=deps.db_path), deps.notice_interval_s)
             notices.start()
         try:
@@ -493,9 +514,11 @@ def create_app(deps: AppDeps) -> FastAPI:
             # Use the open thread, or start one.
             thread_id = row["thread_id"] if row else memory.open_thread(driver_id)
             # Bundle everything the conversation needs.
+            gateway, policy = model_in_force(deps, conn)
             services = ConversationServices(
-                conn=conn, memory=memory, gateway=recorder.wrap(deps.gateway_factory()), policy=deps.policy, sink=SqlEscalationSink(conn, clock),
-                fallback_sink=JsonlEscalationSink(deps.fallback_path), exporter=deps.exporter)
+                conn=conn, memory=memory, gateway=recorder.wrap(gateway), policy=policy, sink=SqlEscalationSink(conn, clock),
+                fallback_sink=JsonlEscalationSink(deps.fallback_path), exporter=deps.exporter,
+                trace_env=env_in_force(deps, conn))
             # Run the conversation (this is where the model is called).
             reply = handle_message(InboundMessage(message_id=payload.message_id, text=payload.text),
                                    TrustedConversationContext(driver=trusted, thread_id=thread_id), clock, services)
@@ -820,6 +843,10 @@ def create_app(deps: AppDeps) -> FastAPI:
     from setuhaul.auth.admin_api import register_admin_api
 
     register_admin_api(app, deps)
+    # Settings the admin may change: read, save, reset.
+    from setuhaul.auth.settings_routes import register_settings_routes
+
+    register_settings_routes(app, deps)
     # The sign-in landing page and the admin and warehouse screens.
     from setuhaul.auth.pages import register_pages
 
@@ -838,10 +865,6 @@ def create_app(deps: AppDeps) -> FastAPI:
 
         register_demo(app, deps, process)
     return app
-
-
-# A shorter Telegram webhook secret is too easy to guess.
-MIN_TELEGRAM_SECRET_LEN = 16
 
 
 def telegram_from_env() -> tuple[bytes, TelegramClient | None]:
@@ -874,7 +897,7 @@ def create_app_from_env() -> FastAPI:
         raise SystemExit(problem)
     # Coordinator tokens as a JSON map in an environment variable.
     tokens = json.loads(os.environ.get("SETUHAUL_COORDINATOR_TOKENS", "{}"))
-    from setuhaul.model_gateway import build_gateway, load_model_policy
+    from setuhaul.model_gateway import PROVIDERS, build_gateway, load_model_policy
 
     # Model limits and provider from the environment.
     policy = load_model_policy()
@@ -886,7 +909,7 @@ def create_app_from_env() -> FastAPI:
 
         factory = StubGateway
     # A configured provider: build its adapter once and reuse it.
-    elif policy.provider:
+    elif policy.provider in PROVIDERS:
         gw = build_gateway(policy)
         factory = lambda: gw
     else:
@@ -930,6 +953,7 @@ def create_app_from_env() -> FastAPI:
     # Assemble the dependencies and build the app.
     return create_app(AppDeps(
         telegram_secret=tg_secret, telegram=tg_client,
+        settings=SettingsSource(os.environ, stub=os.environ.get("SETUHAUL_USE_STUB_MODEL") == "1"),
         google=google, session_secret=os.environ.get("SETUHAUL_SESSION_SECRET", "").encode(),
         local_admin_enabled=os.environ.get("SETUHAUL_LOCAL_ADMIN") == "1",
         public_url=os.environ.get("SETUHAUL_PUBLIC_URL", ""),
@@ -942,4 +966,4 @@ def create_app_from_env() -> FastAPI:
 
 
 # Public names (some are re-exported for tests).
-__all__ = ["IST", "AppDeps", "create_app", "create_app_from_env", "parse_operational_timestamp", "timedelta"]
+__all__ = ["IST", "AppDeps", "UnconfiguredGateway", "create_app", "create_app_from_env", "parse_operational_timestamp", "timedelta"]

@@ -20,7 +20,7 @@ import json
 import os
 
 # Callable types scripted steps and the tool executor; Sequence is the read-only list type.
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 
 # dataclass for the tool result.
 from dataclasses import dataclass
@@ -131,20 +131,22 @@ class ModelPolicy(BaseModel):
 
 
 # Build the policy from settings and environment variables.
-def load_model_policy() -> ModelPolicy:
+def load_model_policy(env: Mapping[str, str] | None = None) -> ModelPolicy:
     # The central settings.
     s = load_settings()
+    # The process environment unless the caller supplies the settings in force.
+    e = os.environ if env is None else env
     return ModelPolicy(
-        provider=os.environ.get("SETUHAUL_MODEL_PROVIDER", ""),
-        model_id=os.environ.get("SETUHAUL_MODEL_ID", ""),
+        provider=e.get("SETUHAUL_MODEL_PROVIDER", ""),
+        model_id=e.get("SETUHAUL_MODEL_ID", ""),
         max_output_tokens=s.model_max_output_tokens,
         call_timeout_s=float(s.model_timeout_seconds),
         max_rounds=s.model_max_rounds,
         max_tool_executions=s.model_max_tool_calls,
         request_deadline_s=float(s.model_request_deadline_seconds),
         cost_budget_usd=s.model_cost_budget_usd,
-        price_in_per_mtok=float(os.environ.get("SETUHAUL_MODEL_PRICE_IN_PER_MTOK", "0") or 0),
-        price_out_per_mtok=float(os.environ.get("SETUHAUL_MODEL_PRICE_OUT_PER_MTOK", "0") or 0),
+        price_in_per_mtok=float(e.get("SETUHAUL_MODEL_PRICE_IN_PER_MTOK", "0") or 0),
+        price_out_per_mtok=float(e.get("SETUHAUL_MODEL_PRICE_OUT_PER_MTOK", "0") or 0),
     )
 
 
@@ -246,6 +248,18 @@ def _api_error(resp: httpx.Response) -> str:
     return f"HTTP {resp.status_code}" + (f": {detail[:200]}" if detail else "")
 
 
+# The providers build_gateway knows.
+PROVIDERS = ("anthropic", "openai")
+
+
+class UnconfiguredGateway:
+    """Used when no provider is set: every turn takes the safe model-outage path."""
+
+    # Always fails with MODEL_NOT_CONFIGURED, which sends the turn down the safe outage path.
+    def complete(self, messages: Sequence[ModelMessage], tools: Sequence[dict[str, Any]], policy: ModelPolicy) -> ModelResponse:
+        raise ModelUnavailable("MODEL_NOT_CONFIGURED")
+
+
 # Anthropic Messages API client.
 class AnthropicAdapter:
     """Messages API over httpx. ``transport`` lets tests inject a mock; the key never leaves the env."""
@@ -340,7 +354,10 @@ class OpenAIAdapter:
     compatible endpoint (for example Azure OpenAI).
     """
 
-    def __init__(self, api_key: str | None = None, transport: httpx.BaseTransport | None = None, base_url: str | None = None) -> None:
+    def __init__(self, api_key: str | None = None, transport: httpx.BaseTransport | None = None, base_url: str | None = None,
+                 reasoning_effort: str | None = None) -> None:
+        # None: read the environment at each call.
+        self._effort = reasoning_effort
         self._key = api_key if api_key is not None else os.environ.get("SETUHAUL_MODEL_API_KEY", "")
         self._transport = transport
         # The endpoint, overridable (for example for Azure OpenAI).
@@ -379,7 +396,8 @@ class OpenAIAdapter:
         if os.environ.get("SETUHAUL_OPENAI_SEND_TEMPERATURE") == "1":
             body["temperature"] = policy.temperature
         # Optional reasoning effort setting.
-        effort = os.environ.get("SETUHAUL_OPENAI_REASONING_EFFORT", "").strip()
+        configured = os.environ.get("SETUHAUL_OPENAI_REASONING_EFFORT", "") if self._effort is None else self._effort
+        effort = configured.strip()
         if effort:  # some reasoning models reject function tools unless this is "none" (provider error, 2026-11-20)
             body["reasoning_effort"] = effort
         # Same call and the same error translation as the Anthropic adapter; only the URL, headers and body differ.
@@ -418,11 +436,16 @@ class OpenAIAdapter:
 
 
 # Choose the adapter named by the policy; anything else is 'not configured'.
-def build_gateway(policy: ModelPolicy) -> ModelGateway:
+def build_gateway(policy: ModelPolicy, env: Mapping[str, str] | None = None,
+                  transport: httpx.BaseTransport | None = None) -> ModelGateway:
+    # With env given, the key and options come from it alone, never from the process environment.
+    key = None if env is None else env.get("SETUHAUL_MODEL_API_KEY", "")
     if policy.provider == "anthropic":
-        return AnthropicAdapter()
+        return AnthropicAdapter(api_key=key, transport=transport)
     if policy.provider == "openai":
-        return OpenAIAdapter()
+        return OpenAIAdapter(api_key=key, transport=transport,
+                             base_url=None if env is None else env.get("SETUHAUL_OPENAI_BASE_URL"),
+                             reasoning_effort=None if env is None else env.get("SETUHAUL_OPENAI_REASONING_EFFORT", ""))
     raise ModelUnavailable("MODEL_NOT_CONFIGURED", f"unsupported or unset provider {policy.provider!r}")
 
 
@@ -507,6 +530,7 @@ def run_bounded_loop(
     tool_schemas: Sequence[dict[str, Any]],
     executor: ToolExecutor,
     clock: Clock,
+    trace_env: Mapping[str, str] | None = None,
 ) -> LoopOutcome:
     # Make sure no tracing leaves the machine unless the opt-in tracer is explicitly built below.
     disable_external_tracing()
@@ -586,7 +610,7 @@ def run_bounded_loop(
     )
 
     # None unless LangSmith is switched on, approved AND a key is set.
-    tracer = build_tracer()
+    tracer = build_tracer(trace_env)
     # Run settings. The recursion limit is only a backstop; the real caps are enforced in the nodes above.
     config: RunnableConfig = {"recursion_limit": 2 * policy.max_rounds + 10}  # backstop only
     # Attach the scrubbing tracer only when enabled.

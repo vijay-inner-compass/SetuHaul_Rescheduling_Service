@@ -276,6 +276,11 @@ key), and are kept until the database is deleted.
 * The demo rebuilds its database at each start, so its history resets; its clock is frozen. The `--auto-login` demo user is not an
   admin, so sign in as an admin to see the tab.
 
+### Configuration tab
+
+With `SETUHAUL_SETTINGS_KEY` set (see `.env.example`), **Admin > Configuration** changes the model, LangSmith and Telegram settings
+from the next message. A saved value overrides the environment until **Reset to .env**. The demo console shows the tab read only.
+
 ### Database
 
 Migrations 011 to 014 add the tables. `make_working_db` (section 7) creates a new migrated copy. To upgrade a working database you want to keep:

@@ -16,6 +16,7 @@ import re
 
 # sqlite3 for the Connection type and database errors.
 import sqlite3
+from collections.abc import Mapping
 
 # dataclass for the bundle of services.
 from dataclasses import dataclass
@@ -135,6 +136,8 @@ class ConversationServices:
     sink: EscalationSink
     fallback_sink: EscalationSink  # used when the primary sink (or the database) is down
     exporter: InMemoryExporter | None = None
+    # The LangSmith settings in force; None reads the environment.
+    trace_env: Mapping[str, str] | None = None
 
 
 # The single entry point: one inbound message in, one verified reply out.
@@ -345,7 +348,8 @@ def _handle(
     with start_span("model.loop", rctx, exporter=services.exporter) as span:
         # Run the model with its caps: rounds, tool executions, deadline and cost.
         outcome: LoopOutcome = run_bounded_loop(services.gateway, services.policy, messages, registry.schemas(),
-                                                registry.execute, clock)
+                                                registry.execute, clock,
+                                                trace_env=services.trace_env)
         # A safety stop: mark the span.
         if outcome.status != "DONE":
             span.set_reason(outcome.error_code or outcome.status)

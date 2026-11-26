@@ -117,8 +117,11 @@ def send_driver_notifications(conn: sqlite3.Connection, clock: Clock, client: te
 class DriverNoticeRunner:
     """Sends queued driver notices every few seconds on its own thread. One server process only, or messages repeat."""
 
-    def __init__(self, clock: Clock, client: telegram.TelegramClient, conn_factory: Callable[[], sqlite3.Connection],
-                 interval_s: float = 5.0) -> None:
+    def __init__(self, clock: Clock, client: telegram.TelegramClient | None,
+                 conn_factory: Callable[[], sqlite3.Connection], interval_s: float = 5.0,
+                 client_source: Callable[[], telegram.TelegramClient | None] | None = None) -> None:
+        # When given, asked for the client before every pass.
+        self._client_source = client_source
         self._clock = clock
         self._client = client
         # SQLite connections cannot cross threads, so each pass opens its own.
@@ -132,9 +135,13 @@ class DriverNoticeRunner:
     def run_once(self) -> DeliveryResult | None:
         """One pass; None when it failed. A failure never stops the loop."""
         try:
+            client = self._client if self._client_source is None else self._client_source()
+            # No bot at the moment: leave the queue exactly as it is.
+            if client is None:
+                return None
             conn = self._factory()
             try:
-                return send_driver_notifications(conn, self._clock, self._client, not_before=self._not_before)
+                return send_driver_notifications(conn, self._clock, client, not_before=self._not_before)
             finally:
                 conn.close()
         except Exception as exc:  # noqa: BLE001 - a locked database or a client fault is retried on the next pass

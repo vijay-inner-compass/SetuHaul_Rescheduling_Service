@@ -35,17 +35,17 @@ def _int(value: object) -> int | None:
 
 
 def register_telegram_routes(app: FastAPI, deps: AppDeps, pipeline: Pipeline) -> None:
-    def send(chat_id: int, text: str, button: bool = False) -> None:
+    def send(client: telegram.TelegramClient | None, chat_id: int, text: str, button: bool = False) -> None:
         # A failed send must not turn into a Telegram retry storm: log the class only (never the token) and carry on.
-        if deps.telegram is None:
+        if client is None:
             _LOG.warning("telegram reply dropped: no client configured")
             return
         try:
-            deps.telegram.send(chat_id, text, request_contact_button=button)
+            client.send(chat_id, text, request_contact_button=button)
         except telegram.TelegramSendError as exc:
             _LOG.warning("telegram send failed: %s", exc)
 
-    def handle(update: dict[str, Any], update_id: int, rid: str) -> None:
+    def handle(client: telegram.TelegramClient | None, update: dict[str, Any], update_id: int, rid: str) -> None:
         msg = update.get("message")
         if not isinstance(msg, dict):
             return
@@ -70,26 +70,26 @@ def register_telegram_routes(app: FastAPI, deps: AppDeps, pipeline: Pipeline) ->
                     result = telegram.bind_from_contact(
                         conn, telegram_user_id=user_id, chat_id=chat_id, contact_user_id=_int(contact.get("user_id")),
                         contact_phone=str(contact.get("phone_number", "")), clock=deps.clock)
-                    send(chat_id, telegram.BOUND_REPLY if result == telegram.BindResult.BOUND else telegram.NEUTRAL_REFUSAL)
+                    send(client, chat_id, telegram.BOUND_REPLY if result == telegram.BindResult.BOUND else telegram.NEUTRAL_REFUSAL)
                 elif telegram.has_binding(conn, user_id):
                     # Bound once but revoked or no longer eligible: the neutral refusal, nothing reaches the engine.
-                    send(chat_id, telegram.NEUTRAL_REFUSAL)
+                    send(client, chat_id, telegram.NEUTRAL_REFUSAL)
                 else:
-                    send(chat_id, telegram.SHARE_PROMPT, button=True)
+                    send(client, chat_id, telegram.SHARE_PROMPT, button=True)
                 return
             text = msg.get("text")
             # Contacts, photos, stickers and the like from a bound driver are ignored.
             if not isinstance(text, str) or not text.strip():
                 return
             if len(text) > MAX_TEXT:
-                send(chat_id, telegram.TOO_LONG_REPLY)
+                send(client, chat_id, telegram.TOO_LONG_REPLY)
                 return
             try:
                 trusted = telegram.trusted_context(conn, driver_id)
                 # The update id (prefixed, so it cannot collide with the HMAC channel's ids) is the message id, so Telegram's retry of the same update is deduplicated.
                 payload = MessageIn(sender=trusted.phone_e164, message_id=f"tg:{update_id}", text=text)  # type: ignore[call-arg]
             except (AuthError, ValidationError):
-                send(chat_id, telegram.NEUTRAL_REFUSAL)
+                send(client, chat_id, telegram.NEUTRAL_REFUSAL)
                 return
             resp = pipeline(conn, trusted, payload, rid)
             if resp.status_code != 200:
@@ -98,7 +98,7 @@ def register_telegram_routes(app: FastAPI, deps: AppDeps, pipeline: Pipeline) ->
             body = json.loads(bytes(resp.body))
             # A replayed duplicate was already answered the first time.
             if not body.get("duplicate") and body.get("reply"):
-                send(chat_id, str(body["reply"]))
+                send(client, chat_id, str(body["reply"]))
         finally:
             conn.close()
 
@@ -106,11 +106,18 @@ def register_telegram_routes(app: FastAPI, deps: AppDeps, pipeline: Pipeline) ->
     async def telegram_webhook(request: Request) -> JSONResponse:
         rid = request.state.request_id
         # Without a configured secret the route never accepts anything.
-        if not deps.telegram_secret:
+        from setuhaul.api import telegram_in_force
+
+        # Read once, so one request cannot mix an old secret with a new bot.
+        try:
+            secret, client = await run_in_threadpool(telegram_in_force, deps)
+        except (sqlite3.Error, FileNotFoundError):
+            return JSONResponse({"status": "REJECTED", "reason_code": "DATABASE_UNAVAILABLE", "request_id": rid}, status_code=503)
+        if not secret:
             return JSONResponse({"status": "REJECTED", "reason_code": "TELEGRAM_NOT_CONFIGURED", "request_id": rid}, status_code=503)
         # The secret is checked before the body is read or parsed.
         given = request.headers.get("x-telegram-bot-api-secret-token", "").encode()
-        if not hmac.compare_digest(given, deps.telegram_secret):
+        if not hmac.compare_digest(given, secret):
             return JSONResponse({"status": "REJECTED", "reason_code": "INVALID_SECRET", "request_id": rid}, status_code=401)
         try:
             update = json.loads(await request.body())
@@ -120,7 +127,7 @@ def register_telegram_routes(app: FastAPI, deps: AppDeps, pipeline: Pipeline) ->
         if update_id is None:
             return JSONResponse({"status": "REJECTED", "reason_code": "INVALID_REQUEST", "request_id": rid}, status_code=400)
         try:
-            await run_in_threadpool(handle, update, update_id, rid)
+            await run_in_threadpool(handle, client, update, update_id, rid)
         except (sqlite3.Error, FileNotFoundError):
             return JSONResponse({"status": "REJECTED", "reason_code": "DATABASE_UNAVAILABLE", "request_id": rid}, status_code=503)
         # Always 200 for a well-formed update, so Telegram does not retry.

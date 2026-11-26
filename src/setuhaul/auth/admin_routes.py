@@ -105,7 +105,20 @@ def register_admin_routes(app: FastAPI, deps: AppDeps) -> None:
     # The LangSmith summary for the Model tab, read only when the admin presses the button.
     @app.get("/v1/admin/model/langsmith")
     async def langsmith_summary(user: Annotated[User, Depends(require_role("ADMIN"))]) -> Response:
-        return JSONResponse(await run_in_threadpool(load_summary))
+        from setuhaul.api import env_in_force
+
+        def read() -> dict[str, Any]:
+            if deps.settings is None:
+                return load_summary()
+            conn = open_connection(path=deps.db_path, readonly=True)
+            try:
+                settings = env_in_force(deps, conn)
+            finally:
+                conn.close()
+            # Read outside the connection: LangSmith can be slow.
+            return load_summary(settings)
+
+        return JSONResponse(await run_in_threadpool(read))
 
     @app.get("/v1/drivers/pending")
     async def pending(request: Request, user: Annotated[User, Depends(require_role("ADMIN"))]) -> Response:
