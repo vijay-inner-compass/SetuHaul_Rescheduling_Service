@@ -40,7 +40,8 @@ if TYPE_CHECKING:
 # Where the external scripts and styles live, and the only names that may be served from there.
 ASSET_DIR = Path(__file__).parent / "assets"
 ASSET_TYPES = {"app.css": "text/css; charset=utf-8", "common.js": "text/javascript; charset=utf-8",
-               "admin.js": "text/javascript; charset=utf-8", "warehouse.js": "text/javascript; charset=utf-8"}
+               "admin.js": "text/javascript; charset=utf-8", "tabs.js": "text/javascript; charset=utf-8",
+               "warehouse.js": "text/javascript; charset=utf-8"}
 # Sent with every HTML response: nothing but our own files may run or load, and nothing is cached.
 SECURITY_HEADERS = {
     "Content-Security-Policy": ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
@@ -175,6 +176,12 @@ def _landing(google: bool, local_admin: bool, notice: str = "") -> str:
             '</div></main><script src="/app/assets/common.js" defer></script></body></html>')
 
 
+def _tabs(items: tuple[tuple[str, str], ...]) -> str:
+    # The section switcher shared by the warehouse and admin screens; tabs.js does the switching.
+    links = "".join(f'<a href="#{key}" data-tab="{key}">{esc(label)}</a>' for key, label in items)
+    return f'<nav class="tabs" aria-label="Sections">{links}</nav>'
+
+
 # ---- admin screen -----------------------------------------------------------------------------------------
 def _users_section(conn: sqlite3.Connection, me: User) -> str:
     facilities = [(r["facility_id"], f"{r['facility_id']} - {r['facility_name']}")
@@ -197,7 +204,7 @@ def _users_section(conn: sqlite3.Connection, me: User) -> str:
               f'<label>Facilities <select name="facilities" multiple size="4">{_options(facilities)}</select></label>'
               '<button type="submit">Invite</button></form>')
     table = _table(("Email", "Name", "Role", "Status", "Facilities", "Last login", ""), rows)
-    return f'<section id="users"><h2>Users</h2>{table}{invite}</section>'
+    return f'<section id="users" data-panel="users"><h2>Users</h2>{table}{invite}</section>'
 
 
 def _pending_section(conn: sqlite3.Connection) -> str:
@@ -210,7 +217,7 @@ def _pending_section(conn: sqlite3.Connection) -> str:
         rows.append([esc(did), esc(d["driver_name"]), esc(mask_phone(d["phone"])), esc(d["carrier_id"]), esc(d["vehicle_id"]),
                      esc(d["licence_expiry"]), actions])
     table = _table(("Driver", "Name", "Phone", "Carrier", "Vehicle", "Licence expiry", ""), rows, "No drivers are waiting.")
-    return f'<section id="pending"><h2>Pending drivers</h2>{table}</section>'
+    return f'<section id="pending" data-panel="pending"><h2>Pending drivers</h2>{table}</section>'
 
 
 def _decided_section(conn: sqlite3.Connection) -> str:
@@ -226,7 +233,7 @@ def _decided_section(conn: sqlite3.Connection) -> str:
                      esc(d["licence_expiry"]), esc(d["approval_status"]), action])
     table = _table(("Driver", "Name", "Phone", "Carrier", "Vehicle", "Licence expiry", "Approval", ""), rows,
                    "No onboarded drivers have been decided yet.")
-    return f'<section id="decided"><h2>Onboarded drivers</h2>{table}</section>'
+    return f'<section id="decided" data-panel="decided"><h2>Onboarded drivers</h2>{table}</section>'
 
 
 def _audit_section(conn: sqlite3.Connection, query: dict[str, str]) -> str:
@@ -248,21 +255,24 @@ def _audit_section(conn: sqlite3.Connection, query: dict[str, str]) -> str:
         target = " ".join(x for x in (r["target_type"], r["target_id"]) if x)
         rows.append([esc(r["ts"]), esc(r["actor_email"] or r["actor_user_id"] or ""), esc(r["action"]), esc(target),
                      esc(r["outcome"]), f'<code>{esc(detail)}</code>'])
-    form = ('<form method="get" action="/admin" class="filters">'
+    form = ('<form method="get" action="/admin#audit" class="filters">'
             f'<label>Actor <input name="actor" value="{esc(actor)}"></label>'
             f'<label>Action <input name="action" value="{esc(action)}"></label>'
             f'<label>Outcome <input name="outcome" value="{esc(outcome)}"></label>'
             f'<label>Since <input name="since" value="{esc(since)}" placeholder="2026-08-04T09:00:00+05:30"></label>'
             '<button type="submit">Filter</button></form>')
     table = _table(("Time", "Actor", "Action", "Target", "Outcome", "Detail"), rows, "No matching entries.")
-    return f'<section id="audit"><h2>Audit log</h2>{form}{note}{table}</section>'
+    return f'<section id="audit" data-panel="audit"><h2>Audit log</h2>{form}{note}{table}</section>'
 
 
 def render_admin(conn: sqlite3.Connection, me: User, query: dict[str, str]) -> str:
     # The admin screen: users, pending drivers, decided onboarded drivers (suspend / re-approve), audit log.
     nav = '<a href="/admin">Admin</a> <a href="/warehouse">Warehouse</a>'
-    body = _users_section(conn, me) + _pending_section(conn) + _decided_section(conn) + _audit_section(conn, query)
-    return _layout("Admin", body, ("common.js", "admin.js"), me, nav)
+    tabs = _tabs((("users", "Users"), ("pending", "Pending drivers"), ("decided", "Onboarded drivers"), ("audit", "Audit log")))
+    # The "wh" class gives the same tab styling as the warehouse screen.
+    body = ('<div class="wh">' + tabs + _users_section(conn, me) + _pending_section(conn) + _decided_section(conn)
+            + _audit_section(conn, query) + "</div>")
+    return _layout("Admin", body, ("common.js", "tabs.js", "admin.js"), me, nav)
 
 
 # ---- warehouse screen -------------------------------------------------------------------------------------
@@ -503,13 +513,12 @@ def render_warehouse(conn: sqlite3.Connection, user: User, now: Any, facility: s
         if board is None:
             return _message_page("Not found", "No such facility.", 404, user)
     today = now.date()
-    tabs = "".join(f'<a href="#{key}" data-tab="{key}">{label}</a>' for key, label in
-                   (("board", "Dock board"), ("messages", "Messages"), ("projects", "Projects"), ("drivers", "Drivers")))
-    body = ('<div class="wh">' + _attention(conn, user, today, board) + f'<nav class="tabs" aria-label="Sections">{tabs}</nav>'
+    tabs = _tabs((("board", "Dock board"), ("messages", "Messages"), ("projects", "Projects"), ("drivers", "Drivers")))
+    body = ('<div class="wh">' + _attention(conn, user, today, board) + tabs
             + _board_section(board, options, chosen, now) + _messages_section(conn, user, now)
             + _projects_section(conn, user, today, options) + _drivers_section(conn, user, today) + "</div>")
     nav = '<a href="/warehouse">Warehouse</a>' + (' <a href="/admin">Admin</a>' if user.role == "ADMIN" else "")
-    return _respond(_layout("Warehouse", body, ("common.js", "warehouse.js"), user, nav))
+    return _respond(_layout("Warehouse", body, ("common.js", "tabs.js", "warehouse.js"), user, nav))
 
 
 # ---- routes -----------------------------------------------------------------------------------------------
