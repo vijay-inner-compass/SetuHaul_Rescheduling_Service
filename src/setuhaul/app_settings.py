@@ -111,7 +111,7 @@ _WEBHOOK_MARK = "telegram_webhook_registered"
 
 
 def webhook_fingerprint(token: str, secret: str, url: str) -> str:
-    return hashlib.sha256("\n".join((token, secret, url)).encode()).hexdigest()
+    return hashlib.sha256(f"{token}\n{secret}\n{url}".encode()).hexdigest()
 
 
 def mark_webhook(conn: sqlite3.Connection, fingerprint: str, *, updated_by: str, now: datetime) -> None:
