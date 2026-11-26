@@ -72,7 +72,8 @@ def test_the_list_holds_only_app_shipments_in_scope(world: World, made: str) -> 
     assert [r["shipment_id"] for r in rows] == [made]
     assert rows[0] == {"shipment_id": made, "order_reference": NUMBER, "driver_id": "DRV001",
                        "driver_name": rows[0]["driver_name"], "facility_id": "FAC-JAI-01",
-                       "planned_start": f"{DAY}T12:00:00+05:30", "state": "WAITING"}
+                       "planned_start": f"{DAY}T12:00:00+05:30", "state": "WAITING",
+                       "pass_state": "ISSUED", "delivered": False, "visit_state": "EXPECTED"}
     assert _listed(world, "wh_b") == [] and len(_listed(world, "admin")) == 1
 
 
