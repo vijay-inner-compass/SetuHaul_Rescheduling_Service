@@ -360,8 +360,15 @@ def create_app(deps: AppDeps) -> FastAPI:
         # Nothing else is checked here.
         return {"status": "ok"}
 
+    # The commit this build was made from (the image sets GIT_COMMIT); a deploy compares it with what it shipped.
+    @app.get("/version")
+    async def version() -> dict[str, str]:
+        return {"commit": os.environ.get("GIT_COMMIT") or "unknown"}
+
     # Readiness: the database and cache can actually be used.
     @app.get("/ready")
+    # The path the deploy standard asks every app for.
+    @app.get("/health/ready")
     async def ready(request: Request) -> JSONResponse:
         # Returns a reason code, or None if ready.
         def check() -> str | None:
