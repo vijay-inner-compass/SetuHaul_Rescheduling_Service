@@ -20,6 +20,7 @@ from setuhaul.auth.http import reject as _reject
 from setuhaul.auth.users import User
 from setuhaul.db import immediate, open_connection
 from setuhaul.identity import AuthError
+from setuhaul.runtime_settings import MIN_TELEGRAM_SECRET_LEN
 from setuhaul.settings_checks import check_bot, check_model, register_webhook
 
 if TYPE_CHECKING:
@@ -149,6 +150,9 @@ def _telegram_changes(body: TelegramBody, now: app_settings.Effective) -> dict[s
     after = {**now.env, **values}
     if values and not all(after.get(name) for name in app_settings.SECTIONS["telegram"]):
         raise AuthError("TELEGRAM_PAIR_REQUIRED")
+    # A short secret (possible from .env) also leaves the bot off.
+    if values and len(after["SETUHAUL_TELEGRAM_WEBHOOK_SECRET"]) < MIN_TELEGRAM_SECRET_LEN:
+        raise AuthError("TELEGRAM_SECRET_TOO_SHORT")
     return values
 
 
@@ -312,6 +316,9 @@ def register_settings_routes(app: FastAPI, deps: AppDeps) -> None:
                     raise AuthError("PUBLIC_URL_NOT_SET")
                 if not token or not secret:
                     raise AuthError("TELEGRAM_PAIR_REQUIRED")
+                # The webhook route would refuse every call made with it.
+                if len(secret) < MIN_TELEGRAM_SECRET_LEN:
+                    raise AuthError("TELEGRAM_SECRET_TOO_SHORT")
                 with source.http() as http:
                     ok, message = register_webhook(token, secret, deps.public_url, http)
                 action, section = "TELEGRAM_WEBHOOK_REGISTER", "telegram"

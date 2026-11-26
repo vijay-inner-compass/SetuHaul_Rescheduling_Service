@@ -135,3 +135,23 @@ def test_register_without_a_public_url_is_refused(world: World) -> None:
     r = admin.post(f"{URL}/telegram/register-webhook", json={})
     assert r.status_code == 422 and r.json()["reason_code"] == "PUBLIC_URL_NOT_SET" and seen == []
     assert admin.get(URL).json()["webhook"] == "no_public_url"
+
+
+@pytest.mark.parametrize("short", ["short", "x" * 15])
+def test_a_short_env_secret_is_never_reported_as_working(world: World, short: str) -> None:
+    seen = _use(world, _good)
+    world.deps.settings = SettingsSource({**BASE, "SETUHAUL_TELEGRAM_WEBHOOK_SECRET": short},
+                                         transport=httpx.MockTransport(_good))
+    admin = world.client("admin")
+    # Saving only a token would leave the bot off, so it is refused and nothing is saved.
+    r = admin.post(f"{URL}/telegram", json={"bot_token": TOKEN})
+    assert r.status_code == 422 and r.json()["reason_code"] == "TELEGRAM_SECRET_TOO_SHORT"
+    assert _rows(world) == []
+    # Nor can the short secret be registered from a token already in .env.
+    world.deps.settings = SettingsSource({**BASE, "SETUHAUL_TELEGRAM_BOT_TOKEN": TOKEN,
+                                          "SETUHAUL_TELEGRAM_WEBHOOK_SECRET": short}, transport=httpx.MockTransport(_good))
+    r = admin.post(f"{URL}/telegram/register-webhook", json={})
+    assert r.status_code == 422 and r.json()["reason_code"] == "TELEGRAM_SECRET_TOO_SHORT" and seen == []
+    assert admin.get(URL).json()["webhook"] == "needs_registering"
+    # A new secret puts it right.
+    assert admin.post(f"{URL}/telegram", json={"generate_secret": "yes"}).status_code == 200
