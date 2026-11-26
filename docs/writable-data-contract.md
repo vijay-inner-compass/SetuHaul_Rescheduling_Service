@@ -17,6 +17,8 @@ One exception (decision D93): `shipments.destination_facility_id` may be updated
 
 Shipments tab (decision D100, migration 016): the Warehouse screen may insert into `shipments`, `appointment_slots`, `appointments` (`booking_source` `WAREHOUSE`), `labour_windows` and `consignee_commitments` (both `source` `WAREHOUSE_UI`). Only for a shipment it created and the driver has not confirmed, it may change `driver_id`, `vehicle_id`, `carrier_id`, or cancel the shipment and its appointment. Supplied rows are never changed.
 
+Dock Access Pass (decision D101): for shipments created on that tab, the app may set `shipments.current_status` (`AT_GATE` at check-in, `COMPLETED` at check-out), insert or update `facility_checkins` (`gate_in_ts`, `arrival_state`, `gate_out_ts`), and set the appointment `COMPLETED` at unloading complete.
+
 `shipments`, `vehicle_types`, `facilities`, `docks`, `dock_status_events`, `appointment_slots`, `facility_rules`, `facility_contacts`, `facility_checkins`. Slot blocking stays an operations action.
 
 ## New extension tables (named separately)
@@ -33,7 +35,9 @@ Writable connections use WAL, `foreign_keys=on` and a 5000 ms busy timeout (`set
 | `change_driver` | `shipments`, `shipment_assignments` (attempts reset), `audit_log` |
 | `cancel_shipment` | `shipments`, `appointments`, `appointment_events`, `audit_log` |
 | `unlock` | `shipment_assignments`, `audit_log` |
-| order check | `shipment_assignments`, `chat_messages`, `inbound_messages`; on the fifth wrong number a hand-off case |
+| pass check | `shipment_assignments`, `chat_messages`, `inbound_messages`; on the fifth wrong code a hand-off case |
+| pass issue, delivery, revoke | `truck_visits`, `visit_shipments`, `dock_access_authorizations`, `audit_log` |
+| gate check-in, unloading, check-out | the three tables above, `shipments`, `facility_checkins`, `appointments`, `appointment_events`, `audit_log` |
 
 ## Phase 5 writes (exact)
 | Operation | Tables written | Transaction |
