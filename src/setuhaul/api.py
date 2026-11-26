@@ -134,6 +134,9 @@ from setuhaul.model_gateway import (
     ModelUnavailable,
 )
 
+# Records model calls for the admin Model tab.
+from setuhaul.model_usage import TurnRecorder
+
 # Span exporter type.
 from setuhaul.observability import InMemoryExporter
 
@@ -472,6 +475,8 @@ def create_app(deps: AppDeps) -> FastAPI:
         if cur.rowcount == 0:  # another worker claimed it between our check and our insert
             return _reject(request_id, 409, "IN_PROGRESS")
 
+        # Collects this message's model calls.
+        recorder = TurnRecorder(clock)
         try:
             # The driver's newest open conversation thread.
             row = conn.execute("select thread_id from chat_threads where driver_id=? and thread_status<>'CLOSED' "
@@ -482,7 +487,7 @@ def create_app(deps: AppDeps) -> FastAPI:
             thread_id = row["thread_id"] if row else memory.open_thread(driver_id)
             # Bundle everything the conversation needs.
             services = ConversationServices(
-                conn=conn, memory=memory, gateway=deps.gateway_factory(), policy=deps.policy, sink=SqlEscalationSink(conn, clock),
+                conn=conn, memory=memory, gateway=recorder.wrap(deps.gateway_factory()), policy=deps.policy, sink=SqlEscalationSink(conn, clock),
                 fallback_sink=JsonlEscalationSink(deps.fallback_path), exporter=deps.exporter)
             # Run the conversation (this is where the model is called).
             reply = handle_message(InboundMessage(message_id=payload.message_id, text=payload.text),
@@ -494,6 +499,8 @@ def create_app(deps: AppDeps) -> FastAPI:
                 # Mark the message processed and store its reply.
                 conn.execute("update inbound_messages set status='DONE', reply_json=?, completed_at=? where driver_id=? and message_id=?",
                              (json.dumps(body), clock.now().isoformat(), driver_id, payload.message_id))
+            # Saved after the reply is stored; it cannot fail the message.
+            recorder.save(conn, reply.status, reply.escalation_reason)
             # First-time answer.
             return JSONResponse({**body, "duplicate": False, "request_id": request_id})
         # Anything went wrong: free the id so the channel's retry can succeed, then re-raise.
@@ -501,6 +508,8 @@ def create_app(deps: AppDeps) -> FastAPI:
             with immediate(conn):  # free the id so the provider's retry can succeed
                 conn.execute("delete from inbound_messages where driver_id=? and message_id=? and status='PROCESSING'",
                              (driver_id, payload.message_id))
+            # The calls made before the failure still happened.
+            recorder.save(conn, "ERROR", None)
             raise
 
     # The driver webhook.

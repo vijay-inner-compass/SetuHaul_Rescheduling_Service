@@ -62,6 +62,5 @@ def test_action_buttons_still_work_after_the_live_refresh_replaces_them() -> Non
 
 def test_tabs_still_hide_a_section_the_live_refresh_replaced() -> None:
     # A panel list taken at load keeps the old node, so the new one would stay on screen under every tab.
-    script = (Path(__file__).resolve().parents[1] / "src/setuhaul/auth/assets/warehouse.js").read_text(encoding="utf-8")
-    tabs = script[script.index("// Tabs:"):script.index("// Driver chats")]
+    tabs = (Path(__file__).resolve().parents[1] / "src/setuhaul/auth/assets/tabs.js").read_text(encoding="utf-8")
     assert tabs.index("function show()") < tabs.index('querySelectorAll("[data-panel]")')

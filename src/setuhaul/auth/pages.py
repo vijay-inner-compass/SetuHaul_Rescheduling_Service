@@ -33,6 +33,15 @@ from setuhaul.board import build_board
 from setuhaul.db import IST, open_connection
 from setuhaul.escalation import get_case
 from setuhaul.identity import AuthError
+from setuhaul.langsmith_trace import tracing_status
+from setuhaul.model_report import (
+    CallTotals,
+    call_totals,
+    message_totals,
+    recent_calls,
+    recent_turns,
+)
+from setuhaul.model_usage import describe_model
 
 if TYPE_CHECKING:
     from setuhaul.api import AppDeps
@@ -40,7 +49,9 @@ if TYPE_CHECKING:
 # Where the external scripts and styles live, and the only names that may be served from there.
 ASSET_DIR = Path(__file__).parent / "assets"
 ASSET_TYPES = {"app.css": "text/css; charset=utf-8", "common.js": "text/javascript; charset=utf-8",
-               "admin.js": "text/javascript; charset=utf-8", "warehouse.js": "text/javascript; charset=utf-8"}
+               "admin.js": "text/javascript; charset=utf-8", "tabs.js": "text/javascript; charset=utf-8",
+               "model.js": "text/javascript; charset=utf-8",
+               "warehouse.js": "text/javascript; charset=utf-8"}
 # Sent with every HTML response: nothing but our own files may run or load, and nothing is cached.
 SECURITY_HEADERS = {
     "Content-Security-Policy": ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
@@ -175,6 +186,12 @@ def _landing(google: bool, local_admin: bool, notice: str = "") -> str:
             '</div></main><script src="/app/assets/common.js" defer></script></body></html>')
 
 
+def _tabs(items: tuple[tuple[str, str], ...]) -> str:
+    # The section switcher shared by the warehouse and admin screens; tabs.js does the switching.
+    links = "".join(f'<a href="#{key}" data-tab="{key}">{esc(label)}</a>' for key, label in items)
+    return f'<nav class="tabs" aria-label="Sections">{links}</nav>'
+
+
 # ---- admin screen -----------------------------------------------------------------------------------------
 def _users_section(conn: sqlite3.Connection, me: User) -> str:
     facilities = [(r["facility_id"], f"{r['facility_id']} - {r['facility_name']}")
@@ -197,7 +214,7 @@ def _users_section(conn: sqlite3.Connection, me: User) -> str:
               f'<label>Facilities <select name="facilities" multiple size="4">{_options(facilities)}</select></label>'
               '<button type="submit">Invite</button></form>')
     table = _table(("Email", "Name", "Role", "Status", "Facilities", "Last login", ""), rows)
-    return f'<section id="users"><h2>Users</h2>{table}{invite}</section>'
+    return f'<section id="users" data-panel="users"><h2>Users</h2>{table}{invite}</section>'
 
 
 def _pending_section(conn: sqlite3.Connection) -> str:
@@ -210,7 +227,7 @@ def _pending_section(conn: sqlite3.Connection) -> str:
         rows.append([esc(did), esc(d["driver_name"]), esc(mask_phone(d["phone"])), esc(d["carrier_id"]), esc(d["vehicle_id"]),
                      esc(d["licence_expiry"]), actions])
     table = _table(("Driver", "Name", "Phone", "Carrier", "Vehicle", "Licence expiry", ""), rows, "No drivers are waiting.")
-    return f'<section id="pending"><h2>Pending drivers</h2>{table}</section>'
+    return f'<section id="pending" data-panel="pending"><h2>Pending drivers</h2>{table}</section>'
 
 
 def _decided_section(conn: sqlite3.Connection) -> str:
@@ -226,7 +243,7 @@ def _decided_section(conn: sqlite3.Connection) -> str:
                      esc(d["licence_expiry"]), esc(d["approval_status"]), action])
     table = _table(("Driver", "Name", "Phone", "Carrier", "Vehicle", "Licence expiry", "Approval", ""), rows,
                    "No onboarded drivers have been decided yet.")
-    return f'<section id="decided"><h2>Onboarded drivers</h2>{table}</section>'
+    return f'<section id="decided" data-panel="decided"><h2>Onboarded drivers</h2>{table}</section>'
 
 
 def _audit_section(conn: sqlite3.Connection, query: dict[str, str]) -> str:
@@ -248,21 +265,110 @@ def _audit_section(conn: sqlite3.Connection, query: dict[str, str]) -> str:
         target = " ".join(x for x in (r["target_type"], r["target_id"]) if x)
         rows.append([esc(r["ts"]), esc(r["actor_email"] or r["actor_user_id"] or ""), esc(r["action"]), esc(target),
                      esc(r["outcome"]), f'<code>{esc(detail)}</code>'])
-    form = ('<form method="get" action="/admin" class="filters">'
+    form = ('<form method="get" action="/admin#audit" class="filters">'
             f'<label>Actor <input name="actor" value="{esc(actor)}"></label>'
             f'<label>Action <input name="action" value="{esc(action)}"></label>'
             f'<label>Outcome <input name="outcome" value="{esc(outcome)}"></label>'
             f'<label>Since <input name="since" value="{esc(since)}" placeholder="2026-08-04T09:00:00+05:30"></label>'
             '<button type="submit">Filter</button></form>')
     table = _table(("Time", "Actor", "Action", "Target", "Outcome", "Detail"), rows, "No matching entries.")
-    return f'<section id="audit"><h2>Audit log</h2>{form}{note}{table}</section>'
+    return f'<section id="audit" data-panel="audit"><h2>Audit log</h2>{form}{note}{table}</section>'
 
 
-def render_admin(conn: sqlite3.Connection, me: User, query: dict[str, str]) -> str:
+# ---- model tab (report only) ------------------------------------------------------------------------------
+def _seconds(ms: float | None) -> str:
+    return "-" if ms is None else f"{ms / 1000:.1f} s"
+
+
+def _cost(t: CallTotals) -> str:
+    # Never a made-up zero: without a price there is no cost to show.
+    if t.cost_usd is None:
+        return "price not set" if t.unpriced else "-"
+    return f"${t.cost_usd:.4f}" + (" (some calls unpriced)" if t.unpriced else "")
+
+
+def _model_in_use(deps: AppDeps) -> str:
+    provider, model_id = describe_model(deps.gateway_factory(), deps.policy)
+    if provider == "stand-in":
+        return model_id
+    return f"{provider} / {model_id}" if model_id else "No model configured"
+
+
+def _model_limits(deps: AppDeps) -> str:
+    p = deps.policy
+
+    def price(value: float) -> str:
+        return f"USD {value:g}" if value > 0 else "price not set"
+
+    items = (("Call timeout", f"{p.call_timeout_s:g} s"), ("Retries", str(p.retries)), ("Calls per message", str(p.max_rounds)),
+             ("Tool runs per message", str(p.max_tool_executions)), ("Message deadline", f"{p.request_deadline_s:g} s"),
+             ("Cost budget per message", f"USD {p.cost_budget_usd:g}"), ("Output length", f"{p.max_output_tokens} tokens"),
+             ("Input price per million tokens", price(p.price_in_per_mtok)),
+             ("Output price per million tokens", price(p.price_out_per_mtok)), ("LangSmith tracing", tracing_status().reason))
+    return "<h3>Limits in force</h3>" + _table(("Limit", "Value"), [[esc(k), esc(v)] for k, v in items])
+
+
+def _model_figures(conn: sqlite3.Connection, now: datetime) -> str:
+    totals = (("Last 24 h", call_totals(conn, now.timestamp() - 86400)), ("All recorded", call_totals(conn, None)))
+    calls = recent_calls(conn)
+    health = "No model calls recorded yet."
+    if calls:
+        every = totals[1][1]
+        health = (f"Last call {calls[0]['outcome']} at {calls[0]['ts']}; "
+                  f"{round(100 * every.failed / every.calls)}% of calls failed")
+    rows = [[esc(label), esc(t.calls), esc(t.failed), esc(_seconds(t.p50_ms)), esc(_seconds(t.p95_ms)),
+             esc(f"{t.input_tokens} / {t.output_tokens}"), esc(_cost(t))] for label, t in totals]
+    summary = _table(("Period", "Calls", "Failed", "Typical", "95th", "Tokens in / out", "Est. cost"), rows)
+    m = message_totals(conn)
+    per_message = _table(
+        ("Messages", "Typical", "95th", "Calls each", "Tokens in / out each", "Est. cost each"),
+        [[esc(m.messages), esc(_seconds(m.p50_ms)), esc(_seconds(m.p95_ms)), esc(f"{m.avg_calls:.1f}"),
+          esc(f"{m.avg_input_tokens:.0f} / {m.avg_output_tokens:.0f}"),
+          esc("price not set" if m.avg_cost_usd is None else f"${m.avg_cost_usd:.4f}")]] if m.messages else [],
+        "No model calls recorded yet.")
+    turns = _table(
+        ("Time", "Status", "Reason", "Handled in", "Calls", "Tokens in / out", "Est. cost"),
+        [[esc(r["ts"]), esc(r["status"]), esc(r["reason_code"] or ""), esc(_seconds(r["duration_ms"])), esc(r["calls"]),
+          esc(f"{r['input_tokens']} / {r['output_tokens']}"),
+          esc("-" if r["cost_usd"] is None else f"${r['cost_usd']:.4f}")] for r in recent_turns(conn)],
+        "No model calls recorded yet.")
+    each = _table(
+        ("Time", "Model", "Result", "Response time", "Tokens in / out", "Est. cost"),
+        [[esc(r["ts"]), esc(f"{r['provider']} / {r['model_id']}"), esc(r["outcome"]), esc(_seconds(r["duration_ms"])),
+          esc(f"{r['input_tokens']} / {r['output_tokens']}"),
+          esc("-" if r["cost_usd"] is None else f"${r['cost_usd']:.4f}")] for r in calls],
+        "No model calls recorded yet.")
+    return (f'<p>Health: {esc(health)}</p><div class="scroll">{summary}</div>'
+            f'<h3>Per driver message</h3><div class="scroll">{per_message}</div>'
+            f'<h3>Recent messages</h3><div class="scroll">{turns}</div><h3>Recent calls</h3><div class="scroll">{each}</div>')
+
+
+_LANGSMITH_PANEL = (
+    '<h3>LangSmith</h3><p class="note">LangSmith traces the conversation loop, not the provider request: it has no reliable token or '
+    'cost figures, and a handled model failure can appear as a successful run.</p>'
+    '<button type="button" id="langsmith-load">Load from LangSmith</button><div id="langsmith-result"></div>')
+
+
+def _model_section(conn: sqlite3.Connection, deps: AppDeps) -> str:
+    try:
+        figures = _model_figures(conn, deps.clock.now())
+    # A database from before migration 014: say so here, and leave the rest of the screen working.
+    except sqlite3.OperationalError as error:
+        if "no such table" not in str(error):
+            raise
+        figures = '<p class="empty">This database has no model records yet. Apply the migrations, then restart.</p>'
+    return ('<section id="model" data-panel="model"><h2>Model</h2>'
+            f"<p>In use: {esc(_model_in_use(deps))}</p>{figures}{_model_limits(deps)}{_LANGSMITH_PANEL}</section>")
+
+
+def render_admin(conn: sqlite3.Connection, me: User, query: dict[str, str], deps: AppDeps) -> str:
     # The admin screen: users, pending drivers, decided onboarded drivers (suspend / re-approve), audit log.
     nav = '<a href="/admin">Admin</a> <a href="/warehouse">Warehouse</a>'
-    body = _users_section(conn, me) + _pending_section(conn) + _decided_section(conn) + _audit_section(conn, query)
-    return _layout("Admin", body, ("common.js", "admin.js"), me, nav)
+    tabs = _tabs((("users", "Users"), ("pending", "Pending drivers"), ("decided", "Onboarded drivers"), ("audit", "Audit log"), ("model", "Model")))
+    # The "wh" class gives the same tab styling as the warehouse screen.
+    body = ('<div class="wh">' + tabs + _users_section(conn, me) + _pending_section(conn) + _decided_section(conn)
+            + _audit_section(conn, query) + _model_section(conn, deps) + "</div>")
+    return _layout("Admin", body, ("common.js", "tabs.js", "admin.js", "model.js"), me, nav)
 
 
 # ---- warehouse screen -------------------------------------------------------------------------------------
@@ -503,13 +609,12 @@ def render_warehouse(conn: sqlite3.Connection, user: User, now: Any, facility: s
         if board is None:
             return _message_page("Not found", "No such facility.", 404, user)
     today = now.date()
-    tabs = "".join(f'<a href="#{key}" data-tab="{key}">{label}</a>' for key, label in
-                   (("board", "Dock board"), ("messages", "Messages"), ("projects", "Projects"), ("drivers", "Drivers")))
-    body = ('<div class="wh">' + _attention(conn, user, today, board) + f'<nav class="tabs" aria-label="Sections">{tabs}</nav>'
+    tabs = _tabs((("board", "Dock board"), ("messages", "Messages"), ("projects", "Projects"), ("drivers", "Drivers")))
+    body = ('<div class="wh">' + _attention(conn, user, today, board) + tabs
             + _board_section(board, options, chosen, now) + _messages_section(conn, user, now)
             + _projects_section(conn, user, today, options) + _drivers_section(conn, user, today) + "</div>")
     nav = '<a href="/warehouse">Warehouse</a>' + (' <a href="/admin">Admin</a>' if user.role == "ADMIN" else "")
-    return _respond(_layout("Warehouse", body, ("common.js", "warehouse.js"), user, nav))
+    return _respond(_layout("Warehouse", body, ("common.js", "tabs.js", "warehouse.js"), user, nav))
 
 
 # ---- routes -----------------------------------------------------------------------------------------------
@@ -585,7 +690,7 @@ def register_pages(app: FastAPI, deps: AppDeps) -> None:
         if isinstance(user, Response):
             return user
         query = {k: v for k, v in request.query_params.items()}
-        return read_page(user, lambda conn: _respond(render_admin(conn, user, query)))
+        return read_page(user, lambda conn: _respond(render_admin(conn, user, query, deps)))
 
     @app.get("/warehouse", response_class=HTMLResponse)
     def warehouse_page(request: Request) -> Response:
