@@ -7,8 +7,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from uuid import uuid4
 
 import pytest
+from langsmith.schemas import Run
 
 from setuhaul import langsmith_report
 from setuhaul.clock import FakeClock
@@ -67,9 +69,23 @@ def test_asks_for_no_inputs_or_outputs() -> None:
     client = Client()
     _load(client)
     asked = client.asked[0]
-    assert asked["select"] == ["start_time", "end_time", "error", "status"]
-    assert (asked["project_name"], asked["is_root"], asked["limit"]) == ("p", True, 500)
+    assert asked["select"] == ["id", "name", "run_type", "start_time", "end_time", "error", "status"]
+    assert (asked["project_name"], asked["is_root"]) == ("p", True)
+    # The server takes small pages only, so no limit is sent: the reader stops at 500 itself.
+    assert "limit" not in asked
     assert client.built[0]["api_key"] == "ls_test" and client.built[0]["timeout_ms"] == 5000
+
+
+def test_runs_with_only_the_selected_fields_are_accepted_by_the_real_run_model() -> None:
+    # The server returns just what was selected, and the client builds its own Run from it.
+    class Strict(Client):
+        def list_runs(self, **kwargs: Any) -> Any:
+            row = {"id": uuid4(), "name": "n", "run_type": "chain", "start_time": NOW - timedelta(seconds=5),
+                   "end_time": NOW, "error": None, "status": "success"}
+            return iter([Run(**{k: row[k] for k in kwargs["select"]})])
+
+    result = _load(Strict())
+    assert (result["state"], result["runs"], result["p50_ms"]) == ("ok", 1, 5000)
 
 
 def test_window_is_real_time() -> None:
@@ -79,7 +95,8 @@ def test_window_is_real_time() -> None:
 
 
 def test_a_full_page_is_marked_capped() -> None:
-    assert _load(Client([_run(1)] * 500))["capped"] is True
+    full = _load(Client([_run(1)] * 700))
+    assert full["capped"] is True and full["runs"] == 500
 
 
 def test_errors_are_quiet() -> None:

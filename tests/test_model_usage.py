@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any
 
@@ -98,6 +99,25 @@ def test_save_failure_is_swallowed(tmp_path: Path) -> None:
     try:
         rec.save(conn, "REPLIED", None)
     finally:
+        conn.close()
+
+
+def test_a_locked_database_does_not_hold_up_the_message(tmp_path: Path) -> None:
+    path = make_working_db(tmp_path / "locked.sqlite3")
+    rec = _recorder()
+    _ask(rec, [ModelResponse(text="x")])
+    holder, conn = open_connection(path=path), open_connection(path=path)
+    try:
+        holder.execute("begin immediate")
+        before = conn.execute("pragma busy_timeout").fetchone()[0]
+        started = time.perf_counter()
+        rec.save(conn, "REPLIED", None)
+        assert time.perf_counter() - started < 1.0
+        # The connection waits as long as before for everything else.
+        assert conn.execute("pragma busy_timeout").fetchone()[0] == before
+    finally:
+        holder.rollback()
+        holder.close()
         conn.close()
 
 

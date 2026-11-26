@@ -55,6 +55,9 @@ from setuhaul.stub_model import StubGateway
 # The service's logger.
 logger = logging.getLogger("setuhaul")
 
+# How long a save may wait for another writer.
+_SAVE_WAIT_MS = 100
+
 
 # The provider and model id to record for this gateway.
 def describe_model(gateway: ModelGateway, policy: ModelPolicy) -> tuple[str, str]:
@@ -135,7 +138,11 @@ class TurnRecorder:
             return
         duration = (self.timer() - self._started) * 1000
         turn_id = f"MT-{uuid.uuid4().hex}"
+        waited: int | None = None
         try:
+            # The reply is waiting on this: if the database is busy, give up quickly instead of the usual five seconds.
+            waited = conn.execute("pragma busy_timeout").fetchone()[0]
+            conn.execute(f"pragma busy_timeout={_SAVE_WAIT_MS}")
             with immediate(conn):
                 conn.execute("insert into model_turns values (?,?,?,?,?,?)",
                              (turn_id, self._at.isoformat(), self._at.timestamp(), duration, status, reason_code))
@@ -146,3 +153,7 @@ class TurnRecorder:
         # Missing tables, a locked file, anything: the driver's reply matters more than the record.
         except Exception as error:  # noqa: BLE001 - recording must never fail a driver's message
             logger.warning("model_usage.save_failed: %s", type(error).__name__)
+        finally:
+            # Everything else on this connection waits as long as before.
+            if waited is not None:
+                conn.execute(f"pragma busy_timeout={int(waited)}")

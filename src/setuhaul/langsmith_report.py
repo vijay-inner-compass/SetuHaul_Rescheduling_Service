@@ -18,6 +18,9 @@ from collections.abc import Callable, Mapping
 # Real time: traces are stamped with it, even when the service runs on a frozen demo clock.
 from datetime import UTC, datetime, timedelta
 
+# Stops reading at the cap.
+from itertools import islice
+
 # Loose typing for the client.
 from typing import Any
 
@@ -71,8 +74,11 @@ def load_summary(
         extra = {"api_url": endpoint} if endpoint else {}
         client = (client_factory or _client)(api_key=key, timeout_ms=_TIMEOUT_MS, **extra)
         runs: list[Any] = []
-        for run in client.list_runs(project_name=project, is_root=True, start_time=now() - timedelta(hours=24),
-                                    select=["start_time", "end_time", "error", "status"], limit=_LIMIT):
+        # id, name and run_type are required by the client's Run model; no inputs or outputs. No limit is sent, because the server
+        # takes small pages only: the client follows the pages and the reading stops at the cap.
+        found = client.list_runs(project_name=project, is_root=True, start_time=now() - timedelta(hours=24),
+                                 select=["id", "name", "run_type", "start_time", "end_time", "error", "status"])
+        for run in islice(found, _LIMIT):
             # Several pages can add up; give up rather than hang the request.
             if timer() - started > _DEADLINE_S:
                 raise TimeoutError
