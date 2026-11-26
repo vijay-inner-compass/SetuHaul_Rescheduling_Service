@@ -149,14 +149,14 @@ class ConversationMemoryStore:
     def _owns_shipment(self, driver_id: str, shipment_id: str) -> None:
         # The shipment must belong to the driver.
         if self._db.execute(
-            "select 1 from shipments where shipment_id=? and driver_id=?", (shipment_id, driver_id)
+            "select 1 from v_driver_shipments where shipment_id=? and driver_id=?", (shipment_id, driver_id)
         ).fetchone() is None:
             raise AuthError("FOREIGN_SHIPMENT")
 
     def _active_shipments(self, driver_id: str) -> tuple[str, ...]:
         # The driver's shipments that are not finished, in a fixed order.
         rows = self._db.execute(
-            "select shipment_id from shipments where driver_id=? "
+            "select shipment_id from v_driver_shipments where driver_id=? "
             "and current_status not in ('COMPLETED','CANCELLED') order by shipment_id",
             (driver_id,),
         )

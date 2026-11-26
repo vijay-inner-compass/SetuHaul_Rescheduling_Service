@@ -66,7 +66,7 @@ _ACTIVE = "('PENDING_CONFIRMATION','CONFIRMED','IN_PROGRESS')"
 
 def _require_shipment(conn: sqlite3.Connection, driver_id: str, shipment_id: str) -> sqlite3.Row:
     # The shipment must exist and belong to the driver; the same error covers both cases so ids cannot be probed.
-    row = conn.execute("select * from shipments where shipment_id=? and driver_id=?", (shipment_id, driver_id)).fetchone()
+    row = conn.execute("select * from v_driver_shipments where shipment_id=? and driver_id=?", (shipment_id, driver_id)).fetchone()
     if row is None:
         raise AuthError("FOREIGN_SHIPMENT")
     assert isinstance(row, sqlite3.Row)

@@ -397,7 +397,7 @@ def _check_system(status: str, outcome: OutcomeClass) -> None:
 def _list_my_shipments(ctx: ToolContext, _: NoArgs) -> dict[str, Any]:
     rows = ctx.conn.execute(
         "select s.shipment_id, s.order_reference, s.current_status, s.destination_facility_id, le.effective_eta_ts, "
-        "sl.slot_start_ts, d.dock_code from shipments s join v_latest_eta le using(shipment_id) "
+        "sl.slot_start_ts, d.dock_code from v_driver_shipments s join v_latest_eta le using(shipment_id) "
         "left join appointments a on a.shipment_id=s.shipment_id and a.is_current=1 and a.appointment_status in "
         "('PENDING_CONFIRMATION','CONFIRMED','IN_PROGRESS') left join appointment_slots sl on sl.slot_id=a.slot_id "
         "left join docks d on d.dock_id=sl.dock_id where s.driver_id=? and s.current_status not in "
@@ -789,7 +789,7 @@ def _request_partner_slot(ctx: ToolContext, a: PartnerSlotArgs) -> dict[str, Any
 # Availability rule: the partner tool is offered only when one of the driver's open loads is bound for a partner warehouse.
 def _has_partner_shipment(ctx: ToolContext) -> bool:
     return ctx.conn.execute(
-        "select 1 from shipments s join facilities f on f.facility_id=s.destination_facility_id where s.driver_id=? and f.is_partner=1 "
+        "select 1 from v_driver_shipments s join facilities f on f.facility_id=s.destination_facility_id where s.driver_id=? and f.is_partner=1 "
         "and s.current_status not in ('CANCELLED','COMPLETED','IN_DOCK') limit 1", (ctx.driver_id,)).fetchone() is not None
 
 

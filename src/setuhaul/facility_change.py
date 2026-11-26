@@ -63,7 +63,7 @@ def expire_due(conn: sqlite3.Connection, clock: Clock) -> int:
 def request_change(conn: sqlite3.Connection, clock: Clock, *, driver_id: str, shipment_id: str, to_facility_id: str) -> ChangeResult:
     with immediate(conn):
         expire_due(conn, clock)
-        ship = conn.execute("select driver_id, destination_facility_id, current_status from shipments where shipment_id=?",
+        ship = conn.execute("select driver_id, destination_facility_id, current_status from v_driver_shipments where shipment_id=?",
                             (shipment_id,)).fetchone()
         # Another driver's load and an unknown one answer alike.
         if ship is None or ship["driver_id"] != driver_id or ship["current_status"] in NOT_MOVABLE:

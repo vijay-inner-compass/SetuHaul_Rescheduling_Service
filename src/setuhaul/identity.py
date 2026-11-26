@@ -202,7 +202,7 @@ def authorize_shipment(conn: sqlite3.Connection, ctx: TrustedDriverContext, ship
     """Missing and foreign shipments are indistinguishable to the caller."""
     # The shipment must exist AND belong to this driver; one query checks both.
     row = conn.execute(
-        "select 1 from shipments where shipment_id=? and driver_id=?", (shipment_id, ctx.driver_id)
+        "select 1 from v_driver_shipments where shipment_id=? and driver_id=?", (shipment_id, ctx.driver_id)
     ).fetchone()
     # One error for both "no such shipment" and "someone else's shipment", so ids cannot be probed.
     if row is None:
