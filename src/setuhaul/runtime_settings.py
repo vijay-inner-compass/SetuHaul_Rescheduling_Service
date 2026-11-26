@@ -57,6 +57,9 @@ class SettingsSource:
         # No provider, an unknown one, or a saved key that cannot be read: the safe outage path.
         if policy.provider not in PROVIDERS or "SETUHAUL_MODEL_API_KEY" in now.unreadable:
             return UnconfiguredGateway(), policy
+        # A key from .env belongs to the provider named there; never send it to a different saved one.
+        if now.source["SETUHAUL_MODEL_API_KEY"] != "saved" and policy.provider != self.base_env.get("SETUHAUL_MODEL_PROVIDER", ""):
+            return UnconfiguredGateway(), policy
         return build_gateway(policy, now.env, self._transport), policy
 
     def telegram(self, conn: sqlite3.Connection) -> tuple[bytes, TelegramClient | None]:

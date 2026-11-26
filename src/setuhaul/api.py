@@ -843,6 +843,10 @@ def create_app(deps: AppDeps) -> FastAPI:
     from setuhaul.auth.admin_api import register_admin_api
 
     register_admin_api(app, deps)
+    # Settings the admin may change: read, save, reset.
+    from setuhaul.auth.settings_routes import register_settings_routes
+
+    register_settings_routes(app, deps)
     # The sign-in landing page and the admin and warehouse screens.
     from setuhaul.auth.pages import register_pages
 
