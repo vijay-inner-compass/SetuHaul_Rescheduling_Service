@@ -58,6 +58,10 @@ def new_shipment(world: Any, slot_id: str, **over: Any) -> Any:
 
 
 def create(world: Any, slot_id: str, who: str = "wh_a", **over: Any) -> str:
+    return create_with_code(world, slot_id, who, **over)[0]
+
+
+def create_with_code(world: Any, slot_id: str, who: str = "wh_a", **over: Any) -> tuple[str, str]:
     conn = open_connection(path=world.path)
     try:
         return shipments.create_shipment(conn, actor=world.users[who], data=new_shipment(world, slot_id, **over), clock=world.clock)

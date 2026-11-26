@@ -51,6 +51,8 @@ ROLE_GUARDED: dict[tuple[str, str], frozenset[str]] = {
     ("POST", "/v1/warehouse/shipments/{shipment_id}/driver"): BOTH,
     ("POST", "/v1/warehouse/shipments/{shipment_id}/cancel"): BOTH,
     ("POST", "/v1/warehouse/shipments/{shipment_id}/unlock"): BOTH,
+    ("POST", "/v1/warehouse/shipments/{shipment_id}/pass"): BOTH,
+    ("POST", "/v1/warehouse/shipments/{shipment_id}/pass/revoke"): BOTH,
     ("GET", "/v1/warehouse/facility-changes"): BOTH,
     ("POST", "/v1/warehouse/facility-changes/{request_id}/approve"): BOTH,
     ("POST", "/v1/warehouse/facility-changes/{request_id}/reject"): BOTH,

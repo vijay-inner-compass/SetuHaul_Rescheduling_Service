@@ -369,6 +369,11 @@ T: dict[str, dict[str, str]] = {
         "hi": "ऑर्डर {order} कन्फर्म हो गया है। डिलीवरी {facility} पर, तय समय {when}। मैं कैसे मदद करूँ?",
         "hinglish": "Order {order} confirm ho gaya hai. Delivery {facility} par, planned {when}. Main kaise madad karun?",
     },
+    "pass_delivery": {
+        "en": "Your Dock Access Pass for order {order}:\n{code}\nSend it back here to confirm the shipment, and show it at the gate.",
+        "hi": "ऑर्डर {order} के लिए आपका डॉक एक्सेस पास:\n{code}\nशिपमेंट कन्फर्म करने के लिए इसे यहाँ वापस भेजें, और गेट पर दिखाएँ।",
+        "hinglish": "Order {order} ke liye aapka Dock Access Pass:\n{code}\nShipment confirm karne ke liye ise yahan wapas bhejiye, aur gate par dikhaiye.",
+    },
     "order_mismatch": {
         "en": "That order number does not match. Please check it and send it again.",
         "hi": "यह ऑर्डर नंबर मेल नहीं खाता। कृपया जाँचकर दोबारा भेजें।",

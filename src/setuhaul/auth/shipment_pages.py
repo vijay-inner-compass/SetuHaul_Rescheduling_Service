@@ -14,6 +14,8 @@ from setuhaul.auth.users import User
 from setuhaul.auth.warehouse_routes import drivers_in_scope
 from setuhaul.db import IST, parse_operational_timestamp
 
+_PASS = {"ISSUED": "Sent", "VALIDATED": "At the gate", "ACTIVE": "Inside", "COMPLETED": "Unloaded", "CLOSED": "Closed",
+         "EXPIRED": "Expired", "REVOKED": "Revoked", "CANCELLED": "Cancelled"}
 _STATES = {"WAITING": "Waiting for driver", "CONFIRMED": "Confirmed", "LOCKED": "Locked", "CANCELLED": "Cancelled"}
 
 
@@ -104,8 +106,16 @@ def shipments_section(conn: sqlite3.Connection, user: User, now: datetime, facil
                        + _button("Cancel", f"{base}/cancel", confirm=f"Cancel {s['order_reference']}?"))
         if s["state"] == "LOCKED":
             actions += _button("Unlock", f"{base}/unlock")
+        if s["state"] != "CANCELLED" and s["visit_state"] in (None, "EXPECTED"):
+            actions += _button("Send new pass", f"{base}/pass", confirm=f"Replace the pass for {s['order_reference']}?")
+        if s["pass_state"] in ("ISSUED", "VALIDATED", "ACTIVE", "COMPLETED"):
+            actions += (f'<form data-api="{esc(base)}/pass/revoke">' + _input("Reason", "reason", extra='required maxlength="200"')
+                        + '<button type="submit">Revoke pass</button><span class="note" data-form-result role="alert"></span></form>')
+        pass_text = _PASS.get(s["pass_state"] or "", "None")
+        if s["pass_state"] == "ISSUED" and not s["delivered"]:
+            pass_text = "Pass not delivered"
         rows.append([esc(s["order_reference"]), esc(f"{s['driver_id']} - {s['driver_name']}"), esc(s["facility_id"]),
-                     esc(_when(s["planned_start"])), esc(_STATES[s["state"]]), actions])
-    table = _table(("Order", "Driver", "Destination", "Planned", "State", ""), rows, "No shipments have been created here yet.")
+                     esc(_when(s["planned_start"])), esc(_STATES[s["state"]]), esc(pass_text), actions])
+    table = _table(("Order", "Driver", "Destination", "Planned", "State", "Pass", ""), rows, "No shipments have been created here yet.")
     return (f'<section id="shipments" data-panel="shipments"><h2>Shipments</h2><div class="scroll">{table}</div>'
             f"{availability}{new}</section>")

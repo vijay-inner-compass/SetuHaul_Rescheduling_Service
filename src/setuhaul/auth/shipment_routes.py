@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict
 from starlette.concurrency import run_in_threadpool
 
+from setuhaul import passes
 from setuhaul.auth import shipments
 from setuhaul.auth.authz import require_role
 from setuhaul.auth.http import reject
@@ -19,7 +20,8 @@ from setuhaul.auth.users import User
 from setuhaul.db import open_connection
 from setuhaul.identity import AuthError
 
-_CONFLICT = {"DUPLICATE_ORDER_NUMBER", "SLOT_NOT_AVAILABLE", "ALREADY_CONFIRMED", "NOT_LOCKED"}
+_CONFLICT = {"DUPLICATE_ORDER_NUMBER", "SLOT_NOT_AVAILABLE", "ALREADY_CONFIRMED", "NOT_LOCKED", "VISIT_IN_PROGRESS", "VISIT_CLOSED",
+             "NO_LIVE_PASS"}
 
 
 # What the person at the screen is told for each refusal.
@@ -40,6 +42,11 @@ _MESSAGES = {
     "SHIPMENT_NOT_FOUND": "That shipment no longer exists for you. Reload the page.",
     "ALREADY_CONFIRMED": "The driver has already confirmed it, so it cannot be changed here.",
     "NOT_LOCKED": "That shipment is not locked.",
+    "VISIT_IN_PROGRESS": "The truck is already inside, so the pass cannot be replaced.",
+    "VISIT_CLOSED": "That visit has ended.",
+    "NO_LIVE_PASS": "There is no pass to revoke.",
+    "NO_APPOINTMENT": "The shipment has no booked slot. Book one first.",
+    "REASON_REQUIRED": "Say why the pass is being revoked.",
 }
 # Why the booking rules refused a slot.
 _WHY = {
@@ -57,6 +64,12 @@ def _message(exc: AuthError) -> str | None:
     if text is None or not isinstance(exc, shipments.DoesNotFit):
         return text
     return f"{text}: {'; '.join(_WHY.get(r, r) for r in exc.reasons)}."
+
+
+class Revocation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str
 
 
 class DriverChange(BaseModel):
@@ -88,6 +101,11 @@ def register_shipment_routes(app: FastAPI, deps: Any) -> None:
         finally:
             conn.close()
 
+    def client() -> Any:
+        from setuhaul.api import telegram_in_force
+
+        return telegram_in_force(deps)[1]
+
     def ok(rid: str, status: int = 200, **fields: Any) -> Response:
         return JSONResponse({"status": "OK", **fields, "request_id": rid}, status_code=status)
 
@@ -113,7 +131,10 @@ def register_shipment_routes(app: FastAPI, deps: Any) -> None:
         rid = request.state.request_id
 
         def write(conn: sqlite3.Connection) -> Response:
-            return ok(rid, 201, shipment_id=shipments.create_shipment(conn, actor=user, data=body, clock=deps.clock))
+            shipment_id, code = shipments.create_shipment(conn, actor=user, data=body, clock=deps.clock)
+            # The code goes to the driver only, never into the response. A failed send is shown on the screen, not an error here.
+            passes.deliver(conn, client(), shipment_id, code, deps.clock)
+            return ok(rid, 201, shipment_id=shipment_id)
 
         return await run_in_threadpool(run, rid, write)
 
@@ -125,6 +146,28 @@ def register_shipment_routes(app: FastAPI, deps: Any) -> None:
         def write(conn: sqlite3.Connection) -> Response:
             shipments.change_driver(conn, actor=user, shipment_id=shipment_id, driver_id=body.driver_id,
                                     vehicle_id=body.vehicle_id, clock=deps.clock)
+            return ok(rid, shipment_id=shipment_id)
+
+        return await run_in_threadpool(run, rid, write)
+
+    @app.post("/v1/warehouse/shipments/{shipment_id}/pass")
+    async def new_pass(request: Request, shipment_id: str,
+                       user: Annotated[User, Depends(require_role("WAREHOUSE_AUTHORITY", "ADMIN"))]) -> Response:
+        rid = request.state.request_id
+
+        def write(conn: sqlite3.Connection) -> Response:
+            sent = passes.send_new(conn, client(), actor=user, shipment_id=shipment_id, clock=deps.clock)
+            return ok(rid, shipment_id=shipment_id, delivered=sent)
+
+        return await run_in_threadpool(run, rid, write)
+
+    @app.post("/v1/warehouse/shipments/{shipment_id}/pass/revoke")
+    async def revoke_pass(request: Request, shipment_id: str, body: Revocation,
+                          user: Annotated[User, Depends(require_role("WAREHOUSE_AUTHORITY", "ADMIN"))]) -> Response:
+        rid = request.state.request_id
+
+        def write(conn: sqlite3.Connection) -> Response:
+            passes.revoke(conn, actor=user, shipment_id=shipment_id, reason=body.reason, clock=deps.clock)
             return ok(rid, shipment_id=shipment_id)
 
         return await run_in_threadpool(run, rid, write)

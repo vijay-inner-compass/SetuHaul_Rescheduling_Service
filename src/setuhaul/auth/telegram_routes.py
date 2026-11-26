@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 
+from setuhaul import passes
 from setuhaul.auth import telegram
 from setuhaul.db import open_connection
 from setuhaul.identity import AuthError, TrustedDriverContext
@@ -71,6 +72,9 @@ def register_telegram_routes(app: FastAPI, deps: AppDeps, pipeline: Pipeline) ->
                         conn, telegram_user_id=user_id, chat_id=chat_id, contact_user_id=_int(contact.get("user_id")),
                         contact_phone=str(contact.get("phone_number", "")), clock=deps.clock)
                     send(client, chat_id, telegram.BOUND_REPLY if result == telegram.BindResult.BOUND else telegram.NEUTRAL_REFUSAL)
+                    bound = telegram.resolve_driver(conn, user_id, today) if result == telegram.BindResult.BOUND else None
+                    if bound is not None:
+                        passes.send_waiting(conn, client, bound, deps.clock)
                 elif telegram.has_binding(conn, user_id):
                     # Bound once but revoked or no longer eligible: the neutral refusal, nothing reaches the engine.
                     send(client, chat_id, telegram.NEUTRAL_REFUSAL)
