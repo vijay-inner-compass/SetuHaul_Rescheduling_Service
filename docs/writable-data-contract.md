@@ -13,7 +13,9 @@ The audit and all Phase 1 code are read-only. The table below names what the pro
 | `operational_messages` | not written directly; downstream notices go through the new outbox | 6 |
 
 ## Supplied tables that are read-only
-One exception (decision D93): `shipments.destination_facility_id` may be updated, only when a facility change request is approved; the original is kept in `facility_change_requests` (migration 013). No other shipment column is written.
+One exception (decision D93): `shipments.destination_facility_id` may be updated, only when a facility change request is approved; the original is kept in `facility_change_requests` (migration 013). No other shipment column is written, except as the next paragraph says.
+
+Shipments tab (decision D100, migration 016): the Warehouse screen may insert into `shipments`, `appointment_slots`, `appointments` (`booking_source` `WAREHOUSE`), `labour_windows` and `consignee_commitments` (both `source` `WAREHOUSE_UI`). Only for a shipment it created and the driver has not confirmed, it may change `driver_id`, `vehicle_id`, `carrier_id`, or cancel the shipment and its appointment. Supplied rows are never changed.
 
 `shipments`, `vehicle_types`, `facilities`, `docks`, `dock_status_events`, `appointment_slots`, `facility_rules`, `facility_contacts`, `facility_checkins`. Slot blocking stays an operations action.
 
@@ -22,6 +24,16 @@ One exception (decision D93): `shipments.destination_facility_id` may be updated
 
 ## Rules
 Writable connections use WAL, `foreign_keys=on` and a 5000 ms busy timeout (`setuhaul.db.open_connection`). Writes happen in `BEGIN IMMEDIATE` transactions. The seed file in `data/` is migrated in place only through numbered files in `migrations/`; the original in `SetuHaul_Data_Package/` is never touched.
+
+## Shipments tab writes (exact)
+| Operation | Tables written |
+|---|---|
+| `open_availability` | `appointment_slots` (missing ones only), `labour_windows` (days with none), `audit_log` |
+| `create_shipment` | `shipments`, `appointments`, `consignee_commitments`, `shipment_assignments`, `audit_log` |
+| `change_driver` | `shipments`, `shipment_assignments` (attempts reset), `audit_log` |
+| `cancel_shipment` | `shipments`, `appointments`, `appointment_events`, `audit_log` |
+| `unlock` | `shipment_assignments`, `audit_log` |
+| order check | `shipment_assignments`, `chat_messages`, `inbound_messages`; on the fifth wrong number a hand-off case |
 
 ## Phase 5 writes (exact)
 | Operation | Tables written | Transaction |
