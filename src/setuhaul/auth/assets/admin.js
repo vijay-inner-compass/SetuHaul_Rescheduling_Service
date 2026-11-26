@@ -6,7 +6,7 @@
   var form = document.querySelector("#audit form.filters");
   if (form) {
     var clear = document.createElement("a");
-    clear.setAttribute("href", "/admin");
+    clear.setAttribute("href", "/admin#audit");
     clear.textContent = "Clear filters";
     form.appendChild(clear);
   }

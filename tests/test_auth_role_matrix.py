@@ -59,6 +59,7 @@ ROLE_GUARDED: dict[tuple[str, str], frozenset[str]] = {
     ("GET", "/v1/admin/audit"): ADMIN,
     ("POST", "/v1/drivers"): BOTH,
     ("GET", "/v1/drivers/pending"): ADMIN,
+    ("GET", "/v1/admin/model/langsmith"): ADMIN,
     ("POST", "/v1/drivers/{driver_id}/approve"): ADMIN,
     ("POST", "/v1/drivers/{driver_id}/reject"): ADMIN,
     ("POST", "/v1/projects"): BOTH,

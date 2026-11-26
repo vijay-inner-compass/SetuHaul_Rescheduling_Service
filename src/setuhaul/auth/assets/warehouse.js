@@ -25,28 +25,6 @@
   }
 })();
 
-// Tabs: one section at a time. The address keeps the choice, so a reload after an action stays put.
-(function () {
-  "use strict";
-  var tabs = document.querySelectorAll(".tabs a[data-tab]");
-  if (!tabs.length) {
-    return;
-  }
-  function show() {
-    // Looked up each time: the live refresh replaces whole sections.
-    var panels = document.querySelectorAll("[data-panel]");
-    var wanted = window.location.hash.slice(1);
-    var known = Array.prototype.some.call(panels, function (p) { return p.getAttribute("data-panel") === wanted; });
-    var key = known ? wanted : "board";
-    Array.prototype.forEach.call(panels, function (p) { p.hidden = p.getAttribute("data-panel") !== key; });
-    Array.prototype.forEach.call(tabs, function (a) {
-      a.setAttribute("aria-current", a.getAttribute("data-tab") === key ? "page" : "false");
-    });
-  }
-  window.addEventListener("hashchange", show);
-  show();
-})();
-
 // Driver chats and live refresh.
 (function () {
   "use strict";
