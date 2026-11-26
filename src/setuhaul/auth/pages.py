@@ -14,7 +14,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
-from setuhaul.api import claim_label
+from setuhaul.api import claim_label, model_in_force
 from setuhaul.auth import audit, onboarding, projects, sessions, telegram, users
 from setuhaul.auth.admin_api import DEFAULT_AUDIT_LIMIT, parse_since
 from setuhaul.auth.authz import AuthzError, assert_facility, require_role
@@ -34,6 +34,7 @@ from setuhaul.db import IST, open_connection
 from setuhaul.escalation import get_case
 from setuhaul.identity import AuthError
 from setuhaul.langsmith_trace import tracing_status
+from setuhaul.model_gateway import ModelGateway, ModelPolicy
 from setuhaul.model_report import (
     CallTotals,
     call_totals,
@@ -287,15 +288,14 @@ def _cost(t: CallTotals) -> str:
     return f"${t.cost_usd:.4f}" + (" (some calls unpriced)" if t.unpriced else "")
 
 
-def _model_in_use(deps: AppDeps) -> str:
-    provider, model_id = describe_model(deps.gateway_factory(), deps.policy)
+def _model_in_use(gateway: ModelGateway, policy: ModelPolicy) -> str:
+    provider, model_id = describe_model(gateway, policy)
     if provider == "stand-in":
         return model_id
     return f"{provider} / {model_id}" if model_id else "No model configured"
 
 
-def _model_limits(deps: AppDeps) -> str:
-    p = deps.policy
+def _model_limits(p: ModelPolicy) -> str:
 
     def price(value: float) -> str:
         return f"USD {value:g}" if value > 0 else "price not set"
@@ -357,8 +357,9 @@ def _model_section(conn: sqlite3.Connection, deps: AppDeps) -> str:
         if "no such table" not in str(error):
             raise
         figures = '<p class="empty">This database has no model records yet. Apply the migrations, then restart.</p>'
+    gateway, policy = model_in_force(deps, conn)
     return ('<section id="model" data-panel="model"><h2>Model</h2>'
-            f"<p>In use: {esc(_model_in_use(deps))}</p>{figures}{_model_limits(deps)}{_LANGSMITH_PANEL}</section>")
+            f"<p>In use: {esc(_model_in_use(gateway, policy))}</p>{figures}{_model_limits(policy)}{_LANGSMITH_PANEL}</section>")
 
 
 def render_admin(conn: sqlite3.Connection, me: User, query: dict[str, str], deps: AppDeps) -> str:

@@ -28,7 +28,7 @@ import sqlite3
 import uuid
 
 # Typing helpers.
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable
 
 # Builds the application's start-up and shut-down hook.
 from contextlib import asynccontextmanager
@@ -128,10 +128,8 @@ from setuhaul.memory import ConversationMemoryStore
 # Model types.
 from setuhaul.model_gateway import (
     ModelGateway,
-    ModelMessage,
     ModelPolicy,
-    ModelResponse,
-    ModelUnavailable,
+    UnconfiguredGateway,
 )
 
 # Records model calls for the admin Model tab.
@@ -146,6 +144,7 @@ from setuhaul.position import handle_driver_position, handle_new_position
 
 # Per-driver rate limiting.
 from setuhaul.rate_limit import RateLimits, check_rate_limit
+from setuhaul.runtime_settings import SettingsSource
 
 # The validated ping shape.
 from setuhaul.schemas import GpsPing
@@ -156,14 +155,6 @@ STALE_PROCESSING_SECONDS = 60
 SIGNATURE_WINDOW_SECONDS = 300
 # A GPS ping may be stamped at most this far (5 minutes) ahead of the server clock; allows small device clock drift only.
 GPS_MAX_FUTURE_SECONDS = 300
-
-
-class UnconfiguredGateway:
-    """Used when no provider is set: every turn takes the safe model-outage path."""
-
-    # Always fails with MODEL_NOT_CONFIGURED, which sends the turn down the safe outage path.
-    def complete(self, messages: Sequence[ModelMessage], tools: Sequence[dict[str, Any]], policy: ModelPolicy) -> ModelResponse:
-        raise ModelUnavailable("MODEL_NOT_CONFIGURED")
 
 
 @dataclass
@@ -182,6 +173,8 @@ class AppDeps:
     policy: ModelPolicy = field(default_factory=ModelPolicy)
     # Builds the model gateway for each message.
     gateway_factory: Callable[[], ModelGateway] = UnconfiguredGateway
+    # The real service's saved settings; None (tests, demo) uses policy and gateway_factory as given.
+    settings: SettingsSource | None = None
     # The clock.
     clock: Clock = field(default_factory=SystemClock)
     # Override for the rate limits.
@@ -214,6 +207,13 @@ class AppDeps:
 
 
 # The inbound webhook body. Unknown fields are rejected (extra='forbid').
+def model_in_force(deps: AppDeps, conn: sqlite3.Connection) -> tuple[ModelGateway, ModelPolicy]:
+    """The gateway and limits for the next call."""
+    if deps.settings is None:
+        return deps.gateway_factory(), deps.policy
+    return deps.settings.model(conn)
+
+
 class MessageIn(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -493,8 +493,9 @@ def create_app(deps: AppDeps) -> FastAPI:
             # Use the open thread, or start one.
             thread_id = row["thread_id"] if row else memory.open_thread(driver_id)
             # Bundle everything the conversation needs.
+            gateway, policy = model_in_force(deps, conn)
             services = ConversationServices(
-                conn=conn, memory=memory, gateway=recorder.wrap(deps.gateway_factory()), policy=deps.policy, sink=SqlEscalationSink(conn, clock),
+                conn=conn, memory=memory, gateway=recorder.wrap(gateway), policy=policy, sink=SqlEscalationSink(conn, clock),
                 fallback_sink=JsonlEscalationSink(deps.fallback_path), exporter=deps.exporter)
             # Run the conversation (this is where the model is called).
             reply = handle_message(InboundMessage(message_id=payload.message_id, text=payload.text),
@@ -874,7 +875,7 @@ def create_app_from_env() -> FastAPI:
         raise SystemExit(problem)
     # Coordinator tokens as a JSON map in an environment variable.
     tokens = json.loads(os.environ.get("SETUHAUL_COORDINATOR_TOKENS", "{}"))
-    from setuhaul.model_gateway import build_gateway, load_model_policy
+    from setuhaul.model_gateway import PROVIDERS, build_gateway, load_model_policy
 
     # Model limits and provider from the environment.
     policy = load_model_policy()
@@ -886,7 +887,7 @@ def create_app_from_env() -> FastAPI:
 
         factory = StubGateway
     # A configured provider: build its adapter once and reuse it.
-    elif policy.provider:
+    elif policy.provider in PROVIDERS:
         gw = build_gateway(policy)
         factory = lambda: gw
     else:
@@ -930,6 +931,7 @@ def create_app_from_env() -> FastAPI:
     # Assemble the dependencies and build the app.
     return create_app(AppDeps(
         telegram_secret=tg_secret, telegram=tg_client,
+        settings=SettingsSource(os.environ, stub=os.environ.get("SETUHAUL_USE_STUB_MODEL") == "1"),
         google=google, session_secret=os.environ.get("SETUHAUL_SESSION_SECRET", "").encode(),
         local_admin_enabled=os.environ.get("SETUHAUL_LOCAL_ADMIN") == "1",
         public_url=os.environ.get("SETUHAUL_PUBLIC_URL", ""),
@@ -942,4 +944,4 @@ def create_app_from_env() -> FastAPI:
 
 
 # Public names (some are re-exported for tests).
-__all__ = ["IST", "AppDeps", "create_app", "create_app_from_env", "parse_operational_timestamp", "timedelta"]
+__all__ = ["IST", "AppDeps", "UnconfiguredGateway", "create_app", "create_app_from_env", "parse_operational_timestamp", "timedelta"]
