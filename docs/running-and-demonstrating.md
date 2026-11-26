@@ -256,6 +256,7 @@ Below, `<base>` is the public origin of your service, for example `https://haul.
 | `SETUHAUL_LOCAL_ADMIN` | `1` shows the break-glass password form on `/` and enables `POST /auth/local-admin`; otherwise that route is 404 |
 | `SETUHAUL_TELEGRAM_BOT_TOKEN` | the bot's token; used to send replies |
 | `SETUHAUL_TELEGRAM_WEBHOOK_SECRET` | checked against Telegram's `X-Telegram-Bot-Api-Secret-Token` header; at least 16 characters. If either Telegram value is missing or the secret is short, `/v1/telegram/webhook` answers 503 |
+| `SETUHAUL_TELEGRAM_AUTO_REGISTER` | `1` registers `<SETUHAUL_PUBLIC_URL>/v1/telegram/webhook` with Telegram at every start-up, using the bot token and secret in force (saved values over `.env`). Off by default. **Turn it on for one running copy only**: a bot has one webhook, and the last registration wins |
 | `SETUHAUL_COORDINATOR_TOKENS` | JSON map `{"<token>": "<name>"}`: bearer access to `/v1/coordinator/cases...` for services. Not limited to facilities; names may not start with `web:` |
 | `SETUHAUL_WEBHOOK_SECRET` | HMAC key of the signed driver and GPS channel (not Telegram); when unset, that channel refuses every request (401) |
 
@@ -305,7 +306,10 @@ Migration 012 stops, changing nothing, if two projects have contract references 
 1. In Telegram, message `@BotFather`, send `/newbot`, choose a name and username, and keep the token it gives you.
 2. Generate a webhook secret: `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
 3. Set `SETUHAUL_TELEGRAM_BOT_TOKEN` and `SETUHAUL_TELEGRAM_WEBHOOK_SECRET` and start the service at a public HTTPS `<base>`.
-4. Register the webhook (once, and again whenever the URL or secret changes). Replace the placeholders; do not save the real values in a file or script:
+4. Register the webhook (once, and again whenever the URL or secret changes). **Register webhook** on the Configuration tab does this
+   using `SETUHAUL_PUBLIC_URL`, and `SETUHAUL_TELEGRAM_AUTO_REGISTER=1` does it at every start-up. A failed start-up registration does
+   not stop the service: it is logged as a warning and the tab shows that the webhook needs registering. By hand instead, replace the
+   placeholders (do not save the real values in a file or script):
 
 ```powershell
 Invoke-RestMethod -Method Post -Uri "https://api.telegram.org/bot<BOT_TOKEN>/setWebhook" -Body @{ url = "<base>/v1/telegram/webhook"; secret_token = "<WEBHOOK_SECRET>" }

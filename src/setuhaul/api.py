@@ -23,6 +23,7 @@ import os
 
 # sqlite3 for connections and database errors.
 import sqlite3
+import threading
 
 # uuid makes request ids.
 import uuid
@@ -148,6 +149,7 @@ from setuhaul.runtime_settings import MIN_TELEGRAM_SECRET_LEN, SettingsSource
 
 # The validated ping shape.
 from setuhaul.schemas import GpsPing
+from setuhaul.webhook_startup import register_at_start
 
 # A message stuck in PROCESSING for this long is presumed abandoned and may be reclaimed.
 STALE_PROCESSING_SECONDS = 60
@@ -204,6 +206,8 @@ class AppDeps:
     run_driver_notices: bool = False
     # Seconds between delivery passes.
     notice_interval_s: float = 5.0
+    # Tell Telegram this service's webhook address at start-up (needs settings and public_url).
+    auto_register_webhook: bool = False
 
 
 # The inbound webhook body. Unknown fields are rejected (extra='forbid').
@@ -323,6 +327,11 @@ def create_app(deps: AppDeps) -> FastAPI:
         elif deps.run_driver_notices and deps.telegram is not None:
             notices = DriverNoticeRunner(deps.clock, deps.telegram, lambda: open_connection(path=deps.db_path), deps.notice_interval_s)
             notices.start()
+        # On its own thread, so a slow or unreachable Telegram does not delay start-up.
+        registration = None
+        if deps.auto_register_webhook:
+            registration = threading.Thread(target=register_at_start, args=(deps,), name="setuhaul-webhook", daemon=True)
+            registration.start()
         try:
             # The application serves requests while suspended here.
             yield
@@ -332,6 +341,8 @@ def create_app(deps: AppDeps) -> FastAPI:
                 await run_in_threadpool(runner.stop)
             if notices is not None:
                 await run_in_threadpool(notices.stop)
+            if registration is not None:
+                await run_in_threadpool(registration.join, 25)
 
     # A bearer name that looks like a web identity would let that token act as a signed-in user's claims.
     for token_name in deps.coordinator_tokens.values():
@@ -957,6 +968,7 @@ def create_app_from_env() -> FastAPI:
         google=google, session_secret=os.environ.get("SETUHAUL_SESSION_SECRET", "").encode(),
         local_admin_enabled=os.environ.get("SETUHAUL_LOCAL_ADMIN") == "1",
         public_url=os.environ.get("SETUHAUL_PUBLIC_URL", ""),
+        auto_register_webhook=os.environ.get("SETUHAUL_TELEGRAM_AUTO_REGISTER") == "1",
         db_path=s.db_path, redis=redis,
         webhook_secret=os.environ.get("SETUHAUL_WEBHOOK_SECRET", "").encode(), coordinator_tokens=tokens,
         fallback_path=Path(os.environ.get("SETUHAUL_FALLBACK_ESCALATIONS", "escalations-fallback.jsonl")), policy=policy,
