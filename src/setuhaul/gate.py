@@ -99,7 +99,8 @@ def _assess(conn: sqlite3.Connection, actor: User, data: GateRequest, clock: Clo
         raise AuthError("TOO_EARLY")
     if row["status"] == "EXPIRED" or now > parse_operational_timestamp(row["valid_until_utc"]):
         raise AuthError("TOO_LATE")
-    if passes.current_appointment(conn, row["shipment_id"]) is None:
+    appointment = passes.current_appointment(conn, row["shipment_id"])
+    if appointment is None or appointment["facility_id"] != row["warehouse_id"]:
         raise AuthError("NO_APPOINTMENT")
     if not driver_eligible(conn, row["driver_id"], now.astimezone(IST).date()):
         raise AuthError("DRIVER_NOT_ELIGIBLE")

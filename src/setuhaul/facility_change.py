@@ -15,6 +15,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from setuhaul import passes
 from setuhaul.allocation import rank_options
 from setuhaul.auth import audit
 from setuhaul.auth.authz import facility_ids
@@ -105,6 +106,7 @@ def decide(conn: sqlite3.Connection, clock: Clock, *, actor: User, request_id: s
             if ship["current_status"] in NOT_MOVABLE or ship["destination_facility_id"] != row["from_facility_id"]:
                 return ChangeResult(status="NOT_MOVABLE", request_id=request_id)
             conn.execute("update shipments set destination_facility_id=? where shipment_id=?", (row["to_facility_id"], row["shipment_id"]))
+            passes.move_warehouse(conn, row["shipment_id"], clock)
         status: Status = "APPROVED" if approve else "REJECTED"
         conn.execute("update facility_change_requests set status=?, decided_by=?, decided_at=? where request_id=?",
                      (status, actor.user_id, clock.now().isoformat(), request_id))
@@ -179,6 +181,7 @@ def _revert(conn: sqlite3.Connection, clock: Clock, request_id: str, reason: str
         if req is None:
             return False
         conn.execute("update shipments set destination_facility_id=? where shipment_id=?", (req["from_facility_id"], req["shipment_id"]))
+        passes.move_warehouse(conn, req["shipment_id"], clock)
         conn.execute("update facility_change_requests set status='REJECTED', reason=?, follow_up=NULL where request_id=?", (reason, request_id))
         audit.record(conn, actor_user_id=None, actor_email=None, action="FACILITY_CHANGE_REVERTED", target_type="shipment",
                      target_id=req["shipment_id"], outcome="OK", ip=None, detail={"request_id": request_id, "reason": reason}, clock=clock)

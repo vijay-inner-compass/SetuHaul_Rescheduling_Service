@@ -144,8 +144,9 @@ def register_shipment_routes(app: FastAPI, deps: Any) -> None:
         rid = request.state.request_id
 
         def write(conn: sqlite3.Connection) -> Response:
-            shipments.change_driver(conn, actor=user, shipment_id=shipment_id, driver_id=body.driver_id,
-                                    vehicle_id=body.vehicle_id, clock=deps.clock)
+            code = shipments.change_driver(conn, actor=user, shipment_id=shipment_id, driver_id=body.driver_id,
+                                           vehicle_id=body.vehicle_id, clock=deps.clock)
+            passes.deliver(conn, client(), shipment_id, code, deps.clock)
             return ok(rid, shipment_id=shipment_id)
 
         return await run_in_threadpool(run, rid, write)

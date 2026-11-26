@@ -286,8 +286,8 @@ def _record(conn: sqlite3.Connection, actor: User, action: str, shipment_id: str
                  target_id=shipment_id, outcome="OK", ip=None, detail=detail, clock=clock)
 
 
-def change_driver(conn: sqlite3.Connection, *, actor: User, shipment_id: str, driver_id: str, vehicle_id: str, clock: Clock) -> None:
-    """Give an unconfirmed shipment to another driver, who starts with no wrong attempts."""
+def change_driver(conn: sqlite3.Connection, *, actor: User, shipment_id: str, driver_id: str, vehicle_id: str, clock: Clock) -> str:
+    """Give an unconfirmed shipment to another driver, who starts with no wrong attempts. Returns their new pass code."""
     with immediate(conn):
         _unconfirmed(conn, actor, shipment_id)
         carrier = _driver(conn, actor, driver_id, vehicle_id, clock.now().astimezone(IST).date())
@@ -295,6 +295,8 @@ def change_driver(conn: sqlite3.Connection, *, actor: User, shipment_id: str, dr
                      (driver_id, vehicle_id, carrier, clock.now().isoformat(), shipment_id))
         conn.execute("update shipment_assignments set failed_attempts=0, locked_at=null where shipment_id=?", (shipment_id,))
         _record(conn, actor, "SHIPMENT_DRIVER_CHANGED", shipment_id, clock, {"driver_id": driver_id})
+        code = passes.issue(conn, shipment_id, clock, actor)
+    return code
 
 
 def cancel_shipment(conn: sqlite3.Connection, *, actor: User, shipment_id: str, clock: Clock) -> None:
@@ -312,6 +314,7 @@ def cancel_shipment(conn: sqlite3.Connection, *, actor: User, shipment_id: str, 
             append_appointment_event(
                 conn, appt["appointment_id"], shipment_id, "APPOINTMENT_CANCELLED", from_status=appt["appointment_status"],
                 to_status="CANCELLED", actor_type="WAREHOUSE", actor_id=actor.user_id, reason="SHIPMENT_CANCELLED", occurred_at=now)
+        passes.cancel(conn, shipment_id, clock)
         conn.execute("update shipments set current_status='CANCELLED', updated_at=? where shipment_id=?", (stamp, shipment_id))
         _record(conn, actor, "SHIPMENT_CANCELLED", shipment_id, clock)
 

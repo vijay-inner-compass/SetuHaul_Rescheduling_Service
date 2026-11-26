@@ -36,6 +36,9 @@ from typing import Literal
 # Frozen validated models.
 from pydantic import BaseModel, ConfigDict
 
+# The pass window follows a confirmed reschedule.
+from setuhaul import passes
+
 # Facility snapshot loader.
 from setuhaul.capacity import build_facility_state
 
@@ -614,6 +617,8 @@ def confirm_reschedule(conn: sqlite3.Connection, cmd: ConfirmCommand, clock: Clo
             enqueue_downstream(conn, event_id, "RESCHEDULE_CONFIRMED", cmd.shipment_id, cmd.hold_appointment_id,
                                {**details, "from_time": None, "to_time": decision.slot_start.isoformat()}, now)
             _fault("AFTER_OUTBOX")
+            # The Dock Access Pass keeps its code; its window moves to the new slot in the same transaction.
+            passes.sync_window(conn, cmd.shipment_id, clock)
             # Step 6: record the answer for idempotency, then return it. Leaving the "with" block commits all six steps.
             result = _result("CONFIRMED", appointment_id=cmd.hold_appointment_id, slot_id=row["slot_id"],
                              original_appointment_id=orig["appointment_id"] if orig else None)
