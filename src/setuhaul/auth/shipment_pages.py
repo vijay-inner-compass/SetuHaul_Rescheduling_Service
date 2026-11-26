@@ -79,7 +79,7 @@ def shipments_section(conn: sqlite3.Connection, user: User, now: datetime, facil
         + _yes_no("Equipment available", "equipment_available", yes_first=True)
         + '<button type="submit">Open availability</button></form><p class="note" id="availability-result" role="status"></p>')
     new = (
-        '<h3>2. New shipment</h3><p class="note">The driver gets the order number from dispatch and sends it to the bot.</p>'
+        '<h3>2. New shipment</h3><p class="note">The bot sends the driver a Dock Access Pass, which they send back to confirm.</p>'
         '<form data-api="/v1/warehouse/shipments" data-limit>'
         + _input("Order number", "order_number", extra='required maxlength="40" placeholder="ORD then at least 6 digits"')
         + _select("Driver", "driver_id", drivers) + _select("Vehicle", "vehicle_id", vehicles)

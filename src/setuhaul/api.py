@@ -64,8 +64,8 @@ from redis import Redis
 # Runs blocking database code in a worker thread so the event loop is not blocked.
 from starlette.concurrency import run_in_threadpool
 
-# The order-number check that runs before the conversation.
-from setuhaul import order_check
+# The Dock Access Pass check that runs before the conversation.
+from setuhaul import pass_check
 
 # Web sessions, the role guard and the facility scope of cases.
 from setuhaul.auth import same_origin, sessions
@@ -95,6 +95,9 @@ from setuhaul.conversation import (
 
 # Database helpers.
 from setuhaul.db import IST, immediate, open_connection, parse_operational_timestamp
+
+# Blanking pass codes before anything is kept.
+from setuhaul.dock_pass import HIDDEN, blank
 
 # Escalation queue operations.
 from setuhaul.escalation import (
@@ -126,7 +129,7 @@ from setuhaul.jobs.expire_holds import MaintenanceRunner
 # The background sender of queued driver notices.
 from setuhaul.jobs.send_driver_notifications import DriverNoticeRunner
 
-# The driver's language, for the fixed order-number replies.
+# The driver's language, for the fixed pass replies.
 from setuhaul.language import LANGS, detect_language
 
 # Conversation memory.
@@ -530,15 +533,17 @@ def create_app(deps: AppDeps) -> FastAPI:
             memory = ConversationMemoryStore(conn, deps.redis, clock, load_settings(), hold_checker=make_hold_checker(conn, clock))
             # Use the open thread, or start one.
             thread_id = row["thread_id"] if row else memory.open_thread(driver_id)
-            # A waiting shipment's order number is checked by the app, before any model is built or called.
-            lang = str(detect_language(payload.text, memory.load(driver_id, thread_id).state.language).language)
+            # A pass code is checked by the app. Everything after this line sees the message with any code blanked, so a code is
+            # never saved, put in a case or sent to a model.
+            clean = blank(payload.text)
+            lang = str(detect_language(clean.replace(HIDDEN, ""), memory.load(driver_id, thread_id).state.language).language)
             lang = lang if lang in LANGS else "en"
-            order = order_check.check(conn, clock, driver_id=driver_id, thread_id=thread_id, text=payload.text, lang=lang,
+            answer = pass_check.check(conn, clock, driver_id=driver_id, thread_id=thread_id, text=payload.text, lang=lang,
                                       sink=SqlEscalationSink(conn, clock))
-            if order is not None:
-                memory.append(driver_id, thread_id, "DRIVER", payload.text, external_message_id=payload.message_id)
-                memory.append(driver_id, thread_id, "AGENT", order.text)
-                body = {"status": "REPLIED", "reply": order.text, "language": lang, "reason_code": None, "case_id": order.case_id}
+            if answer is not None:
+                memory.append(driver_id, thread_id, "DRIVER", clean, external_message_id=payload.message_id)
+                memory.append(driver_id, thread_id, "AGENT", answer.text)
+                body = {"status": "REPLIED", "reply": answer.text, "language": lang, "reason_code": None, "case_id": answer.case_id}
                 with immediate(conn):
                     conn.execute("update inbound_messages set status='DONE', reply_json=?, completed_at=? where driver_id=? and message_id=?",
                                  (json.dumps(body), clock.now().isoformat(), driver_id, payload.message_id))
@@ -550,7 +555,7 @@ def create_app(deps: AppDeps) -> FastAPI:
                 fallback_sink=JsonlEscalationSink(deps.fallback_path), exporter=deps.exporter,
                 trace_env=env_in_force(deps, conn))
             # Run the conversation (this is where the model is called).
-            reply = handle_message(InboundMessage(message_id=payload.message_id, text=payload.text),
+            reply = handle_message(InboundMessage(message_id=payload.message_id, text=clean),
                                    TrustedConversationContext(driver=trusted, thread_id=thread_id), clock, services)
             # The response body; this exact body is stored so a duplicate delivery gets the same answer.
             body = {"status": reply.status, "reply": reply.text, "language": reply.language, "reason_code": reply.escalation_reason,

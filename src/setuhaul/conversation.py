@@ -28,7 +28,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 # Reads facts of committed holds and confirmations.
-from setuhaul import facility_change, order_check
+from setuhaul import facility_change, pass_check
 from setuhaul.booking import confirmed_appointment_facts, get_hold
 
 # Injectable clock.
@@ -327,7 +327,7 @@ def _handle(
         # First time: remember that we asked.
         mem.save_structured_state(driver_id, thread_id, state.model_copy(update={"language_prompts": 1}))
         return _persist(services, driver_id, thread_id, ConversationReply(
-            text=LANGUAGE_PROMPT + (("\n" + say(key, "en")) if (key := order_check.prompt_key(services.conn, driver_id)) else ""),
+            text=LANGUAGE_PROMPT + (("\n" + say(key, "en")) if (key := pass_check.prompt_key(services.conn, driver_id)) else ""),
             language="unknown", status="LANGUAGE_PROMPT"))
     # The language to reply in.
     lang = str(det.language) if det.language in LANGS else (state.language or "en")
@@ -346,8 +346,8 @@ def _handle(
     # The prompt (with system facts) plus conversation.
     facts = _facts(ctx, services, clock, lang)
     # Only that something is waiting: no id, number, destination or time. Absent otherwise.
-    if order_check.has_waiting(services.conn, driver_id):
-        facts["shipment_waiting_for_order_number"] = True
+    if pass_check.has_waiting(services.conn, driver_id):
+        facts["shipment_waiting_for_dock_access_pass"] = True
     messages = _to_model_messages(build_system_prompt(facts), ctx)
     # Time the model loop.
     with start_span("model.loop", rctx, exporter=services.exporter) as span:
@@ -455,8 +455,8 @@ def _finalize(
     if any(e.type == "HOLD_EXPIRED" for e in ctx.events):
         parts.insert(0, say("hold_expired", lang))
 
-    # The system, not the model, asks for the order number.
-    prompt = order_check.prompt_key(conn, driver_id)
+    # The system, not the model, asks for the pass.
+    prompt = pass_check.prompt_key(conn, driver_id)
     if prompt:
         parts.append(say(prompt, lang))
 

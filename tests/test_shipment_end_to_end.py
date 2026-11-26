@@ -14,6 +14,7 @@ from setuhaul.auth import onboarding, telegram
 from setuhaul.clock import FakeClock
 from setuhaul.db import open_connection
 from setuhaul.db import parse_operational_timestamp as ts
+from setuhaul.dock_pass import find
 from setuhaul.identity import provision_identities
 from setuhaul.model_gateway import ModelPolicy
 from setuhaul.stub_model import StubGateway
@@ -45,7 +46,9 @@ def test_from_availability_to_a_confirmed_booking(tmp_path: Path) -> None:
     open_av(world, to_time="17:00")
     sid = create(world, slot_at(world, 12), driver_id=driver)
     assert post(client, contact_update(phone=PHONE, user=555, contact_user=555)).status_code == 200
-    assert "ORD-261127-001" in send("ORD-261127-001")
+    # Linking sends the pass; the driver sends it straight back.
+    [code] = find(bot.sent[-1][1])
+    assert "ORD-261127-001" in send(code)
 
     held = send("I am running late by 60 min")
     assert query(world, "select count(*) from appointments where shipment_id=? and appointment_status='HELD'", sid)[0][0] == 1, held
