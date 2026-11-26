@@ -55,7 +55,7 @@ ASSET_TYPES = {"app.css": "text/css; charset=utf-8", "common.js": "text/javascri
                "admin.js": "text/javascript; charset=utf-8", "tabs.js": "text/javascript; charset=utf-8",
                "model.js": "text/javascript; charset=utf-8",
                "settings.js": "text/javascript; charset=utf-8",
-               "warehouse.js": "text/javascript; charset=utf-8"}
+               "warehouse.js": "text/javascript; charset=utf-8", "gate.js": "text/javascript; charset=utf-8"}
 # Sent with every HTML response: nothing but our own files may run or load, and nothing is cached.
 SECURITY_HEADERS = {
     "Content-Security-Policy": ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
@@ -796,6 +796,16 @@ def register_pages(app: FastAPI, deps: AppDeps) -> None:
             return user
         facility = request.query_params.get("facility") or None
         return read_page(user, lambda conn: render_warehouse(conn, user, deps.clock.now(), facility))
+
+    @app.get("/gate", response_class=HTMLResponse)
+    def gate_page(request: Request) -> Response:
+        user = guarded(request, "SECURITY", "ADMIN")
+        if isinstance(user, Response):
+            return user
+        # Imported here: the screen's module uses this one's page helpers.
+        from setuhaul.auth.gate_pages import render_gate
+
+        return read_page(user, lambda conn: render_gate(conn, user, deps.clock))
 
     @app.get("/app/assets/{name}")
     def asset(name: str) -> Response:

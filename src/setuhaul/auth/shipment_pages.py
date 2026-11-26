@@ -6,6 +6,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime
 
+from setuhaul import passes
 from setuhaul.auth.authz import facility_clause
 from setuhaul.auth.onboarding import driver_eligible
 from setuhaul.auth.pages import _button, _segment, _table, esc
@@ -111,6 +112,10 @@ def shipments_section(conn: sqlite3.Connection, user: User, now: datetime, facil
         if s["pass_state"] in ("ISSUED", "VALIDATED", "ACTIVE", "COMPLETED"):
             actions += (f'<form data-api="{esc(base)}/pass/revoke">' + _input("Reason", "reason", extra='required maxlength="200"')
                         + '<button type="submit">Revoke pass</button><span class="note" data-form-result role="alert"></span></form>')
+        visit = passes.visit_for(conn, s["shipment_id"])
+        if visit is not None and visit["status"] == "CHECKED_IN":
+            actions += _button("Unloading complete", f"/v1/warehouse/visits/{_segment(visit['truck_visit_id'])}/unloading-complete",
+                               confirm=f"Has {s['order_reference']} been unloaded?")
         pass_text = _PASS.get(s["pass_state"] or "", "None")
         if s["pass_state"] == "ISSUED" and not s["delivered"]:
             pass_text = "Pass not delivered"

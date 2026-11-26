@@ -877,6 +877,9 @@ def create_app(deps: AppDeps) -> FastAPI:
     from setuhaul.auth.shipment_routes import register_shipment_routes
 
     register_shipment_routes(app, deps)
+    from setuhaul.auth.gate_routes import register_gate_routes
+
+    register_gate_routes(app, deps)
     # Admin JSON APIs: users and the audit log.
     from setuhaul.auth.admin_api import register_admin_api
 
