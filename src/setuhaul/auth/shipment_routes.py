@@ -22,6 +22,43 @@ from setuhaul.identity import AuthError
 _CONFLICT = {"DUPLICATE_ORDER_NUMBER", "SLOT_NOT_AVAILABLE", "ALREADY_CONFIRMED", "NOT_LOCKED"}
 
 
+# What the person at the screen is told for each refusal.
+_MESSAGES = {
+    "FACILITY_NOT_FOUND": "That facility is not one of yours.",
+    "PARTNER_FACILITY": "Partner warehouses are booked by email, not here.",
+    "DOCK_NOT_FOUND": "Choose at least one dock of that facility.",
+    "INVALID_DATES": "Dates must start today or later and cover at most 14 days.",
+    "INVALID_TIMES": "The times must be in order and inside the facility's opening hours.",
+    "BAD_ORDER_NUMBER": "The order number is ORD followed by at least six digits.",
+    "DUPLICATE_ORDER_NUMBER": "That order number is already in use.",
+    "DRIVER_NOT_FOUND": "That driver is not one you can assign.",
+    "DRIVER_NOT_ELIGIBLE": "That driver is not approved, active and licensed.",
+    "VEHICLE_CARRIER_MISMATCH": "Choose an active vehicle of the driver's carrier.",
+    "SLOT_NOT_AVAILABLE": "That dock slot has been taken or has passed. Reload and choose another.",
+    "INVALID_DEPARTURE": "The planned departure must be before the dock slot.",
+    "LOAD_DOES_NOT_FIT": "This load cannot use that slot",
+    "SHIPMENT_NOT_FOUND": "That shipment no longer exists for you. Reload the page.",
+    "ALREADY_CONFIRMED": "The driver has already confirmed it, so it cannot be changed here.",
+    "NOT_LOCKED": "That shipment is not locked.",
+}
+# Why the booking rules refused a slot.
+_WHY = {
+    "DOCK_TYPE_MISMATCH": "the dock type does not match", "REFRIGERATION_REQUIRED": "the dock is not refrigerated",
+    "HEAVY_DOCK_REQUIRED": "it needs the heavy dock", "WEIGHT_EXCEEDS_DOCK_LIMIT": "it is too heavy for the dock",
+    "UNLOAD_EXCEEDS_SLOT": "unloading takes longer than the slot", "LABOUR_UNAVAILABLE": "no crew is free then",
+    "EQUIPMENT_UNAVAILABLE": "no equipment is available then", "labour_availability": "no labour is recorded for that day",
+    "AFTER_LAST_NEW_START": "it starts after the facility's last start time", "OUTSIDE_FACILITY_HOURS": "it is outside opening hours",
+    "DOCK_UNAVAILABLE": "the dock is out of service", "DOCK_EVENT_BLOCK": "the dock is blocked then",
+}
+
+
+def _message(exc: AuthError) -> str | None:
+    text = _MESSAGES.get(exc.code)
+    if text is None or not isinstance(exc, shipments.DoesNotFit):
+        return text
+    return f"{text}: {'; '.join(_WHY.get(r, r) for r in exc.reasons)}."
+
+
 class DriverChange(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -44,7 +81,8 @@ def register_shipment_routes(app: FastAPI, deps: Any) -> None:
         try:
             return work(conn)
         except AuthError as exc:
-            return reject(rid, _status(exc.code), exc.code)
+            return JSONResponse({"status": "REJECTED", "reason_code": exc.code, "message": _message(exc), "request_id": rid},
+                                status_code=_status(exc.code))
         except sqlite3.Error:
             return reject(rid, 503, "DATABASE_UNAVAILABLE")
         finally:

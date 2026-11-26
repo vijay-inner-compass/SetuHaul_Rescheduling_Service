@@ -47,14 +47,19 @@ def shipments_section(conn: sqlite3.Connection, user: User, now: datetime, facil
     marks = ",".join("?" * len(own)) or "null"
     docks = "".join(_option(r["dock_id"], f"{r['dock_id']} ({r['dock_type']})", facility=r["facility_id"]) for r in conn.execute(
         f"select dock_id, facility_id, dock_type from docks where facility_id in ({marks}) order by dock_id", own))
-    # Only slots a new shipment could take: ahead of now, open and not booked or held.
-    free = conn.execute(
-        f"select s.slot_id, s.facility_id, d.dock_code, s.slot_start_ts from appointment_slots s join docks d using(dock_id)"
-        f" where s.facility_id in ({marks}) and s.slot_status='OPEN' and s.slot_start_ts>? and not exists (select 1 from appointments a"
-        " where a.slot_id=s.slot_id and a.appointment_status in ('PENDING_CONFIRMATION','CONFIRMED','IN_PROGRESS','HELD'))"
-        " order by s.slot_start_ts, s.facility_id, d.dock_code limit 500", (*own, now.astimezone(IST).isoformat())).fetchall()
-    slots = "".join(_option(r["slot_id"], f"{r['facility_id']} {r['dock_code']} {_when(r['slot_start_ts'])}",
-                            facility=r["facility_id"]) for r in free)
+    # Only slots a new shipment could take: ahead of now, open and not booked or held. Asked per facility, so a busy one
+    # cannot crowd another off the list.
+    slots = ""
+    for facility_id in own:
+        free = conn.execute(
+            "select s.slot_id, d.dock_code, s.slot_start_ts from appointment_slots s join docks d using(dock_id)"
+            " where s.facility_id=? and s.slot_status='OPEN' and s.slot_start_ts>? and not exists (select 1 from appointments a"
+            " where a.slot_id=s.slot_id and a.appointment_status in ('PENDING_CONFIRMATION','CONFIRMED','IN_PROGRESS','HELD'))"
+            " order by s.slot_start_ts, d.dock_code limit 3000", (facility_id, now.astimezone(IST).isoformat())).fetchall()
+        slots += "".join(_option(r["slot_id"], f"{facility_id} {r['dock_code']} {_when(r['slot_start_ts'])}",
+                                 facility=facility_id) for r in free)
+        if not free:
+            slots += _option("", "No open slots: open availability first", facility=facility_id)
     today = now.astimezone(IST).date()
     able = [r for r in drivers_in_scope(conn, user, today) if driver_eligible(conn, r["driver_id"], today)]
     drivers = "".join(_option(r["driver_id"], f"{r['driver_id']} - {r['driver_name']}", carrier=r["carrier_id"]) for r in able)
@@ -88,14 +93,14 @@ def shipments_section(conn: sqlite3.Connection, user: User, now: datetime, facil
         + _select("Planned dock slot", "slot_id", slots)
         + _input("Latest arrival (optional)", "latest_arrival", "datetime-local", "")
         + _yes_no("Penalty if later", "penalty_applies")
-        + '<button type="submit">Create shipment</button></form>')
+        + '<button type="submit">Create shipment</button><p class="note" data-form-result role="alert"></p></form>')
     rows = []
     for s in list_shipments(conn, user):
         base = f"/v1/warehouse/shipments/{_segment(s['shipment_id'])}"
         actions = ""
         if s["state"] in ("WAITING", "LOCKED"):
             actions = (f'<form data-api="{esc(base)}/driver" data-limit>' + _select("Driver", "driver_id", drivers)
-                       + _select("Vehicle", "vehicle_id", vehicles) + '<button type="submit">Change driver</button></form>'
+                       + _select("Vehicle", "vehicle_id", vehicles) + '<button type="submit">Change driver</button><span class="note" data-form-result role="alert"></span></form>'
                        + _button("Cancel", f"{base}/cancel", confirm=f"Cancel {s['order_reference']}?"))
         if s["state"] == "LOCKED":
             actions += _button("Unlock", f"{base}/unlock")

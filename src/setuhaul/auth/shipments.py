@@ -56,6 +56,16 @@ class AvailabilityResult(BaseModel):
     slots_created: int
     # Days that already had labour recorded, which is left as it was.
     days_unchanged: list[str]
+    # Slots not added on those days because no recorded labour covers them: they could never be booked.
+    slots_skipped: int = 0
+
+
+class DoesNotFit(AuthError):
+    """The booking rules refuse the planned slot; `reasons` are their codes."""
+
+    def __init__(self, reasons: tuple[str, ...]) -> None:
+        super().__init__("LOAD_DOES_NOT_FIT")
+        self.reasons = reasons
 
 
 class NewShipment(BaseModel):
@@ -114,12 +124,15 @@ def open_availability(conn: sqlite3.Connection, *, actor: User, data: Availabili
         if not docks or not set(docks) <= own:
             raise AuthError("DOCK_NOT_FOUND")
         step, stamp, created, unchanged = timedelta(minutes=data.slot_minutes), now.isoformat(), 0, []
+        skipped = 0
         for offset in range(days):
             day = data.first_date + timedelta(days=offset)
             start = datetime.combine(day, data.from_time, tzinfo=IST)
             end = datetime.combine(day, data.to_time, tzinfo=IST)
-            if conn.execute("select 1 from labour_windows where facility_id=? and substr(window_start,1,10)=?",
-                            (data.facility_id, day.isoformat())).fetchone():
+            recorded = [(parse_operational_timestamp(w[0]), parse_operational_timestamp(w[1])) for w in conn.execute(
+                "select window_start, window_end from labour_windows where facility_id=? and substr(window_start,1,10)=?",
+                (data.facility_id, day.isoformat()))]
+            if recorded:
                 unchanged.append(day.isoformat())
             else:
                 conn.execute("insert into labour_windows(facility_id, window_start, window_end, available_crews, equipment_available,"
@@ -132,6 +145,10 @@ def open_availability(conn: sqlite3.Connection, *, actor: User, data: Availabili
                     # Any slot overlapping this time on this dock means it is already described.
                     if not conn.execute("select 1 from appointment_slots where dock_id=? and slot_start_ts<? and slot_end_ts>?",
                                         (dock, (at + step).isoformat(), at.isoformat())).fetchone():
+                        if recorded and not any(first <= at and at + step <= last for first, last in recorded):
+                            skipped += 1
+                            at += step
+                            continue
                         conn.execute("insert into appointment_slots(slot_id, facility_id, dock_id, slot_start_ts, slot_end_ts,"
                                      " slot_status, created_at) values (?,?,?,?,?,'OPEN',?)",
                                      ("SL-" + uuid.uuid4().hex[:10].upper(), data.facility_id, dock, at.isoformat(),
@@ -142,7 +159,7 @@ def open_availability(conn: sqlite3.Connection, *, actor: User, data: Availabili
                      target_type="facility", target_id=data.facility_id, outcome="OK", ip=None,
                      detail={"first": data.first_date.isoformat(), "last": data.last_date.isoformat(), "slots": created},
                      clock=clock)
-    return AvailabilityResult(slots_created=created, days_unchanged=unchanged)
+    return AvailabilityResult(slots_created=created, days_unchanged=unchanged, slots_skipped=skipped)
 
 
 def _driver(conn: sqlite3.Connection, actor: User, driver_id: str, vehicle_id: str, today: date) -> str:
@@ -199,7 +216,7 @@ def create_shipment(conn: sqlite3.Connection, *, actor: User, data: NewShipment,
         state = build_facility_state(conn, data.facility_id, now)
         verdict = evaluate_slot(build_context(conn, shipment_id, eta, now), state.slots[data.slot_id], state)
         if verdict.status in ("INFEASIBLE", "INCOMPLETE_FEASIBILITY_DATA"):
-            raise AuthError("LOAD_DOES_NOT_FIT")
+            raise DoesNotFit((*verdict.reasons, *verdict.missing))
         # Booked only after the check: a shipment's own current slot is never judged feasible.
         conn.execute("insert into appointments(appointment_id, shipment_id, slot_id, appointment_status, booking_source, is_current,"
                      " booked_at, confirmed_at, updated_at) values (?,?,?,'CONFIRMED','WAREHOUSE',1,?,?,?)",

@@ -177,12 +177,15 @@
     }).then(function (response) {
       return response.json().catch(function () { return null; }).then(function (data) {
         if (!response.ok) {
-          line.textContent = (data && data.reason_code) || "INVALID_REQUEST";
+          line.textContent = (data && (data.message || data.reason_code)) || "INVALID_REQUEST";
           return;
         }
         var text = data.slots_created + " slots added.";
         if (data.days_unchanged.length) {
           text += " Labour already recorded, left as it was: " + data.days_unchanged.join(", ") + ".";
+        }
+        if (data.slots_skipped) {
+          text += " " + data.slots_skipped + " slots not added: no labour is recorded for them.";
         }
         window.sessionStorage.setItem("availability", text);
         window.location.reload();

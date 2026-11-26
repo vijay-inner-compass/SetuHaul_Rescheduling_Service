@@ -83,3 +83,27 @@ def test_the_other_facilitys_user_sees_none_of_it(world: World) -> None:
     create(world, slot_at(world, 9))
     page = world.client("wh_b").get("/warehouse").text
     assert "ORD-261127-001" not in page and f'value="{slot_at(world, 12)}"' not in page
+
+
+def test_a_refusal_says_why_in_plain_words(world: World) -> None:
+    client = world.client("wh_a")
+    client.post("/v1/warehouse/availability", json=AVAILABILITY)
+    heavy = client.post("/v1/warehouse/shipments", json=_form(slot_at(world, 12)) | {"load_weight_kg": "24000"}).json()
+    assert heavy["reason_code"] == "LOAD_DOES_NOT_FIT" and "too heavy for the dock" in heavy["message"]
+    late = client.post("/v1/warehouse/availability", json=AVAILABILITY | {"from_time": "00:00", "to_time": "04:00"}).json()
+    assert late["reason_code"] == "INVALID_TIMES" and "opening hours" in late["message"]
+
+
+def test_every_facility_keeps_its_own_slots_in_the_picker(world: World) -> None:
+    # Far more than 500 earlier Jaipur slots must not push the Gurugram ones off the list.
+    docks = [f"DOCK-JAI-D{n}" for n in range(1, 7)]
+    open_av(world, last_date="2026-12-11", dock_ids=docks, from_time="06:00", to_time="22:00")
+    open_av(world, who="wh_b", facility_id="FAC-GGN-01", dock_ids=["DOCK-GGN-D1"], first_date="2026-12-11", last_date="2026-12-11")
+    page = world.client("admin").get("/warehouse").text
+    late = query(world, "select slot_id from appointment_slots where dock_id='DOCK-GGN-D1' and slot_start_ts like '2026-12-11%'")[0][0]
+    assert f'value="{late}"' in page
+
+
+def test_the_picker_says_when_nothing_is_open(world: World) -> None:
+    page = world.client("wh_a").get("/warehouse").text
+    assert "No open slots: open availability first" in page and "data-form-result" in page

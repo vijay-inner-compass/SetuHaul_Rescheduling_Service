@@ -184,3 +184,25 @@ def test_the_language_question_also_asks_for_the_number(chat: Chat) -> None:
     chat.wait_for()
     reply = chat.send("261127001")
     assert "English or Hindi" in reply and reply.endswith(say("order_waiting", "en")) and chat.model.calls == []
+
+
+def test_many_numbers_in_one_message_are_many_attempts(chat: Chat) -> None:
+    chat.wait_for()
+    guesses = ", ".join(f"ORD261127{n:03d}" for n in range(100))
+    assert chat.send(guesses) == say("order_locked", "en")
+    assert chat.row()["confirmed_at"] is None and chat.row()["locked_at"] is not None
+
+
+def test_wrong_numbers_add_up_across_messages(chat: Chat) -> None:
+    chat.wait_for()
+    assert chat.send("ORD-999999-001 ORD-999999-002, ORD-999999-003") == say("order_mismatch", "en")
+    assert chat.row()["failed_attempts"] == 3
+    assert chat.send("ORD-999999-004, ORD-999999-005") == say("order_locked", "en")
+
+
+def test_after_the_lock_the_driver_is_sent_to_the_warehouse(chat: Chat) -> None:
+    chat.wait_for()
+    for _ in range(5):
+        chat.send("ORD-999999-999")
+    reply = chat.send("my truck broke down")
+    assert reply.endswith(say("order_locked", "en")) and say("order_waiting", "en") not in reply
