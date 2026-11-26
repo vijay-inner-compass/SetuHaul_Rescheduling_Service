@@ -33,7 +33,8 @@ SETUHAUL_SETTINGS_KEY=
 ```
 
 `SETUHAUL_SESSION_SECRET` needs at least 32 bytes. Put values containing `$` or JSON in single quotes. Optional: the Telegram,
-webhook, partner-mail and LangSmith settings.
+webhook, partner-mail and LangSmith settings. With the Telegram bot, `SETUHAUL_TELEGRAM_AUTO_REGISTER=1` registers the webhook at
+every start-up from `SETUHAUL_PUBLIC_URL`. Set it on this server only: another copy using the same bot token would take the webhook.
 
 ### Changing settings without logging in
 
