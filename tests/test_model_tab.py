@@ -12,7 +12,13 @@ import pytest
 
 from setuhaul.clock import FakeClock
 from setuhaul.db import make_working_db, open_connection, parse_operational_timestamp
-from setuhaul.model_report import call_totals, message_totals, percentile, recent_calls, recent_turns
+from setuhaul.model_report import (
+    call_totals,
+    message_totals,
+    percentile,
+    recent_calls,
+    recent_turns,
+)
 from tests.auth_helpers import World, build_world
 
 NOW = parse_operational_timestamp("2026-08-04T09:35:00+05:30")

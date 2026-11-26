@@ -60,7 +60,7 @@ visitors to `/demo` are sent there. Only what is configured is offered.
 |---|---|---|
 | `/` | sign-in page; a signed-in user is sent on to their screen | redirects to `/warehouse`. The page offers only the sign-in methods you configured |
 | `/warehouse` | dock board, cases, partner requests, driver chats, projects, drivers | works |
-| `/admin` | users, pending drivers, audit log | "Not allowed" (403): admins only |
+| `/admin` | tabs: users, pending drivers, onboarded drivers, audit log, model | "Not allowed" (403): admins only |
 
 The demo has no Telegram and no Google sign-in. To see the admin screen, run the real service (section 7a).
 
@@ -259,9 +259,26 @@ Below, `<base>` is the public origin of your service, for example `https://haul.
 | `SETUHAUL_COORDINATOR_TOKENS` | JSON map `{"<token>": "<name>"}`: bearer access to `/v1/coordinator/cases...` for services. Not limited to facilities; names may not start with `web:` |
 | `SETUHAUL_WEBHOOK_SECRET` | HMAC key of the signed driver and GPS channel (not Telegram); when unset, that channel refuses every request (401) |
 
+### The Model tab (admin, report only)
+
+`/admin` > **Model** shows the model in use, health, calls and failures, response times (typical = median, and 95th percentile),
+tokens, estimated cost, the limits in force, the last 50 driver messages and calls, and a LangSmith panel. Nothing there changes a
+setting. Every model call and the message it belongs to are recorded as numbers and codes only (no message text, prompt, driver id or
+key), and are kept until the database is deleted.
+
+* **Existing databases need migration 014** (including the Telegram test database): run the upgrade command under **Database** below
+  with its path. Until then messages work and the tab says to upgrade.
+* **Cost** is an estimate from `SETUHAUL_MODEL_PRICE_IN_PER_MTOK` and `SETUHAUL_MODEL_PRICE_OUT_PER_MTOK`; without them it reads
+  `price not set`. It is not the provider's bill.
+* **LangSmith** is read only when you press **Load from LangSmith**, and only if tracing is already switched on
+  (`SETUHAUL_LANGSMITH_ENABLED=true`, `SETUHAUL_LANGSMITH=approved`, `LANGSMITH_API_KEY`). It shows runs, failures and run times for
+  24 hours. It has no reliable token or cost figures, and a handled model failure can appear as a successful run.
+* The demo rebuilds its database at each start, so its history resets; its clock is frozen. The `--auto-login` demo user is not an
+  admin, so sign in as an admin to see the tab.
+
 ### Database
 
-Migrations 011 to 013 add the tables. `make_working_db` (section 7) creates a new migrated copy. To upgrade a working database you want to keep:
+Migrations 011 to 014 add the tables. `make_working_db` (section 7) creates a new migrated copy. To upgrade a working database you want to keep:
 
 ```powershell
 python -c "from pathlib import Path; from setuhaul.db import open_connection, apply_migrations; c = open_connection(path=Path('data/working.sqlite3')); print(apply_migrations(c)); c.close()"

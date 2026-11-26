@@ -34,7 +34,13 @@ from setuhaul.db import IST, open_connection
 from setuhaul.escalation import get_case
 from setuhaul.identity import AuthError
 from setuhaul.langsmith_trace import tracing_status
-from setuhaul.model_report import CallTotals, call_totals, message_totals, recent_calls, recent_turns
+from setuhaul.model_report import (
+    CallTotals,
+    call_totals,
+    message_totals,
+    recent_calls,
+    recent_turns,
+)
 from setuhaul.model_usage import describe_model
 
 if TYPE_CHECKING:

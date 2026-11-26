@@ -21,11 +21,11 @@ from datetime import UTC, datetime, timedelta
 # Loose typing for the client.
 from typing import Any
 
-# The same nearest-rank percentile as the recorded figures.
-from setuhaul.model_report import percentile
-
 # The existing three-setting switch.
 from setuhaul.langsmith_trace import tracing_status
+
+# The same nearest-rank percentile as the recorded figures.
+from setuhaul.model_report import percentile
 
 # At most this many runs are read.
 _LIMIT = 500
