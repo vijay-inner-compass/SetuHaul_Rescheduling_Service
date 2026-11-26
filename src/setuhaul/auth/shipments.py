@@ -10,18 +10,19 @@ from __future__ import annotations
 import sqlite3
 import uuid
 from datetime import date, datetime, time, timedelta
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from setuhaul.auth import audit
-from setuhaul.auth.authz import facility_ids
+from setuhaul.auth.authz import facility_clause, facility_ids
 from setuhaul.auth.onboarding import driver_eligible
 from setuhaul.auth.users import User
 from setuhaul.auth.warehouse_routes import drivers_in_scope
 from setuhaul.capacity import build_facility_state
 from setuhaul.clock import Clock
 from setuhaul.db import IST, immediate, parse_operational_timestamp
+from setuhaul.events import append_appointment_event
 from setuhaul.feasibility import build_context, evaluate_slot
 from setuhaul.identity import AuthError
 from setuhaul.order_numbers import is_valid, normalise
@@ -207,3 +208,89 @@ def create_shipment(conn: sqlite3.Connection, *, actor: User, data: NewShipment,
                      target_id=shipment_id, outcome="OK", ip=None,
                      detail={"driver_id": data.driver_id, "facility_id": data.facility_id}, clock=clock)
     return shipment_id
+
+
+# ---- list and manage -----------------------------------------------------------------------------------
+def list_shipments(conn: sqlite3.Connection, user: User) -> list[dict[str, Any]]:
+    """Shipments created in the app and bound for the user's facilities (an admin: all), newest first."""
+    clause, params = facility_clause(user, "s.destination_facility_id")
+    rows = conn.execute(
+        "select s.shipment_id, s.order_reference, s.driver_id, d.driver_name, s.destination_facility_id as facility_id,"
+        " coalesce(sl.slot_start_ts, s.original_eta_ts) as planned_start, s.current_status, a.confirmed_at, a.locked_at"
+        " from shipment_assignments a join shipments s using(shipment_id) join drivers d on d.driver_id=s.driver_id"
+        " left join appointments p on p.shipment_id=s.shipment_id and p.is_current=1"
+        " left join appointment_slots sl on sl.slot_id=p.slot_id"
+        f" where {clause} order by a.created_at desc, s.shipment_id", params).fetchall()
+    out = []
+    for r in rows:
+        if r["current_status"] == "CANCELLED":
+            state = "CANCELLED"
+        else:
+            state = "CONFIRMED" if r["confirmed_at"] else ("LOCKED" if r["locked_at"] else "WAITING")
+        out.append({k: r[k] for k in ("shipment_id", "order_reference", "driver_id", "driver_name", "facility_id", "planned_start")}
+                   | {"state": state})
+    return out
+
+
+def _mine(conn: sqlite3.Connection, actor: User, shipment_id: str) -> sqlite3.Row:
+    """An app-created, uncancelled shipment in the user's scope; anything else does not exist for them."""
+    row = conn.execute(
+        "select s.destination_facility_id, s.current_status, a.confirmed_at, a.locked_at from shipment_assignments a"
+        " join shipments s using(shipment_id) where s.shipment_id=?", (shipment_id,)).fetchone()
+    scope = facility_ids(actor)
+    if (actor.status != "ACTIVE" or row is None or row["current_status"] == "CANCELLED"
+            or (scope is not None and row["destination_facility_id"] not in scope)):
+        raise AuthError("SHIPMENT_NOT_FOUND")
+    assert isinstance(row, sqlite3.Row)
+    return row
+
+
+def _unconfirmed(conn: sqlite3.Connection, actor: User, shipment_id: str) -> sqlite3.Row:
+    row = _mine(conn, actor, shipment_id)
+    if row["confirmed_at"]:
+        raise AuthError("ALREADY_CONFIRMED")
+    return row
+
+
+def _record(conn: sqlite3.Connection, actor: User, action: str, shipment_id: str, clock: Clock,
+            detail: dict[str, object] | None = None) -> None:
+    audit.record(conn, actor_user_id=actor.user_id, actor_email=actor.email, action=action, target_type="shipment",
+                 target_id=shipment_id, outcome="OK", ip=None, detail=detail, clock=clock)
+
+
+def change_driver(conn: sqlite3.Connection, *, actor: User, shipment_id: str, driver_id: str, vehicle_id: str, clock: Clock) -> None:
+    """Give an unconfirmed shipment to another driver, who starts with no wrong attempts."""
+    with immediate(conn):
+        _unconfirmed(conn, actor, shipment_id)
+        carrier = _driver(conn, actor, driver_id, vehicle_id, clock.now().astimezone(IST).date())
+        conn.execute("update shipments set driver_id=?, vehicle_id=?, carrier_id=?, updated_at=? where shipment_id=?",
+                     (driver_id, vehicle_id, carrier, clock.now().isoformat(), shipment_id))
+        conn.execute("update shipment_assignments set failed_attempts=0, locked_at=null where shipment_id=?", (shipment_id,))
+        _record(conn, actor, "SHIPMENT_DRIVER_CHANGED", shipment_id, clock, {"driver_id": driver_id})
+
+
+def cancel_shipment(conn: sqlite3.Connection, *, actor: User, shipment_id: str, clock: Clock) -> None:
+    """Cancel an unconfirmed shipment and free its slot."""
+    with immediate(conn):
+        _unconfirmed(conn, actor, shipment_id)
+        now = clock.now()
+        stamp = now.isoformat()
+        appts = conn.execute("select appointment_id, appointment_status from appointments where shipment_id=? and is_current=1",
+                             (shipment_id,)).fetchall()
+        for appt in appts:
+            conn.execute("update appointments set appointment_status='CANCELLED', is_current=0, cancelled_at=?,"
+                         " cancellation_reason='SHIPMENT_CANCELLED', updated_at=? where appointment_id=?",
+                         (stamp, stamp, appt["appointment_id"]))
+            append_appointment_event(
+                conn, appt["appointment_id"], shipment_id, "APPOINTMENT_CANCELLED", from_status=appt["appointment_status"],
+                to_status="CANCELLED", actor_type="WAREHOUSE", actor_id=actor.user_id, reason="SHIPMENT_CANCELLED", occurred_at=now)
+        conn.execute("update shipments set current_status='CANCELLED', updated_at=? where shipment_id=?", (stamp, shipment_id))
+        _record(conn, actor, "SHIPMENT_CANCELLED", shipment_id, clock)
+
+
+def unlock(conn: sqlite3.Connection, *, actor: User, shipment_id: str, clock: Clock) -> None:
+    with immediate(conn):
+        if not _unconfirmed(conn, actor, shipment_id)["locked_at"]:
+            raise AuthError("NOT_LOCKED")
+        conn.execute("update shipment_assignments set failed_attempts=0, locked_at=null where shipment_id=?", (shipment_id,))
+        _record(conn, actor, "SHIPMENT_UNLOCKED", shipment_id, clock)
