@@ -22,7 +22,7 @@ from tests.auth_helpers import GURUGRAM, JAIPUR, World, build_world
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSET_DIR = ROOT / "src" / "setuhaul" / "auth" / "assets"
-ASSETS = ("app.css", "common.js", "tabs.js", "admin.js", "warehouse.js", "model.js")
+ASSETS = ("app.css", "common.js", "tabs.js", "admin.js", "warehouse.js", "model.js", "settings.js")
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'; "
        "base-uri 'none'; form-action 'self'")
 XSS_NAME = "<script>alert(1)</script>"
@@ -81,7 +81,7 @@ def test_admin_page_shows_pending_driver_and_audit_rows(world: World) -> None:
 
 def test_admin_page_has_one_panel_per_tab(world: World) -> None:
     text = world.client("admin").get("/admin").text
-    keys = ["users", "pending", "decided", "audit", "model"]
+    keys = ["users", "pending", "decided", "audit", "model", "config"]
     assert re.findall(r'data-tab="(\w+)"', text) == keys
     assert re.findall(r'<section id="\w+" data-panel="(\w+)"', text) == keys
     assert text.index("/app/assets/tabs.js") < text.index("/app/assets/admin.js")
@@ -217,7 +217,8 @@ def test_js_assets_do_not_use_innerhtml() -> None:
 def test_assets_whitelist_and_no_traversal(world: World) -> None:
     c = world.client()
     types = {"app.css": "text/css", "common.js": "text/javascript", "admin.js": "text/javascript", "warehouse.js": "text/javascript",
-             "tabs.js": "text/javascript", "model.js": "text/javascript"}
+             "tabs.js": "text/javascript", "model.js": "text/javascript",
+             "settings.js": "text/javascript"}
     for name, ctype in types.items():
         r = c.get(f"/app/assets/{name}")
         assert r.status_code == 200 and r.headers["content-type"].startswith(ctype)

@@ -20,6 +20,7 @@ from setuhaul.auth import audit, onboarding, projects, sessions, telegram, users
 from setuhaul.auth.admin_api import DEFAULT_AUDIT_LIMIT, parse_since
 from setuhaul.auth.authz import AuthzError, assert_facility, require_role
 from setuhaul.auth.facility_routes import pending_changes_in_scope
+from setuhaul.auth.settings_routes import settings_view
 from setuhaul.auth.signin_notice import NOTICES
 from setuhaul.auth.users import User
 from setuhaul.auth.warehouse_routes import (
@@ -53,6 +54,7 @@ ASSET_DIR = Path(__file__).parent / "assets"
 ASSET_TYPES = {"app.css": "text/css; charset=utf-8", "common.js": "text/javascript; charset=utf-8",
                "admin.js": "text/javascript; charset=utf-8", "tabs.js": "text/javascript; charset=utf-8",
                "model.js": "text/javascript; charset=utf-8",
+               "settings.js": "text/javascript; charset=utf-8",
                "warehouse.js": "text/javascript; charset=utf-8"}
 # Sent with every HTML response: nothing but our own files may run or load, and nothing is cached.
 SECURITY_HEADERS = {
@@ -363,14 +365,102 @@ def _model_section(conn: sqlite3.Connection, deps: AppDeps) -> str:
             f"<p>In use: {esc(_model_in_use(gateway, policy))}</p>{figures}{_model_limits(policy, env_in_force(deps, conn))}{_LANGSMITH_PANEL}</section>")
 
 
+_FROM = {"saved": "saved here", "env": ".env", "unset": "not set"}
+
+
+def _configuration_section(conn: sqlite3.Connection, deps: AppDeps) -> str:
+    """Model, LangSmith and Telegram settings. Secrets are never drawn: only that one is set, and its last characters."""
+    view = settings_view(deps, conn)
+    settings: dict[str, dict[str, Any]] = view["settings"]
+    live = bool(view["live"])
+    keys_off = view["master_key"] != "ok"
+
+    def source(name: str) -> str:
+        return f'<small class="note">{esc(_FROM[settings[name]["source"]])}</small>'
+
+    def value(name: str) -> str:
+        return str(settings[name].get("value", ""))
+
+    def text(label: str, field: str, name: str) -> str:
+        return f'<label>{esc(label)} <input name="{field}" value="{esc(value(name))}" autocomplete="off">{source(name)}</label>'
+
+    def choice(label: str, field: str, name: str, options: list[tuple[str, str]], selected: str) -> str:
+        return f'<label>{esc(label)} <select name="{field}">{_options(options, selected)}</select>{source(name)}</label>'
+
+    def secret(label: str, field: str, name: str) -> str:
+        entry = settings[name]
+        state = "not set"
+        if entry["set"]:
+            ending = f", ends in {entry['last4']}" if entry.get("last4") else ""
+            state = f"set{ending} ({_FROM[entry['source']]})"
+        disabled = " disabled" if keys_off else ""
+        return (f'<label>{esc(label)} <input name="{field}" type="password" autocomplete="new-password"{disabled}>'
+                f'<small class="note">{esc(state)}. Leave empty to keep.</small></label>')
+
+    def block(section: str, title: str, fields: str, buttons: str, note: str = "") -> str:
+        extra = f'<p class="note">{esc(note)}</p>' if note else ""
+        if not live:
+            return f"<h3>{esc(title)}</h3>{extra}<form>{fields}</form>"
+        reset = _button("Reset to .env", f"/v1/admin/settings/{section}/reset", body={},
+                        confirm=f"Remove the saved {title} settings and use .env?")
+        return (f'<h3>{esc(title)}</h3>{extra}<div><form data-settings="{section}">{fields}{buttons}'
+                f'<button type="submit">Save</button>{reset}</form><p class="note" data-result></p></div>')
+
+    def check(label: str, path: str) -> str:
+        return f'<button type="button" data-check="/v1/admin/settings/{path}">{esc(label)}</button>'
+
+    notes = []
+    if not live:
+        notes.append("Changes are for the live service. This screen shows the environment only.")
+    if view["master_key"] == "missing":
+        notes.append("Keys cannot be saved: SETUHAUL_SETTINGS_KEY is not set in .env.")
+    elif view["master_key"] == "invalid":
+        notes.append("Keys cannot be saved: SETUHAUL_SETTINGS_KEY in .env is not a valid key.")
+    if view["unreadable"]:
+        notes.append("A saved key cannot be read. Enter it again or reset to .env.")
+    provider = value("SETUHAUL_MODEL_PROVIDER")
+    providers = ([] if provider in ("anthropic", "openai") else [(provider, provider or "not set")])
+    model = block("model", "Model", (
+        choice("Provider", "provider", "SETUHAUL_MODEL_PROVIDER",
+               providers + [("openai", "openai"), ("anthropic", "anthropic")], provider)
+        + text("Model ID", "model_id", "SETUHAUL_MODEL_ID")
+        + secret("API key", "api_key", "SETUHAUL_MODEL_API_KEY")
+        + text("Reasoning effort", "reasoning_effort", "SETUHAUL_OPENAI_REASONING_EFFORT")
+        + text("Input price per million tokens", "price_in", "SETUHAUL_MODEL_PRICE_IN_PER_MTOK")
+        + text("Output price per million tokens", "price_out", "SETUHAUL_MODEL_PRICE_OUT_PER_MTOK")),
+        check("Test connection", "model/test"), "A new provider needs its own API key.")
+    on = value("SETUHAUL_LANGSMITH_ENABLED").strip().lower() in ("true", "1", "yes", "on")
+    # Show what is happening; only while nothing is set and nothing is sent is hiding drawn as the starting choice.
+    untouched = settings["SETUHAUL_LANGSMITH_HIDE_TEXT"]["source"] == "unset" and not tracing_status(env_in_force(deps, conn)).enabled
+    hide = "on" if untouched or value("SETUHAUL_LANGSMITH_HIDE_TEXT") == "1" else "off"
+    tracing = block("langsmith", "LangSmith", (
+        choice("Send traces", "enabled", "SETUHAUL_LANGSMITH_ENABLED", [("off", "Off"), ("on", "On")], "on" if on else "off")
+        + choice("Hide message text", "hide_text", "SETUHAUL_LANGSMITH_HIDE_TEXT", [("on", "On"), ("off", "Off")], hide)
+        + secret("API key", "api_key", "LANGSMITH_API_KEY")
+        + text("Project", "project", "LANGSMITH_PROJECT")), "",
+        f"Tracing is {tracing_status(env_in_force(deps, conn)).reason}.")
+    webhook = {"registered": "The webhook is registered.", "needs_registering": "The webhook needs registering.",
+               "no_public_url": "The webhook cannot be registered: SETUHAUL_PUBLIC_URL is not set."}[view["webhook"]]
+    bot = block("telegram", "Telegram", (
+        secret("Bot token", "bot_token", "SETUHAUL_TELEGRAM_BOT_TOKEN")
+        + secret("Webhook secret", "webhook_secret", "SETUHAUL_TELEGRAM_WEBHOOK_SECRET")),
+        ("" if keys_off else '<button type="button" data-generate>Save with a new secret</button>')
+        + check("Test bot", "telegram/test") + check("Register webhook", "telegram/register-webhook"),
+        f"{webhook} Each driver has to open a new bot and press Start before it can message them.")
+    top = "".join(f'<p class="note">{esc(n)}</p>' for n in notes)
+    return f'<section id="config" data-panel="config"><h2>Configuration</h2>{top}{model}{tracing}{bot}</section>'
+
+
 def render_admin(conn: sqlite3.Connection, me: User, query: dict[str, str], deps: AppDeps) -> str:
     # The admin screen: users, pending drivers, decided onboarded drivers (suspend / re-approve), audit log.
     nav = '<a href="/admin">Admin</a> <a href="/warehouse">Warehouse</a>'
-    tabs = _tabs((("users", "Users"), ("pending", "Pending drivers"), ("decided", "Onboarded drivers"), ("audit", "Audit log"), ("model", "Model")))
+    tabs = _tabs((("users", "Users"), ("pending", "Pending drivers"), ("decided", "Onboarded drivers"), ("audit", "Audit log"), ("model", "Model"),
+                  ("config", "Configuration")))
     # The "wh" class gives the same tab styling as the warehouse screen.
     body = ('<div class="wh">' + tabs + _users_section(conn, me) + _pending_section(conn) + _decided_section(conn)
-            + _audit_section(conn, query) + _model_section(conn, deps) + "</div>")
-    return _layout("Admin", body, ("common.js", "tabs.js", "admin.js", "model.js"), me, nav)
+            + _audit_section(conn, query) + _model_section(conn, deps)
+            + _configuration_section(conn, deps) + "</div>")
+    return _layout("Admin", body, ("common.js", "tabs.js", "admin.js", "model.js", "settings.js"), me, nav)
 
 
 # ---- warehouse screen -------------------------------------------------------------------------------------

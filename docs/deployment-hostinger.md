@@ -29,10 +29,29 @@ SETUHAUL_GOOGLE_CLIENT_ID=
 SETUHAUL_GOOGLE_CLIENT_SECRET=
 SETUHAUL_SESSION_SECRET=
 SETUHAUL_BOOTSTRAP_ADMIN_EMAIL=
+SETUHAUL_SETTINGS_KEY=
 ```
 
 `SETUHAUL_SESSION_SECRET` needs at least 32 bytes. Put values containing `$` or JSON in single quotes. Optional: the Telegram,
 webhook, partner-mail and LangSmith settings.
+
+### Changing settings without logging in
+
+Set `SETUHAUL_SETTINGS_KEY` once, before the first start (or restart the container after adding it):
+
+```bash
+python3 -c "import base64,os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())"
+```
+
+Then **Admin > Configuration** changes the model provider, ID, key, reasoning effort and prices, LangSmith, and the Telegram bot
+token and webhook secret, from the next message. **Register webhook** there replaces the manual `setWebhook` command.
+
+- A saved value overrides `.env` until **Reset to .env**. Editing that line in `.env` has no effect while a saved value exists.
+- Keys are stored encrypted in the database and never shown again. The backup copies both the database and `.env`, so a full backup
+  holds the keys and the means to decrypt them.
+- Losing or changing `SETUHAUL_SETTINGS_KEY` means entering the saved keys again; until then the model is treated as unavailable
+  if its saved key cannot be read.
+- Every save, reset and test is in the audit log, without key values. Any admin can replace keys or switch tracing on.
 
 ## 2. `compose.server.yml`
 
