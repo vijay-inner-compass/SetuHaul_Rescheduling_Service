@@ -701,10 +701,15 @@ def render_warehouse(conn: sqlite3.Connection, user: User, now: Any, facility: s
         if board is None:
             return _message_page("Not found", "No such facility.", 404, user)
     today = now.date()
-    tabs = _tabs((("board", "Dock board"), ("messages", "Messages"), ("projects", "Projects"), ("drivers", "Drivers")))
+    # Imported here: the tab's module uses this one's page helpers.
+    from setuhaul.auth.shipment_pages import shipments_section
+
+    tabs = _tabs((("board", "Dock board"), ("messages", "Messages"), ("projects", "Projects"), ("shipments", "Shipments"),
+                  ("drivers", "Drivers")))
     body = ('<div class="wh">' + _attention(conn, user, today, board) + tabs
             + _board_section(board, options, chosen, now) + _messages_section(conn, user, now)
-            + _projects_section(conn, user, today, options) + _drivers_section(conn, user, today) + "</div>")
+            + _projects_section(conn, user, today, options) + shipments_section(conn, user, now, options)
+            + _drivers_section(conn, user, today) + "</div>")
     nav = '<a href="/warehouse">Warehouse</a>' + (' <a href="/admin">Admin</a>' if user.role == "ADMIN" else "")
     return _respond(_layout("Warehouse", body, ("common.js", "tabs.js", "warehouse.js"), user, nav))
 
