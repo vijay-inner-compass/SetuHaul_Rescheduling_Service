@@ -144,7 +144,7 @@ from setuhaul.position import handle_driver_position, handle_new_position
 
 # Per-driver rate limiting.
 from setuhaul.rate_limit import RateLimits, check_rate_limit
-from setuhaul.runtime_settings import SettingsSource
+from setuhaul.runtime_settings import MIN_TELEGRAM_SECRET_LEN, SettingsSource
 
 # The validated ping shape.
 from setuhaul.schemas import GpsPing
@@ -217,6 +217,17 @@ def model_in_force(deps: AppDeps, conn: sqlite3.Connection) -> tuple[ModelGatewa
 def env_in_force(deps: AppDeps, conn: sqlite3.Connection) -> Mapping[str, str] | None:
     """The settings in force, or None to read the process environment."""
     return None if deps.settings is None else deps.settings.effective(conn).env
+
+
+def telegram_in_force(deps: AppDeps) -> tuple[bytes, TelegramClient | None]:
+    """The webhook secret and reply client to use now."""
+    if deps.settings is None:
+        return deps.telegram_secret, deps.telegram
+    conn = open_connection(path=deps.db_path, readonly=True)
+    try:
+        return deps.settings.telegram(conn)
+    finally:
+        conn.close()
 
 
 class MessageIn(BaseModel):
@@ -296,7 +307,8 @@ def create_app(deps: AppDeps) -> FastAPI:
         # No background runner unless enabled.
         runner = None
         # Start the hold-expiry sweep in a background thread.
-        if deps.run_maintenance:
+        # With saved settings a bot may appear at any time, so both runners always start.
+        if deps.run_maintenance or deps.settings is not None:
             # The runner opens its own connection (SQLite connections cannot cross threads).
             runner = MaintenanceRunner(None, deps.clock, deps.maintenance_interval_s,
                                        conn_factory=lambda: open_connection(path=deps.db_path))
@@ -304,7 +316,11 @@ def create_app(deps: AppDeps) -> FastAPI:
             await run_in_threadpool(runner.start)
         # Messages written outside a driver's turn reach their phone only through this sender.
         notices = None
-        if deps.run_driver_notices and deps.telegram is not None:
+        if deps.settings is not None:
+            notices = DriverNoticeRunner(deps.clock, None, lambda: open_connection(path=deps.db_path), deps.notice_interval_s,
+                                         client_source=lambda: telegram_in_force(deps)[1])
+            notices.start()
+        elif deps.run_driver_notices and deps.telegram is not None:
             notices = DriverNoticeRunner(deps.clock, deps.telegram, lambda: open_connection(path=deps.db_path), deps.notice_interval_s)
             notices.start()
         try:
@@ -845,10 +861,6 @@ def create_app(deps: AppDeps) -> FastAPI:
 
         register_demo(app, deps, process)
     return app
-
-
-# A shorter Telegram webhook secret is too easy to guess.
-MIN_TELEGRAM_SECRET_LEN = 16
 
 
 def telegram_from_env() -> tuple[bytes, TelegramClient | None]:
