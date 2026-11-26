@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -103,3 +104,26 @@ def effective(conn: sqlite3.Connection, env: Mapping[str, str]) -> Effective:
         merged[name] = value
         source[name] = "saved"
     return Effective(merged, source, frozenset(unreadable))
+
+
+# Not a setting: what the webhook was last registered with, so the screen can say when it is out of date.
+_WEBHOOK_MARK = "telegram_webhook_registered"
+
+
+def webhook_fingerprint(token: str, secret: str, url: str) -> str:
+    return hashlib.sha256("\n".join((token, secret, url)).encode()).hexdigest()
+
+
+def mark_webhook(conn: sqlite3.Connection, fingerprint: str, *, updated_by: str, now: datetime) -> None:
+    conn.execute("insert or replace into app_settings (name, value, encrypted, updated_by, updated_at) values (?,?,0,?,?)",
+                 (_WEBHOOK_MARK, fingerprint, updated_by, now.isoformat()))
+
+
+def webhook_mark(conn: sqlite3.Connection) -> str | None:
+    try:
+        row = conn.execute("select value from app_settings where name=?", (_WEBHOOK_MARK,)).fetchone()
+    except sqlite3.OperationalError as error:
+        if "no such table" not in str(error):
+            raise
+        return None
+    return None if row is None else str(row[0])

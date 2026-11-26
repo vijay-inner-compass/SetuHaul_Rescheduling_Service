@@ -44,6 +44,14 @@ class SettingsSource:
         # base_env holds secrets.
         return "SettingsSource()"
 
+    def http(self) -> httpx.Client:
+        """A client for the checks run from the screen; the caller closes it."""
+        return httpx.Client(timeout=10.0, transport=self._transport)
+
+    @property
+    def transport(self) -> httpx.BaseTransport | None:
+        return self._transport
+
     def effective(self, conn: sqlite3.Connection) -> app_settings.Effective:
         return app_settings.effective(conn, self.base_env)
 

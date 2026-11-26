@@ -20,6 +20,7 @@ from setuhaul.auth.http import reject as _reject
 from setuhaul.auth.users import User
 from setuhaul.db import immediate, open_connection
 from setuhaul.identity import AuthError
+from setuhaul.settings_checks import check_bot, check_model, register_webhook
 
 if TYPE_CHECKING:
     from setuhaul.api import AppDeps
@@ -54,6 +55,11 @@ class ModelBody(_Body):
         if not math.isfinite(value) or value < 0:
             raise ValueError("a price is a number of 0 or more")
         return raw.strip()
+
+
+class BotTestBody(_Body):
+    bot_token: Annotated[str, StringConstraints(strip_whitespace=True, max_length=200,
+                                                pattern=r"^([0-9]+:[A-Za-z0-9_-]+)?$")] | None = None
 
 
 class LangSmithBody(_Body):
@@ -179,7 +185,14 @@ def settings_view(deps: AppDeps, conn: sqlite3.Connection) -> dict[str, Any]:
     """What the screen may know. Without a settings source it only shows the environment."""
     base = dict(os.environ) if deps.settings is None else deps.settings.base_env
     now = app_settings.effective(conn, base)
-    return {"settings": _view(now), "master_key": app_settings.master_key_problem(base) or "ok",
+    token, secret = (now.env.get(n, "") for n in app_settings.SECTIONS["telegram"])
+    if not deps.public_url:
+        webhook = "no_public_url"
+    elif token and secret and app_settings.webhook_mark(conn) == app_settings.webhook_fingerprint(token, secret, deps.public_url):
+        webhook = "registered"
+    else:
+        webhook = "needs_registering"
+    return {"settings": _view(now), "webhook": webhook, "master_key": app_settings.master_key_problem(base) or "ok",
             "unreadable": sorted(now.unreadable), "live": deps.settings is not None}
 
 
@@ -236,11 +249,103 @@ def register_settings_routes(app: FastAPI, deps: AppDeps) -> None:
                              detail=_detail(names, before, source.effective(conn)), clock=deps.clock)
         return JSONResponse({"status": "OK", "request_id": rid})
 
+    def in_force(rid: str) -> app_settings.Effective | Response:
+        source = deps.settings
+        if source is None:
+            return _reject(rid, 409, "SETTINGS_NOT_AVAILABLE")
+        try:
+            conn = open_connection(path=deps.db_path, readonly=True)
+        except (sqlite3.Error, FileNotFoundError):
+            return _reject(rid, 503, "DATABASE_UNAVAILABLE")
+        try:
+            return source.effective(conn)
+        except sqlite3.Error:
+            return _reject(rid, 503, "DATABASE_UNAVAILABLE")
+        finally:
+            conn.close()
+
+    def record(rid: str, user: User, action: str, section: str, ok: bool, fingerprint: str | None = None) -> Response | None:
+        def write(conn: sqlite3.Connection) -> Response:
+            with immediate(conn):
+                if fingerprint is not None:
+                    app_settings.mark_webhook(conn, fingerprint, updated_by=user.email, now=deps.clock.now())
+                audit.record(conn, actor_user_id=user.user_id, actor_email=user.email, action=action, target_type="settings",
+                             target_id=section, outcome="OK" if ok else "FAILED", ip=None, detail=None, clock=deps.clock)
+            return Response(status_code=204)
+
+        done = with_conn(rid, write)
+        return None if done.status_code == 204 else done
+
+    def check(user: User, what: str, raw: object, rid: str) -> Response:
+        """Run one check with the values given, over those in force. Nothing is saved; the network is used with no database open."""
+        now = in_force(rid)
+        if isinstance(now, Response):
+            return now
+        source = deps.settings
+        assert source is not None
+        fingerprint = None
+        try:
+            if what == "model":
+                body = parse_body(ModelBody, raw)
+                values, remove = model_changes(body, now, source.base_env)
+                env = {**now.env, **values}
+                if "SETUHAUL_MODEL_API_KEY" in remove:
+                    env["SETUHAUL_MODEL_API_KEY"] = source.base_env.get("SETUHAUL_MODEL_API_KEY", "")
+                # The same rule as for a driver's message: a .env key goes only to the .env provider.
+                from_env = "SETUHAUL_MODEL_API_KEY" not in values and (
+                    "SETUHAUL_MODEL_API_KEY" in remove or now.source["SETUHAUL_MODEL_API_KEY"] != "saved")
+                if from_env and env.get("SETUHAUL_MODEL_PROVIDER", "") != source.base_env.get("SETUHAUL_MODEL_PROVIDER", ""):
+                    raise AuthError("KEY_REQUIRED_FOR_PROVIDER")
+                ok, message = check_model(env, source.transport)
+                action, section = "SETTINGS_TEST", "model"
+            elif what == "bot":
+                given = parse_body(BotTestBody, raw).bot_token
+                token = given or now.env.get("SETUHAUL_TELEGRAM_BOT_TOKEN", "")
+                if not token:
+                    raise AuthError("TELEGRAM_PAIR_REQUIRED")
+                with source.http() as http:
+                    ok, message = check_bot(token, http)
+                action, section = "SETTINGS_TEST", "telegram"
+            else:
+                token, secret = (now.env.get(n, "") for n in app_settings.SECTIONS["telegram"])
+                if not deps.public_url:
+                    raise AuthError("PUBLIC_URL_NOT_SET")
+                if not token or not secret:
+                    raise AuthError("TELEGRAM_PAIR_REQUIRED")
+                with source.http() as http:
+                    ok, message = register_webhook(token, secret, deps.public_url, http)
+                action, section = "TELEGRAM_WEBHOOK_REGISTER", "telegram"
+                if ok:
+                    fingerprint = app_settings.webhook_fingerprint(token, secret, deps.public_url)
+        except AuthError as exc:
+            return _reject(rid, _STATUS.get(exc.code, 422), exc.code)
+        failed = record(rid, user, action, section, ok, fingerprint)
+        if failed is not None:
+            return failed
+        return JSONResponse({"ok": ok, "message": message, "request_id": rid})
+
     async def _json(request: Request) -> object:
         try:
             return await request.json()
         except ValueError:
             return None
+
+    @app.post("/v1/admin/settings/model/test")
+    async def test_model(request: Request, user: Annotated[User, Depends(require_role("ADMIN"))]) -> Response:
+        rid = request.state.request_id
+        raw = await _json(request)
+        return await run_in_threadpool(check, user, "model", raw, rid)
+
+    @app.post("/v1/admin/settings/telegram/test")
+    async def test_bot(request: Request, user: Annotated[User, Depends(require_role("ADMIN"))]) -> Response:
+        rid = request.state.request_id
+        raw = await _json(request)
+        return await run_in_threadpool(check, user, "bot", raw, rid)
+
+    @app.post("/v1/admin/settings/telegram/register-webhook")
+    async def register(request: Request, user: Annotated[User, Depends(require_role("ADMIN"))]) -> Response:
+        rid = request.state.request_id
+        return await run_in_threadpool(check, user, "webhook", None, rid)
 
     @app.post("/v1/admin/settings/{section}")
     async def save_settings(request: Request, section: str,
