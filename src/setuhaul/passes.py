@@ -60,6 +60,12 @@ def state_for(conn: sqlite3.Connection, shipment_id: str) -> sqlite3.Row | None:
     return row  # type: ignore[no-any-return]
 
 
+def on_site(conn: sqlite3.Connection, shipment_id: str) -> bool:
+    """The truck has passed the gate (or already left): its booking may no longer be moved or cancelled."""
+    return conn.execute("select 1 from truck_visits t join visit_shipments v using(truck_visit_id) where v.shipment_id=?"
+                        " and t.status in ('CHECKED_IN','OPERATIONS_COMPLETE','CHECKED_OUT')", (shipment_id,)).fetchone() is not None
+
+
 def _shipment(conn: sqlite3.Connection, shipment_id: str, actor: User | None) -> sqlite3.Row:
     # Only shipments created in the app carry passes; out of scope looks like not existing.
     row = conn.execute("select s.* from shipments s join shipment_assignments a using(shipment_id) where s.shipment_id=?",
@@ -124,6 +130,10 @@ def sync_window(conn: sqlite3.Connection, shipment_id: str, clock: Clock) -> Non
     if visit is None or appointment is None:
         return
     start, end = window(conn, appointment)
+    # A pass that ran out is brought back when the booking moves ahead again: the driver already holds the code.
+    if visit["status"] == "EXPECTED" and parse_operational_timestamp(end) > clock.now():
+        conn.execute("update dock_access_authorizations set status='ISSUED' where status='EXPIRED' and rowid=(select max(q.rowid)"
+                     " from dock_access_authorizations q where q.truck_visit_id=?)", (visit["truck_visit_id"],))
     moved = conn.execute(
         f"update dock_access_authorizations set appointment_id=?, dock_id=?, valid_from_utc=?, valid_until_utc=?,"
         f" row_version=row_version+1 where truck_visit_id=? and status in {LIVE}",
@@ -171,6 +181,9 @@ def revoke(conn: sqlite3.Connection, *, actor: User, shipment_id: str, reason: s
     with immediate(conn):
         _shipment(conn, shipment_id, actor)
         visit = visit_for(conn, shipment_id)
+        # Revoking under a truck that is inside would hide it; the visit ends at check-out.
+        if visit is not None and visit["status"] != "EXPECTED":
+            raise AuthError("VISIT_IN_PROGRESS" if visit["status"] != "CHECKED_OUT" else "VISIT_CLOSED")
         if visit is None or not _end_live(conn, visit["truck_visit_id"], "REVOKED", reason.strip()[:200], clock):
             raise AuthError("NO_LIVE_PASS")
         record(conn, actor, "PASS_REVOKED", shipment_id, clock, detail={"reason": reason.strip()[:200]})

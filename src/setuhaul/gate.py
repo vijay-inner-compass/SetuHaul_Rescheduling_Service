@@ -27,10 +27,12 @@ from setuhaul.escalation import HandoffRequest, create_handoff
 from setuhaul.events import append_appointment_event
 from setuhaul.identity import AuthError
 
-# Failed checks by one user before they must wait, and for how long.
+# Wrong passes or details from one user before they must wait, and for how long.
 MAX_FAILURES = 10
 FAILURE_WINDOW_S = 900
 GATE_ROLES = ("SECURITY", "ADMIN")
+# Only these look like guessing. An early truck or a second press must never close the gate to the next one.
+COUNTED = ("PASS_NOT_VALID", "DETAILS_DO_NOT_MATCH")
 
 
 class GateRequest(BaseModel):
@@ -126,7 +128,7 @@ def _audit(conn: sqlite3.Connection, actor: User, action: str, target: str | Non
 
 def _refused(conn: sqlite3.Connection, redis: Redis, actor: User, data: GateRequest, reason: str, clock: Clock) -> None:
     """Count and record a failed check. Called after its transaction has rolled back."""
-    if redis.incr(_failures_key(actor)) == 1:
+    if reason in COUNTED and redis.incr(_failures_key(actor)) == 1:
         redis.expire(_failures_key(actor), FAILURE_WINDOW_S)
     row = _pass(conn, data.code)
     with immediate(conn):
@@ -253,11 +255,11 @@ def check_out(conn: sqlite3.Connection, *, actor: User, truck_visit_id: str | No
         _audit(conn, actor, "CHECK_OUT", visit["shipment_id"], clock)
 
 
-# A truck inside, with the end of its pass window.
+# A truck inside, with its latest pass. Chosen by the visit's state, so nothing done to the pass can hide a truck.
 _INSIDE = ("select t.truck_visit_id, t.status, t.checked_in_at, t.driver_id, t.warehouse_id, v.shipment_id, d.driver_name,"
            " s.order_reference, p.vehicle_registration, p.valid_until_utc from truck_visits t join visit_shipments v using(truck_visit_id)"
            " join shipments s using(shipment_id) join drivers d on d.driver_id=t.driver_id join dock_access_authorizations p"
-           " on p.truck_visit_id=t.truck_visit_id and p.status in ('ACTIVE','COMPLETED')"
+           " on p.rowid=(select max(q.rowid) from dock_access_authorizations q where q.truck_visit_id=t.truck_visit_id)"
            " where t.status in ('CHECKED_IN','OPERATIONS_COMPLETE')")
 
 

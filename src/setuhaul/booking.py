@@ -230,6 +230,9 @@ def acquire_hold(
             now = clock.now()
             # Clear overdue holds that could be in the way.
             _expire_due_for(conn, now, shipment_id=shipment_id, slot_id=item.slot_id)
+            # Once the truck is through the gate its booking is fixed.
+            if passes.on_site(conn, shipment_id):
+                return _fail("OPTION_CHANGED")
             # The menu itself has a 15-minute life.
             if now >= opt.expires_at:
                 return _fail("OPTION_EXPIRED")
@@ -571,7 +574,7 @@ def confirm_reschedule(conn: sqlite3.Connection, cmd: ConfirmCommand, clock: Clo
                 (cmd.shipment_id,),
             ).fetchone()
             # If unloading has already started, the appointment cannot be moved: release the hold and say so.
-            if orig is not None and orig["appointment_status"] == "IN_PROGRESS":
+            if passes.on_site(conn, cmd.shipment_id) or (orig is not None and orig["appointment_status"] == "IN_PROGRESS"):
                 release_hold_in_txn(conn, cmd.hold_appointment_id, cmd.shipment_id, "SYSTEM", now,
                                     "SYSTEM", None, "ORIGINAL_IN_PROGRESS")
                 return _store_result(conn, cmd, _result("ORIGINAL_NOT_RESCHEDULABLE"), now)

@@ -67,7 +67,7 @@ def request_change(conn: sqlite3.Connection, clock: Clock, *, driver_id: str, sh
         ship = conn.execute("select driver_id, destination_facility_id, current_status from v_driver_shipments where shipment_id=?",
                             (shipment_id,)).fetchone()
         # Another driver's load and an unknown one answer alike.
-        if ship is None or ship["driver_id"] != driver_id or ship["current_status"] in NOT_MOVABLE:
+        if ship is None or ship["driver_id"] != driver_id or ship["current_status"] in NOT_MOVABLE or passes.on_site(conn, shipment_id):
             return ChangeResult(status="NOT_MOVABLE")
         if conn.execute("select 1 from facilities where facility_id=? and active_flag=1", (to_facility_id,)).fetchone() is None:
             return ChangeResult(status="UNKNOWN_FACILITY")
@@ -103,7 +103,8 @@ def decide(conn: sqlite3.Connection, clock: Clock, *, actor: User, request_id: s
             ship = conn.execute("select destination_facility_id, current_status from shipments where shipment_id=?",
                                 (row["shipment_id"],)).fetchone()
             # The load may have moved on since it was asked for.
-            if ship["current_status"] in NOT_MOVABLE or ship["destination_facility_id"] != row["from_facility_id"]:
+            if (ship["current_status"] in NOT_MOVABLE or ship["destination_facility_id"] != row["from_facility_id"]
+                    or passes.on_site(conn, row["shipment_id"])):
                 return ChangeResult(status="NOT_MOVABLE", request_id=request_id)
             conn.execute("update shipments set destination_facility_id=? where shipment_id=?", (row["to_facility_id"], row["shipment_id"]))
             passes.move_warehouse(conn, row["shipment_id"], clock)

@@ -25,14 +25,16 @@ The pass works from the facility's early-arrival limit (60 minutes if unset) bef
 | Situation | What to do |
 |---|---|
 | "Pass not delivered" | Ask the driver to link Telegram, or check the bot; then **Send new pass**. |
-| Lost or shared pass | **Revoke pass** (with a reason), or **Send new pass**, which replaces it. The driver sends the new one back. |
-| Too early or too late | The gate refuses. For a missed window, book again, then **Send new pass**. There is no gate override. |
+| Lost or shared pass | Before arrival: **Revoke pass** (with a reason), or **Send new pass**, which replaces it. Once the truck is inside, neither is possible; tell the gate. |
+| Too early or too late | The gate refuses. Rebooking a later slot makes the same pass work again. There is no gate override. |
 | Details do not match | Do not admit. A different driver or vehicle needs the shipment changed by the warehouse. |
 | Truck with no booking | Do not admit; the warehouse creates a shipment first. |
 | Truck still inside after the window | A case opens for the warehouse. Nothing is released automatically. |
 | Five wrong passes in chat | The shipment locks; **Unlock** on the Shipments tab. |
-| Ten failed gate checks in 15 minutes | That user waits 15 minutes. |
+| Ten wrong passes or details by one user in 15 minutes | That user waits 15 minutes. Early, late or repeated checks do not count. |
 | System unavailable | The gate refuses; contact the warehouse. |
+
+Once a truck is checked in, its booking cannot be moved, cancelled or sent to another warehouse.
 
 A warehouse move revokes the pass at once and sends a new one; the gate admits the truck only once a slot at the new
 warehouse is booked. A move to a partner warehouse leaves no pass.
@@ -43,7 +45,7 @@ warehouse is booked. A move to a partner warehouse leaves no pass.
 |---|---|---|
 | Guessing a pass | 128 random bits; attempt limits in chat and at the gate | None practical |
 | Database or backup read | Only the SHA-256 of each pass is stored | Licence numbers and phones are stored as before |
-| Pass left in logs, chat history or the AI model | Codes are blanked before a message is saved or sent on | A code typed in an unrecognisable form is not blanked |
+| Pass left in logs, chat history or the AI model | Codes are blanked before a message is saved or sent on | A damaged code with no digit, no `DAP-` and spaces between groups reads like words and is not blanked |
 | Someone else uses a pass | The guard must also type the vehicle and licence numbers | The guard must compare the licence photo and the person |
 | Replay or a second entry | One live pass per visit; check-in once; dead after check-out | None known |
 | Stolen Telegram account | Revoke the Telegram link and send a new pass | The bot sends the pass to the linked account |

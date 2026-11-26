@@ -109,7 +109,7 @@ def shipments_section(conn: sqlite3.Connection, user: User, now: datetime, facil
             actions += _button("Unlock", f"{base}/unlock")
         if s["state"] != "CANCELLED" and s["visit_state"] in (None, "EXPECTED"):
             actions += _button("Send new pass", f"{base}/pass", confirm=f"Replace the pass for {s['order_reference']}?")
-        if s["pass_state"] in ("ISSUED", "VALIDATED", "ACTIVE", "COMPLETED"):
+        if s["pass_state"] in ("ISSUED", "VALIDATED"):
             actions += (f'<form data-api="{esc(base)}/pass/revoke">' + _input("Reason", "reason", extra='required maxlength="200"')
                         + '<button type="submit">Revoke pass</button><span class="note" data-form-result role="alert"></span></form>')
         visit = passes.visit_for(conn, s["shipment_id"])

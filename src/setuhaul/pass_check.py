@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict
 
 from setuhaul.clock import Clock
 from setuhaul.db import immediate, parse_operational_timestamp
-from setuhaul.dock_pass import find, hash_code
+from setuhaul.dock_pass import find, guesses, hash_code
 from setuhaul.escalation import EscalationSink, HandoffRequest
 from setuhaul.language import say
 from setuhaul.passes import LIVE
@@ -65,7 +65,7 @@ def check(conn: sqlite3.Connection, clock: Clock, *, driver_id: str, thread_id: 
             return None
         named = [r for r in waiting if r["live_hash"] in found]
         # Every different code that is none of this driver's live passes is one guess, however many arrive in one message.
-        wrong = found - {r["live_hash"] for r in rows}
+        wrong = {hash_code(code) for code in guesses(text)} - {r["live_hash"] for r in rows}
         now = clock.now().isoformat()
         for r in waiting:
             if r["locked_at"] is not None:

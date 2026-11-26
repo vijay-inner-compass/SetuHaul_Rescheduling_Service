@@ -23,6 +23,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 # A ranked option, used to present the original slot as a single option.
+from setuhaul import passes
 from setuhaul.allocation import RankedOption
 
 # Shared helpers from booking: outcome classes, fingerprinting, lock-error detection and in-transaction release.
@@ -166,6 +167,9 @@ def cancel_confirmed_appointment(
                 f"join appointment_slots s using(slot_id) where a.shipment_id=? and a.is_current=1 "
                 f"and a.appointment_status in {_ACTIVE}", (shipment_id,),
             ).fetchone()
+            # The truck is through the gate: cancelling here would free a dock it is using.
+            if appt is not None and passes.on_site(conn, shipment_id):
+                return store(_res("NOT_CANCELLABLE", appointment_id=appt["appointment_id"]))
             # Nothing to cancel.
             if appt is None:
                 return store(_res("NOT_FOUND"))
