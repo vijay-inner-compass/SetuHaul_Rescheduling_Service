@@ -146,6 +146,15 @@ def _telegram_changes(body: TelegramBody, now: app_settings.Effective) -> dict[s
         values["SETUHAUL_TELEGRAM_WEBHOOK_SECRET"] = secrets.token_urlsafe(32)
     elif body.webhook_secret:
         values["SETUHAUL_TELEGRAM_WEBHOOK_SECRET"] = body.webhook_secret
+    # A different bot (the number before the colon) must not share a secret: the old bot still calls with the old one,
+    # and the webhook route trusts the secret alone.
+    old_token, old_secret = (now.env.get(name, "") for name in app_settings.SECTIONS["telegram"])
+    if body.bot_token and old_token and old_secret and body.bot_token.split(":")[0] != old_token.split(":")[0]:
+        given = values.get("SETUHAUL_TELEGRAM_WEBHOOK_SECRET")
+        if given == old_secret:
+            raise AuthError("TELEGRAM_NEW_SECRET_REQUIRED")
+        if given is None:
+            values["SETUHAUL_TELEGRAM_WEBHOOK_SECRET"] = secrets.token_urlsafe(32)
     # Half a pair would leave the bot off: refuse rather than save it.
     after = {**now.env, **values}
     if values and not all(after.get(name) for name in app_settings.SECTIONS["telegram"]):

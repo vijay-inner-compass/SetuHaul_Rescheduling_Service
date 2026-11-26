@@ -69,6 +69,7 @@ characters from `A-Z a-z 0-9 _ -`). **Generate** makes a secret on the server, s
 - **Test bot** asks Telegram who the token belongs to and shows the bot's username. Nothing is saved.
 - **Register webhook** tells Telegram to call `<SETUHAUL_PUBLIC_URL>/v1/telegram/webhook` with the saved secret, then shows Telegram's
   view of it (address, waiting updates, last error). It is disabled when the public URL is not set. This replaces the manual command.
+- A different bot never keeps the previous bot's secret: a new one is made unless one is typed, so the old bot is refused.
 - A save does not register by itself. After changing the token or secret the tab says the webhook needs registering.
 - Today the sender of queued driver notices starts only if a bot is configured at start-up. It will always run and use the bot in force,
   doing nothing when there is none. The webhook route likewise reads the secret in force.

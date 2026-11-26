@@ -155,3 +155,42 @@ def test_a_short_env_secret_is_never_reported_as_working(world: World, short: st
     assert admin.get(URL).json()["webhook"] == "needs_registering"
     # A new secret puts it right.
     assert admin.post(f"{URL}/telegram", json={"generate_secret": "yes"}).status_code == 200
+
+
+def _hook(world: World, secret: str) -> int:
+    return world.client().post("/v1/telegram/webhook", json={"update_id": 1},
+                               headers={"X-Telegram-Bot-Api-Secret-Token": secret}).status_code
+
+
+def _secret(world: World) -> str:
+    conn = open_connection(path=world.path)
+    assert world.deps.settings is not None
+    value = world.deps.settings.effective(conn).env["SETUHAUL_TELEGRAM_WEBHOOK_SECRET"]
+    conn.close()
+    return value
+
+
+def test_switching_to_another_bot_retires_the_old_webhook_secret(world: World) -> None:
+    _use(world, _good)
+    admin = world.client("admin")
+    admin.post(f"{URL}/telegram", json={"bot_token": TOKEN, "webhook_secret": SECRET})
+    # The same bot with a regenerated token keeps its secret.
+    assert admin.post(f"{URL}/telegram", json={"bot_token": "123:regenerated"}).status_code == 200
+    assert _secret(world) == SECRET
+    # Another bot: the old one's calls must stop being accepted.
+    assert admin.post(f"{URL}/telegram", json={"bot_token": "456:other-bot"}).status_code == 200
+    assert _secret(world) != SECRET and len(_secret(world)) >= 32
+    assert _hook(world, SECRET) == 401 and _hook(world, _secret(world)) == 200
+    assert admin.get(URL).json()["webhook"] == "needs_registering"
+
+
+def test_another_bot_cannot_be_given_the_old_secret_again(world: World) -> None:
+    _use(world, _good)
+    admin = world.client("admin")
+    admin.post(f"{URL}/telegram", json={"bot_token": TOKEN, "webhook_secret": SECRET})
+    r = admin.post(f"{URL}/telegram", json={"bot_token": "456:other-bot", "webhook_secret": SECRET})
+    assert r.status_code == 422 and r.json()["reason_code"] == "TELEGRAM_NEW_SECRET_REQUIRED"
+    assert _secret(world) == SECRET
+    chosen = "a-different-secret-0123456789"
+    assert admin.post(f"{URL}/telegram", json={"bot_token": "456:other-bot", "webhook_secret": chosen}).status_code == 200
+    assert _secret(world) == chosen
