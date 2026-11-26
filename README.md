@@ -9,6 +9,33 @@ SQLite is the system of record for the prototype.
 > It has **not** been used with real drivers, has no recorded real-model run of the current flow, and its Hindi/Hinglish wording has
 > not been reviewed by a native speaker. Start with `docs/client-readout.md`; before a demonstration read `docs/faq.md`.
 
+## Library versions
+Python 3.12. Exact pins from `pyproject.toml`; the full resolved set is in `docs/requirements-lock.txt`.
+
+| Runtime | Version | Development | Version |
+|---|---|---|---|
+| fastapi | 0.164.0 | pytest | 9.2.0 |
+| uvicorn | 0.54.0 | hypothesis | 6.170.15 |
+| pydantic | 2.14.3 | fakeredis | 2.40.0 |
+| langgraph | 1.2.23 | ruff | 0.17.5 |
+| httpx | 0.28.1 | mypy | 2.4.1 |
+| redis | 8.1.0 | locust | 2.47.0 |
+| cryptography | 50.0.2 | pre-commit | 4.7.0 |
+| tzdata | 2026.6 | setuptools (build) | 80.9.0 |
+| opentelemetry-api, -sdk | 1.45.2 | | |
+
+SQLite is the one bundled with Python.
+
+## Run the prototype
+After the quick start below, one command opens the demonstration console at `http://127.0.0.1:8800/` (local only, no sign-in):
+```powershell
+.\.venv\Scripts\python scripts\run_demo.py --auto-login
+```
+
+## Submission documents
+[Cover sheet](docs/submission.md) · [Problem definition](docs/problem-definition.md) · [Data audit](docs/data-audit.md) ·
+[13 decisions](docs/decision-answers.md) · [Client readout](docs/client-readout.md)
+
 ## Documentation
 
 * [FAQ](docs/faq.md): questions you may be asked, including edge cases, personal data and Telegram, with honest answers and proof.

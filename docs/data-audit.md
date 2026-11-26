@@ -1,4 +1,4 @@
-# Data Audit (Phase 1)
+# Data Audit
 
 Source: `data/setuhaul.sqlite3` (SHA-256 `C02806E6...F90700`, identical to the supplied `setuhaul_freight_operations.db`). Reproduce with `python scripts/audit_data.py`; full output in `docs/verification/phase1-audit-output.json`. The audit opens the database with `mode=ro` and a test confirms the file hash is unchanged afterwards.
 
@@ -15,6 +15,24 @@ Source: `data/setuhaul.sqlite3` (SHA-256 `C02806E6...F90700`, identical to the s
 | Conversation | chat_threads (12), chat_messages (20), driver_exceptions (10), operational_messages (5) |
 
 Key constraints: `ux_active_appointment_per_slot` (unique slot where status is PENDING_CONFIRMATION, CONFIRMED or IN_PROGRESS); `ux_current_active_appointment_per_shipment` (unique shipment where `is_current=1` and an active status); `slot_end_ts > slot_start_ts`; `UNIQUE(dock_id, slot_start_ts, slot_end_ts)`; CHECK-constrained enums on all status columns.
+
+## Data issues
+**Ten issues, each with the query that proves it and its result: [data-issues.md](verification/data-issues.md).**
+The integrity checks under "Findings" below pass, but they test only what the schema already guards. The two unique
+indexes do not cover dock weight limits, unload overrun, dock events or whether the booked time can still be met.
+
+| Issue | Rows | How the service treats it |
+|---|---|---|
+| Active appointment over the dock weight limit | 2 | new options are rejected (`WEIGHT_EXCEEDS_DOCK_LIMIT`); existing bookings are not flagged |
+| Current appointment the latest ETA cannot meet | 6 | rejected as an option; found only when the driver writes |
+| Unload longer than the slot | 4 | new options must fit one slot; existing bookings are not flagged |
+| Active appointment inside a dock event | 3 | new options are blocked; existing bookings are not flagged |
+| Heavy-dock rule against dock limits | needs confirming | both the rule and the dock limit are applied |
+| Open shipment with no active appointment | 4 | handled case by case |
+| Driver with two open shipments | 4 | each tool needs a shipment id and checks ownership; the model picks which |
+| Exception without a shipment; duplicate exception | 2 | not assumed to map to a load |
+| Duplicate chat message | 1 | excluded from rebuilt context |
+| Operational message failed or still queued | 2 | not repaired by the service |
 
 ## Findings
 | Check | Result |
