@@ -15,6 +15,7 @@ from redis import Redis
 from redis.exceptions import RedisError
 
 from setuhaul.auth import account_mail, audit, local_admin, users
+from setuhaul.auth.routes import MIN_SECRET_BYTES
 from setuhaul.clock import Clock
 from setuhaul.db import immediate, open_connection, parse_operational_timestamp
 from setuhaul.identity import AuthError
@@ -44,12 +45,13 @@ def cancel_all(conn: sqlite3.Connection, user_id: str, clock: Clock) -> None:
                  (clock.now().isoformat(), user_id))
 
 
-def issue(conn: sqlite3.Connection, user_id: str, purpose: Purpose, clock: Clock) -> str:
-    """A new link token. The user's earlier unused links stop working."""
+def issue(conn: sqlite3.Connection, user_id: str, purpose: Purpose, clock: Clock, *, replace: bool = True) -> str:
+    """A new link token. The user's earlier unused links stop working, at once unless ``replace`` is off."""
     token = secrets.token_urlsafe(32)
     now = clock.now()
     with immediate(conn):
-        cancel_all(conn, user_id, clock)
+        if replace:
+            cancel_all(conn, user_id, clock)
         conn.execute(
             "insert into account_links(token_hash, user_id, purpose, created_at, expires_at, used_at) values (?,?,?,?,?,NULL)",
             (_hash(token), user_id, purpose, now.isoformat(), (now + LIFETIME[purpose]).isoformat()),
@@ -99,11 +101,17 @@ def send(deps: AppDeps, user_id: str, purpose: Purpose, *, forgot: bool = False)
         if not allowed:
             note("THROTTLED")
             return "THROTTLED"
-        url = f"{deps.public_url}/set-password#token={issue(conn, user_id, purpose, deps.clock)}"
+        # The link the user already has keeps working until this one is on its way.
+        token = issue(conn, user_id, purpose, deps.clock, replace=False)
+        url = f"{deps.public_url}/set-password#token={token}"
+        google = deps.google is not None and len(deps.session_secret) >= MIN_SECRET_BYTES
         try:
-            sender.send(account_mail.link_mail(user.email, purpose, url))
+            sender.send(account_mail.link_mail(user.email, purpose, url,
+                                               f"{deps.public_url}/auth/login" if google else None))
         except Exception as exc:  # noqa: BLE001 - library text can echo the message, so only the type is logged
             _log.warning("password link email not sent: %s", type(exc).__name__)
+            # Nobody received this link.
+            conn.execute("delete from account_links where token_hash=?", (_hash(token),))
             note("SEND_FAILED")
             try:
                 # Nothing arrived, so the next attempt need not wait.
@@ -111,10 +119,18 @@ def send(deps: AppDeps, user_id: str, purpose: Purpose, *, forgot: bool = False)
             except RedisError:
                 pass
             return "FAILED"
+        _cancel_older(conn, user_id, token, deps.clock)
         note("SENT")
         return "SENT"
     finally:
         conn.close()
+
+
+def _cancel_older(conn: sqlite3.Connection, user_id: str, token: str, clock: Clock) -> None:
+    # Only links made before this one, so two sends at once can never cancel each other.
+    conn.execute("update account_links set used_at=? where user_id=? and used_at is null "
+                 "and rowid < (select rowid from account_links where token_hash=?)",
+                 (clock.now().isoformat(), user_id, _hash(token)))
 
 
 def redeem(conn: sqlite3.Connection, token: str, password: str, clock: Clock, ip: str | None = None) -> users.User:

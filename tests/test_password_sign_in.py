@@ -3,6 +3,7 @@
 # Lazy annotations, like the rest of the codebase.
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import threading
@@ -15,6 +16,7 @@ from redis.exceptions import RedisError
 from setuhaul import partner_booking
 from setuhaul.api import create_app_from_env
 from setuhaul.auth import account_mail, audit, links, local_admin, sessions, users
+from setuhaul.auth.google import FakeGoogleVerifier
 from setuhaul.clock import FakeClock
 from setuhaul.config import load_settings
 from setuhaul.db import MIGRATIONS_DIR, apply_migrations, open_connection
@@ -579,6 +581,53 @@ def test_the_real_service_reads_the_switch(world: World, monkeypatch: pytest.Mon
     monkeypatch.setenv("SETUHAUL_DB_PATH", str(world.path))
     app = create_app_from_env()
     assert app.state.deps.password_login_on is on
+
+
+def test_a_failed_send_keeps_the_link_the_user_already_has(world: World) -> None:
+    _forgot(world)
+    token = _token_in(_mails(world)[0])
+    _cool_down_over(world)
+    world.deps.password_sender = _BrokenSender()
+    assert _code(_send_link(world)) == (502, "EMAIL_FAILED")
+    assert _set(world, token).status_code == 200
+    assert _query(world, "select count(*) from account_links where used_at is null") == [(0,)]
+
+
+def test_a_sent_link_replaces_the_older_one(world: World) -> None:
+    _forgot(world)
+    _cool_down_over(world)
+    _forgot(world)
+    first, second = (_token_in(m) for m in _mails(world))
+    assert _code(_set(world, first)) == (422, "LINK_INVALID")
+    assert _set(world, second).status_code == 200
+
+
+@pytest.mark.parametrize("path", ["/auth/password", "/auth/password/set", "/auth/password/forgot"])
+def test_a_form_from_another_site_is_refused(world: World, path: str) -> None:
+    # A cross-site form can send JSON-looking text, but not with a JSON content type.
+    _set_password(world, "wh_a")
+    body = json.dumps({"email": "wha@x.com", "password": PASSWORD, "token": "t"})
+    r = world.client().post(path, content=body, headers={"content-type": "text/plain", "origin": "https://evil.example"})
+    assert r.status_code in (401, 422) and "set-cookie" not in r.headers
+    assert _mails(world) == []
+
+
+def test_malformed_sign_in_attempts_are_audited_without_values(world: World) -> None:
+    for body in (b"not json", b'{"email": "wha@x.com", "password": "' + b"q" * 1025 + b'"}'):
+        world.client().post("/auth/password", content=body, headers={"content-type": "application/json"})
+    rows = _query(world, "select outcome, actor_email, detail_json from audit_log where action='PASSWORD_LOGIN'")
+    assert rows == [("PASSWORD_REFUSED", None, '{"reason": "BAD_REQUEST"}')] * 2
+
+
+def test_emails_offer_google_when_it_is_set_up(world: World) -> None:
+    _forgot(world)
+    assert "Google" not in _mails(world)[0].body
+    world.deps.google = FakeGoogleVerifier()
+    _invite(world)
+    assert f"{BASE}/auth/login" in _mails(world)[-1].body and "sign in with Google" in _mails(world)[-1].body
+    # The sign-in page offers both.
+    page = world.client().get("/").text
+    assert "Sign in with Google" in page and 'data-api="/auth/password"' in page
 
 
 def test_start_up_names_what_is_missing(world: World, monkeypatch: pytest.MonkeyPatch,

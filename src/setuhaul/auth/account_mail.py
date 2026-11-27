@@ -35,8 +35,10 @@ def account_sender_from_env(env: Mapping[str, str]) -> tuple[MailSender | None, 
     return SmtpSender(settings), ()
 
 
-def link_mail(to_addr: str, purpose: str, url: str) -> OutgoingMail:
+def link_mail(to_addr: str, purpose: str, url: str, google_url: str | None = None) -> OutgoingMail:
     subject, opening, lifetime = _WORDS[purpose]
-    body = (f"{opening}\n\n{url}\n\nThe link works once, for {lifetime}.\n"
+    # Offered only when the service has Google sign-in set up; it needs no password.
+    google = f"If this address is a Google account, you can sign in with Google instead:\n\n{google_url}\n\n" if google_url else ""
+    body = (f"{opening}\n\n{url}\n\nThe link works once, for {lifetime}.\n\n{google}"
             "If you did not expect this email, you can ignore it.\n")
     return OutgoingMail(to_addr=to_addr, subject=subject, body=body, message_id=f"<{uuid.uuid4().hex}@setuhaul.local>")

@@ -49,6 +49,10 @@ def send_reset(deps: AppDeps, email: str) -> None:
 
 async def read_strings(request: Request, *names: str) -> tuple[str, ...] | None:
     """The named string fields of a JSON object body, or None for anything else. Used by routes anyone can call."""
+    # Another site's form can send text that parses as JSON, and so sign a visitor in as someone else; it cannot set this
+    # content type, and a script that does is stopped by the browser's preflight.
+    if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
+        return None
     try:
         body = await request.json()
         values = tuple(body[name] for name in names)
@@ -86,7 +90,15 @@ def register_password_routes(app: FastAPI, deps: AppDeps) -> None:
         fields = await read_strings(request, "email", "password")
         # Refused before any hashing work, and with nothing that says why.
         if fields is None or len(fields[0]) > MAX_EMAIL or len(fields[1]) > local_admin.MAX_LENGTH:
-            return _reject(rid, 401, "BAD_CREDENTIALS")
+            def refused(conn: sqlite3.Connection) -> Response:
+                # Audited like every other attempt, but with none of the submitted values.
+                audit.record(conn, actor_user_id=None, actor_email=None, action="PASSWORD_LOGIN", target_type=None,
+                             target_id=None, outcome="PASSWORD_REFUSED", ip=ip, detail={"reason": "BAD_REQUEST"},
+                             clock=deps.clock)
+                conn.commit()
+                return _reject(rid, 401, "BAD_CREDENTIALS")
+
+            return await run_in_threadpool(with_conn, deps, rid, refused)
         email, password = fields
 
         def attempt(conn: sqlite3.Connection) -> Response:
