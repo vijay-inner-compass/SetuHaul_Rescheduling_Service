@@ -61,7 +61,7 @@ ASSET_TYPES = {"tokens.css": "text/css; charset=utf-8", "app.css": "text/css; ch
                "model.js": "text/javascript; charset=utf-8",
                "settings.js": "text/javascript; charset=utf-8",
                "warehouse.js": "text/javascript; charset=utf-8", "exceptions.js": "text/javascript; charset=utf-8",
-               "gate.js": "text/javascript; charset=utf-8"}
+               "gate.js": "text/javascript; charset=utf-8", "password.js": "text/javascript; charset=utf-8"}
 # Sent with every HTML response: nothing but our own files may run or load, and nothing is cached.
 SECURITY_HEADERS = {
     "Content-Security-Policy": ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
@@ -173,11 +173,38 @@ _GOOGLE_MARK = (
     '</svg>')
 
 
-def _landing(google: bool, local_admin: bool, notice: str = "") -> str:
+def _secret_field(ident: str, label: str, extra: str) -> str:
+    # A password box with its Show button.
+    return (f'<label for="{ident}">{label}</label><span class="secret"><input id="{ident}" type="password" required {extra}>'
+            f'<button type="button" data-reveal="{ident}" aria-pressed="false">Show</button></span>')
+
+
+def _signin_frame(title: str, panel: str, scripts: tuple[str, ...] = ("common.js",)) -> str:
+    # The frame of every page a signed-out person sees: the brand side, then one panel.
+    tags = "".join(f'<script src="/app/assets/{esc(s)}" defer></script>' for s in scripts)
+    return ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+            f"<title>{esc(title)}</title><link rel=\"stylesheet\" href=\"/app/assets/tokens.css\">"
+            "<link rel=\"stylesheet\" href=\"/app/assets/app.css\"></head><body class=\"login\">"
+            '<div class="brand"><p class="wordmark">SetuHaul</p>'
+            '<div class="pitch"><h1>Dock scheduling and rescheduling</h1>'
+            "<p>One place for warehouse teams to see bay bookings, driver messages and changes as they happen.</p></div>"
+            f"{_dock_drawing()}</div>"
+            f'<main class="signin"><div class="panel">{panel}</div></main>{tags}</body></html>')
+
+
+def _landing(google: bool, local_admin: bool, notice: str = "", password: bool = False, good: bool = False) -> str:
     # The sign-in page. Only what is set up is offered: a button that can only fail is worse than none.
     button = f'<a class="google" href="/auth/login">{_GOOGLE_MARK}<span>Sign in with Google</span></a>' if google else ""
     backup = ""
-    if local_admin:
+    if password:
+        # For every invited user, so it takes the place of the administrator's backup form. method="post" keeps the
+        # password out of the address if the script does not run.
+        backup = ('<form method="post" data-api="/auth/password" data-next="/">'
+                  '<label for="email">Email</label><input id="email" name="email" type="email" required autocomplete="username">'
+                  + _secret_field("password", "Password", 'name="password" autocomplete="current-password"')
+                  + '<button type="submit">Sign in</button></form><p><a href="/forgot-password">Forgot password?</a></p>')
+    elif local_admin:
         # Folded away when Google is the normal way in; open when the password is the only way in.
         state = "" if google else " open"
         backup = (f'<details class="backup"{state}><summary>Administrator password</summary>'
@@ -187,22 +214,14 @@ def _landing(google: bool, local_admin: bool, notice: str = "") -> str:
                   '<input id="password" name="password" type="password" required autocomplete="current-password">'
                   '<button type="button" data-reveal="password" aria-pressed="false">Show</button></span>'
                   '<button type="submit">Sign in</button></form></details>')
-    if not google and not local_admin:
+    if not google and not local_admin and not password:
         button = ('<p class="empty">No sign-in is configured. Set SETUHAUL_GOOGLE_CLIENT_ID and SETUHAUL_GOOGLE_CLIENT_SECRET (with '
                   'SETUHAUL_SESSION_SECRET), or SETUHAUL_LOCAL_ADMIN=1 with SETUHAUL_BOOTSTRAP_ADMIN_EMAIL, then restart.</p>')
-    lead = "For administrators and warehouse teams." if google else "Administrator access."
-    return ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
-            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-            "<title>Sign in</title><link rel=\"stylesheet\" href=\"/app/assets/tokens.css\">"
-            "<link rel=\"stylesheet\" href=\"/app/assets/app.css\"></head><body class=\"login\">"
-            '<div class="brand"><p class="wordmark">SetuHaul</p>'
-            '<div class="pitch"><h1>Dock scheduling and rescheduling</h1>'
-            "<p>One place for warehouse teams to see bay bookings, driver messages and changes as they happen.</p></div>"
-            f"{_dock_drawing()}</div>"
-            f'<main class="signin"><div class="panel"><h2>Sign in</h2><p class="lead">{lead}</p>'
-            f'<p id="status" class="status" role="alert">{esc(notice)}</p>{button}{backup}'
-            '<p class="fine">Access is by invitation, and sign-ins are recorded. Drivers use Telegram and do not sign in here.</p>'
-            '</div></main><script src="/app/assets/common.js" defer></script></body></html>')
+    lead = "For administrators and warehouse teams." if google or password else "Administrator access."
+    status = "status ok" if good else "status"
+    return _signin_frame("Sign in", f'<h2>Sign in</h2><p class="lead">{lead}</p>'
+                         f'<p id="status" class="{status}" role="alert">{esc(notice)}</p>{button}{backup}'
+                         '<p class="fine">Access is by invitation, and sign-ins are recorded. Drivers use Telegram and do not sign in here.</p>')
 
 
 def _checkboxes(name: str, items: list[tuple[str, str]], chosen: tuple[str, ...] = ()) -> str:
@@ -223,7 +242,7 @@ def _tabs(items: tuple[tuple[str, str], ...], counts: Mapping[str, int] | None =
 
 
 # ---- admin screen -----------------------------------------------------------------------------------------
-def _users_section(conn: sqlite3.Connection, me: User) -> str:
+def _users_section(conn: sqlite3.Connection, me: User, passwords: bool = False) -> str:
     facilities = [(r["facility_id"], f"{r['facility_id']} - {r['facility_name']}")
                   for r in conn.execute("select facility_id, facility_name from facilities order by facility_id")]
     rows = []
@@ -242,15 +261,23 @@ def _users_section(conn: sqlite3.Connection, me: User) -> str:
             action += (f'<details><summary>Change facilities</summary><form data-api="{esc(base)}/facilities" '
                        f'data-done="Facilities saved.">{_checkboxes("facilities", facilities, found.facilities)}'
                        '<button type="submit">Save facilities</button></form></details>')
-        rows.append([esc(found.email), esc(found.display_name), esc(word(found.role)), esc(word(found.status)),
-                     esc(", ".join(found.facilities)), esc(when(row["last_login_at"])), action])
+        cells = [esc(found.email), esc(found.display_name), esc(word(found.role)), esc(word(found.status)),
+                 esc(", ".join(found.facilities)), esc(when(row["last_login_at"]))]
+        if passwords:
+            # Only whether there is one: the hash is never read for the screen.
+            has = conn.execute("select 1 from admin_credentials where user_id=?", (found.user_id,)).fetchone()
+            cells.append("Set" if has else "Not set")
+            if found.status == "ACTIVE":
+                action = _button("Send password link", f"{base}/password-link", done="Password link sent.") + action
+        rows.append([*cells, action])
     invite = ('<h3>Invite a user</h3><form data-api="/v1/admin/users"><label>Email <input name="email" type="email" required></label>'
               '<label>Display name <input name="display_name" required maxlength="120"></label>'
               '<label>Role <select name="role"><option value="WAREHOUSE_AUTHORITY">Warehouse authority</option>'
               '<option value="SECURITY">Security (gate)</option><option value="ADMIN">Admin</option></select></label>'
               f'<fieldset data-facilities><legend>Facilities</legend>{_checkboxes("facilities", facilities)}</fieldset>'
               '<button type="submit">Invite</button></form>')
-    table = _table(("Email", "Name", "Role", "Status", "Facilities", "Last login", ""), rows)
+    headers = ("Email", "Name", "Role", "Status", "Facilities", "Last login", *(("Password",) if passwords else ()), "")
+    table = _table(headers, rows)
     return f'<section id="users" data-panel="users"><h2>Users</h2>{table}{invite}</section>'
 
 
@@ -511,7 +538,7 @@ def render_admin(conn: sqlite3.Connection, me: User, query: dict[str, str], deps
     # Imported here: that module uses this one's page helpers.
     from setuhaul.auth.exception_pages import deleted_section
 
-    body = ('<div class="wh">' + _admin_attention(conn, me, waiting) + tabs + _users_section(conn, me) + _pending_section(conn) + _decided_section(conn)
+    body = ('<div class="wh">' + _admin_attention(conn, me, waiting) + tabs + _users_section(conn, me, deps.password_login_on) +_pending_section(conn) + _decided_section(conn)
             + deleted_section(conn)
             + _audit_section(conn, query) + _model_section(conn, deps)
             + _configuration_section(conn, deps) + "</div>")
@@ -970,8 +997,9 @@ def register_pages(app: FastAPI, deps: AppDeps) -> None:
         # The same condition the Google routes use (a client and a signing secret of at least 32 bytes).
         google = deps.google is not None and len(deps.session_secret) >= 32
         # Only a listed category selects a message; the parameter itself is never shown.
-        notice = NOTICES.get(request.query_params.get("signin", ""), "")
-        return _respond(_landing(google, deps.local_admin_enabled, notice))
+        category = request.query_params.get("signin", "")
+        return _respond(_landing(google, deps.local_admin_enabled, NOTICES.get(category, ""), deps.password_login_on,
+                                 good=category == "password_set"))
 
     @app.get("/admin", response_class=HTMLResponse)
     def admin_page(request: Request) -> Response:

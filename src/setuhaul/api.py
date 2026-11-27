@@ -909,6 +909,10 @@ def create_app(deps: AppDeps) -> FastAPI:
     from setuhaul.auth.pages import register_pages
 
     register_pages(app, deps)
+    # The signed-out password screens.
+    from setuhaul.auth.password_pages import register_password_pages
+
+    register_password_pages(app, deps)
     # Facility change requests: list, approve, reject.
     from setuhaul.auth.facility_routes import register_facility_routes
 

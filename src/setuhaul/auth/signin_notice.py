@@ -18,6 +18,8 @@ NOTICES = {
     "cancelled": "Google sign-in was not completed. Try again.",
     "expired": "The sign-in attempt expired or could not be verified. Try again.",
     "unavailable": "Sign-in is temporarily unavailable. Try again shortly, or contact your administrator.",
+    # Not a failure: shown after setting a password from an emailed link.
+    "password_set": "Password saved. Sign in below.",
 }
 # Reason code -> category. Disabled reads the same as never invited; anything unlisted is "unavailable".
 _CATEGORY = {"NOT_INVITED": "not_invited", "DISABLED": "not_invited", "EMAIL_NOT_VERIFIED": "unverified",

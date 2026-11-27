@@ -29,7 +29,7 @@ PUBLIC = {
     ("GET", "/health"), ("GET", "/ready"), ("GET", "/health/ready"), ("GET", "/version"), ("GET", "/auth/login"), ("GET", "/auth/callback"), ("POST", "/auth/logout"),
     ("GET", "/auth/me"), ("POST", "/auth/local-admin"), ("POST", "/auth/password"), ("POST", "/auth/password/set"), ("POST", "/auth/password/forgot"), ("GET", "/demo/login"), ("GET", "/demo/driver-login"),
     # The sign-in landing page (it redirects signed-in users) and the whitelisted static assets (no secrets in them).
-    ("GET", "/"), ("GET", "/app/assets/{name}"),
+    ("GET", "/"), ("GET", "/app/assets/{name}"), ("GET", "/forgot-password"), ("GET", "/set-password"),
 }
 # Machine channels: each has its own signature or secret check and must refuse an unauthenticated call.
 EXEMPT_OWN_AUTH = {

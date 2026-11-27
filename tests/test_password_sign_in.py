@@ -467,3 +467,65 @@ def test_partner_reply_reader_ignores_account_mail(world: World) -> None:
         assert conn.execute("select count(*) from escalation_cases").fetchone()[0] == before
     finally:
         conn.close()
+
+
+# ---- screens -----------------------------------------------------------------------------------------------
+def test_login_page_on_and_off(world: World) -> None:
+    on = world.client().get("/").text
+    assert 'data-api="/auth/password"' in on and 'href="/forgot-password"' in on and 'method="post"' in on
+    assert "Administrator password" not in on and "For administrators and warehouse teams." in on
+    # The password form takes the place of the break-glass one.
+    world.deps.local_admin_enabled = True
+    assert "/auth/local-admin" not in world.client().get("/").text
+    world.deps.password_sender = None
+    off = world.client().get("/").text
+    assert "/auth/password" not in off and "forgot-password" not in off and "/auth/local-admin" in off
+
+
+def test_password_pages(world: World) -> None:
+    forgot = world.client().get("/forgot-password")
+    assert forgot.status_code == 200 and 'data-api="/auth/password/forgot"' in forgot.text
+    assert 'data-done="If that address has access, we have sent it a link."' in forgot.text
+    chosen = world.client().get("/set-password")
+    assert chosen.status_code == 200 and 'data-api="/auth/password/set"' in chosen.text
+    assert 'type="hidden" name="token"' in chosen.text and 'data-next="/?signin=password_set"' in chosen.text
+    # The repeat box is checked in the browser and never sent.
+    assert re.search(r'<input id="repeat"(?![^>]*name=)[^>]*>', chosen.text)
+    assert "at least 12 characters" in chosen.text and "/app/assets/password.js" in chosen.text
+    for page in (forgot, chosen):
+        assert "default-src 'self'" in page.headers["content-security-policy"]
+        assert page.headers["referrer-policy"] == "no-referrer" and page.headers["cache-control"] == "no-store"
+        assert not re.search(r"<script(?![^>]*\bsrc=)", page.text) and 'method="post"' in page.text
+    assert world.client().get("/app/assets/password.js").status_code == 200
+
+
+def test_password_pages_404_when_off(world: World) -> None:
+    world.deps.password_sender = None
+    assert world.client().get("/forgot-password").status_code == 404
+    assert world.client().get("/set-password").status_code == 404
+
+
+def test_users_table_columns(world: World) -> None:
+    _set_password(world, "wh_a")
+    on = world.client("admin").get("/admin").text
+    users_panel = on.split('data-panel="users"><h2>Users</h2>')[1].split("</section>")[0]
+    assert "<th>Password</th>" in users_panel and "<td>Set</td>" in users_panel and "<td>Not set</td>" in users_panel
+    assert f'/v1/admin/users/{world.users["wh_a"].user_id}/password-link' in users_panel
+    _toggle(world, "wh_a", on=False)
+    after = world.client("admin").get("/admin").text
+    assert f'/v1/admin/users/{world.users["wh_a"].user_id}/password-link' not in after
+    world.deps.password_sender = None
+    off = world.client("admin").get("/admin").text
+    assert "password-link" not in off and "<th>Password</th>" not in off
+
+
+def test_password_set_notice(world: World) -> None:
+    page = world.client().get("/?signin=password_set").text
+    assert 'class="status ok" role="alert">Password saved. Sign in below.<' in page
+    assert 'class="status ok"' not in world.client().get("/?signin=expired").text
+
+
+def test_invite_result_is_said_on_screen() -> None:
+    script = (Path(__file__).resolve().parents[1] / "src" / "setuhaul" / "auth" / "assets" / "common.js").read_text("utf-8")
+    assert "invite_email" in script
+    assert "Invitation emailed." in script and "Invited, but the email could not be sent." in script

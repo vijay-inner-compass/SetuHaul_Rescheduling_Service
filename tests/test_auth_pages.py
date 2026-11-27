@@ -22,7 +22,7 @@ from tests.auth_helpers import GURUGRAM, JAIPUR, World, build_world
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSET_DIR = ROOT / "src" / "setuhaul" / "auth" / "assets"
-ASSETS = ("tokens.css", "app.css", "common.js", "tabs.js", "admin.js", "warehouse.js", "model.js", "settings.js")
+ASSETS = ("tokens.css", "app.css", "common.js", "tabs.js", "admin.js", "warehouse.js", "model.js", "settings.js", "password.js")
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'; "
        "base-uri 'none'; form-action 'self'")
 XSS_NAME = "<script>alert(1)</script>"

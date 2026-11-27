@@ -208,8 +208,13 @@
             window.location.assign(next);
           } else {
             var card = source.closest("[data-key^='case:']");
+            // An invitation also says whether its email went.
+            var emailed = data && data.invite_email;
             window.sessionStorage.setItem(FLASH, JSON.stringify({
-              text: source.getAttribute("data-done") || "Done.",
+              text: emailed === "SENT" ? "Invitation emailed." :
+                emailed === "FAILED" ? "Invited, but the email could not be sent." :
+                source.getAttribute("data-done") || "Done.",
+              failed: emailed === "FAILED",
               focus: card ? card.getAttribute("data-key") : ""
             }));
             window.location.reload();
@@ -233,7 +238,7 @@
     }
     window.sessionStorage.removeItem(FLASH);
     var kept = JSON.parse(raw);
-    say(kept.text, true);
+    say(kept.text, !kept.failed);
     // Waits for the tab script, which unhides the section the card is in.
     window.setTimeout(function () {
       var card = kept.focus && document.querySelector("[data-key='" + CSS.escape(kept.focus) + "']");
