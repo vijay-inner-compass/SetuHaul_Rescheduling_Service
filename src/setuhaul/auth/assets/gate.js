@@ -17,13 +17,13 @@
     }).then(function (response) {
       return response.json().catch(function () { return null; }).then(function (data) {
         if (!response.ok) {
-          result.textContent = (data && (data.message || data.reason_code)) || "Request failed (" + response.status + ")";
+          result.textContent = window.SH.reason(response.status, data).text;
           return;
         }
         done(data);
       });
     }).catch(function () {
-      result.textContent = "Network error";
+      result.textContent = "The service could not be reached. Nothing is known to have changed.";
     });
   }
 

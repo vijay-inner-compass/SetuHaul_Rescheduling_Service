@@ -187,7 +187,7 @@ def cancel(conn: sqlite3.Connection, shipment_id: str, clock: Clock) -> None:
     record(conn, None, "PASS_CANCELLED", shipment_id, clock)
 
 
-def _language(conn: sqlite3.Connection, driver_id: str) -> str:
+def driver_language(conn: sqlite3.Connection, driver_id: str) -> str:
     # The language the driver last wrote in, if they have written.
     row = conn.execute("select json_extract(state_json, '$.language') from conversation_state where driver_id=?"
                        " order by updated_at desc limit 1", (driver_id,)).fetchone()
@@ -205,7 +205,7 @@ def deliver(conn: sqlite3.Connection, client: TelegramClient | None, shipment_id
         reason = "DRIVER_NOT_LINKED"
     else:
         try:
-            client.send(chat_id, say("pass_delivery", _language(conn, ship["driver_id"]), order=ship["order_reference"], code=code))
+            client.send(chat_id, say("pass_delivery", driver_language(conn, ship["driver_id"]), order=ship["order_reference"], code=code))
         except TelegramSendError:
             reason = "SEND_FAILED"
     with immediate(conn):

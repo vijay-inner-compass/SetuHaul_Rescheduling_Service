@@ -39,7 +39,7 @@
   }
 
   function refusal(result) {
-    return result.data.reason_code || "Request failed (" + result.status + ")";
+    return window.SH.reason(result.status, result.data).text;
   }
 
   function save(form, body) {

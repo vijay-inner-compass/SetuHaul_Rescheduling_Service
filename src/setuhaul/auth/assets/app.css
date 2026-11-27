@@ -5,6 +5,7 @@ header { --focus: #f2b705; }
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 .scroll { overflow-x: auto; }
 [data-form-result]:not(:empty) { color: #9a1b1b; font-weight: 600; }
+[aria-invalid=true] { border: 2px solid #9a1b1b; }
 body { font-family: system-ui, sans-serif; margin: 0; color: #1b1f24; background: #f6f7f9; }
 header { display: flex; align-items: center; gap: 1.5rem; padding: 0.6rem 1.2rem; background: #17324d; color: #fff; }
 header h1 { font-size: 1.1rem; margin: 0; }

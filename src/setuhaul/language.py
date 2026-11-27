@@ -392,6 +392,24 @@ T: dict[str, dict[str, str]] = {
 }
 
 
+# The channel's own answers, for what never reaches the conversation. Not yet reviewed by a native speaker.
+T["unsupported_content"] = {
+    "en": "I can only read typed messages. Please type what is happening with your delivery.",
+    "hi": "मैं केवल लिखे हुए संदेश पढ़ सकता हूँ। कृपया लिखकर बताइए कि आपकी डिलीवरी में क्या हो रहा है।",
+    "hinglish": "Main sirf likhe hue message padh sakta hoon. Likhkar bataiye ki aapki delivery mein kya ho raha hai.",
+}
+T["slow_down"] = {
+    "en": "You are sending messages too quickly. Please wait {seconds} seconds and send it again.",
+    "hi": "आप बहुत जल्दी-जल्दी संदेश भेज रहे हैं। कृपया {seconds} सेकंड रुककर दोबारा भेजें।",
+    "hinglish": "Aap bahut jaldi messages bhej rahe hain. {seconds} second rukkar dobara bhejiye.",
+}
+T["not_processed"] = {
+    "en": "I could not process your message. Please send it again in a few minutes, or contact your warehouse coordinator.",
+    "hi": "मैं आपका संदेश प्रोसेस नहीं कर सका। कृपया कुछ मिनट बाद दोबारा भेजें, या अपने वेयरहाउस कोऑर्डिनेटर से संपर्क करें।",
+    "hinglish": "Main aapka message process nahi kar saka. Kuch minute baad dobara bhejiye, ya apne warehouse coordinator se sampark kijiye.",
+}
+
+
 # Look up a wording and fill in its fields. An unknown language falls back to English.
 def say(key: str, lang: str | None, **fields: str) -> str:
     # All language variants of this wording.

@@ -18,6 +18,7 @@ from setuhaul.auth import telegram, users
 from setuhaul.clock import FakeClock
 from setuhaul.db import make_working_db, open_connection
 from setuhaul.identity import provision_identities
+from setuhaul.language import T
 from setuhaul.model_gateway import ModelPolicy
 from setuhaul.rate_limit import RateLimits
 from setuhaul.stub_model import StubGateway
@@ -159,7 +160,7 @@ def test_retried_update_is_not_processed_twice(env) -> None:  # type: ignore[no-
     assert calls.n == 1 and len(fake.sent) == 1
 
 
-def test_non_text_update_is_ignored_safely(env) -> None:  # type: ignore[no-untyped-def]
+def test_non_text_update_never_reaches_the_engine(env) -> None:  # type: ignore[no-untyped-def]
     _, client, calls, fake, *_ = env
     bind(client)
     fake.sent.clear()
@@ -173,7 +174,8 @@ def test_non_text_update_is_ignored_safely(env) -> None:  # type: ignore[no-unty
     assert post(client, {"update_id": next(_uid)}).status_code == 200
     # A bound driver sending a contact card does not rebind or reach the engine.
     assert post(client, contact_update(phone="+91 90000 10007")).status_code == 200
-    assert calls.n == 0 and fake.sent == []
+    # Each message is answered with one request to type instead; the other update kinds are not messages and get nothing.
+    assert calls.n == 0 and len(fake.sent) == 5 and {text for _, text, _ in fake.sent} == {T["unsupported_content"]["en"]}
 
 
 def test_group_chats_are_ignored(env) -> None:  # type: ignore[no-untyped-def]

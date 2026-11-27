@@ -16,9 +16,12 @@ from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from setuhaul import passes
-from setuhaul.auth import telegram
+from setuhaul.auth import audit, telegram
 from setuhaul.db import open_connection
+from setuhaul.events import queue_driver_notice
+from setuhaul.gps import active_shipment_for_driver
 from setuhaul.identity import AuthError, TrustedDriverContext
+from setuhaul.language import say
 
 if TYPE_CHECKING:
     from setuhaul.api import AppDeps, MessageIn
@@ -36,15 +39,29 @@ def _int(value: object) -> int | None:
 
 
 def register_telegram_routes(app: FastAPI, deps: AppDeps, pipeline: Pipeline) -> None:
-    def send(client: telegram.TelegramClient | None, chat_id: int, text: str, button: bool = False) -> None:
+    def send(client: telegram.TelegramClient | None, chat_id: int, text: str, button: bool = False) -> bool:
         # A failed send must not turn into a Telegram retry storm: log the class only (never the token) and carry on.
         if client is None:
             _LOG.warning("telegram reply dropped: no client configured")
-            return
+            return False
         try:
             client.send(chat_id, text, request_contact_button=button)
         except telegram.TelegramSendError as exc:
             _LOG.warning("telegram send failed: %s", exc)
+            return False
+        return True
+
+    def reply(conn: sqlite3.Connection, client: telegram.TelegramClient | None, chat_id: int, driver_id: str, text: str) -> None:
+        # An answer to a linked driver is not lost when Telegram refuses it: it joins the queue the notice sender retries.
+        if send(client, chat_id, text):
+            return
+        shipment = active_shipment_for_driver(conn, driver_id)
+        if shipment is not None and queue_driver_notice(conn, driver_id, shipment, text, deps.clock.now()):
+            return
+        # The queue hangs off an appointment; with none to hang it on, leave a trace for an admin.
+        audit.record(conn, actor_user_id=None, actor_email=None, action="TELEGRAM_REPLY_DROPPED", target_type="driver",
+                     target_id=driver_id, outcome="FAILED", ip=None, detail=None, clock=deps.clock)
+        conn.commit()
 
     def handle(client: telegram.TelegramClient | None, update: dict[str, Any], update_id: int, rid: str) -> None:
         msg = update.get("message")
@@ -82,11 +99,12 @@ def register_telegram_routes(app: FastAPI, deps: AppDeps, pipeline: Pipeline) ->
                     send(client, chat_id, telegram.SHARE_PROMPT, button=True)
                 return
             text = msg.get("text")
-            # Contacts, photos, stickers and the like from a bound driver are ignored.
+            # A photo, voice note, location or sticker cannot be read: say so rather than stay silent.
             if not isinstance(text, str) or not text.strip():
+                reply(conn, client, chat_id, driver_id, say("unsupported_content", passes.driver_language(conn, driver_id)))
                 return
             if len(text) > MAX_TEXT:
-                send(client, chat_id, telegram.TOO_LONG_REPLY)
+                reply(conn, client, chat_id, driver_id, telegram.TOO_LONG_REPLY)
                 return
             try:
                 trusted = telegram.trusted_context(conn, driver_id)
@@ -96,13 +114,22 @@ def register_telegram_routes(app: FastAPI, deps: AppDeps, pipeline: Pipeline) ->
                 send(client, chat_id, telegram.NEUTRAL_REFUSAL)
                 return
             resp = pipeline(conn, trusted, payload, rid)
+            body = json.loads(bytes(resp.body))
             if resp.status_code != 200:
                 _LOG.info("telegram message not answered: HTTP %s", resp.status_code)
+                # Another delivery of this same message is being worked on and will answer it.
+                if body.get("reason_code") == "IN_PROGRESS":
+                    return
+                lang = passes.driver_language(conn, driver_id)
+                if resp.status_code == 429:
+                    answer = say("slow_down", lang, seconds=str(body.get("retry_after_seconds") or 60))
+                else:
+                    answer = say("not_processed", lang)
+                reply(conn, client, chat_id, driver_id, answer)
                 return
-            body = json.loads(bytes(resp.body))
             # A replayed duplicate was already answered the first time.
             if not body.get("duplicate") and body.get("reply"):
-                send(client, chat_id, str(body["reply"]))
+                reply(conn, client, chat_id, driver_id, str(body["reply"]))
         finally:
             conn.close()
 

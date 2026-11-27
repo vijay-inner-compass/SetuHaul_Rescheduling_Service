@@ -264,7 +264,7 @@
     }).then(function (response) {
       return response.json().catch(function () { return null; }).then(function (data) {
         if (!response.ok) {
-          line.textContent = (data && (data.message || data.reason_code)) || "INVALID_REQUEST";
+          line.textContent = window.SH.reason(response.status, data).text;
           return;
         }
         var text = data.slots_created + " slots added.";

@@ -49,7 +49,33 @@
     LAST_ADMIN: "The last administrator cannot be disabled.",
     NOT_PENDING: "This item is no longer waiting for a decision.",
     NOT_BOUND: "That driver has no linked Telegram account.",
-    NOT_REVOKED: "That driver's Telegram access is not revoked."
+    NOT_REVOKED: "That driver's Telegram access is not revoked.",
+    UNKNOWN_USER: "That user no longer exists. Reload the page.",
+    UNKNOWN_FACILITY: "That facility does not exist.",
+    UNKNOWN_SECTION: "That settings section does not exist.",
+    CONFIRMATION_REQUIRED: "This change needs to be confirmed first.",
+    INVALID_SINCE: "Enter the time with an offset, for example 2026-08-04T09:00:00+05:30.",
+    LOCKED: "Too many failed attempts. Wait a few minutes and try again.",
+    PASSWORD_TOO_SHORT: "The password is too short. Use at least 12 characters.",
+    PASSWORD_TOO_LONG: "The password is too long.",
+    KEY_REQUIRED_FOR_PROVIDER: "A new provider needs its own API key. Enter it and save again.",
+    SETTINGS_KEY_UNAVAILABLE: "Keys cannot be saved: the server has no valid settings key.",
+    SETTINGS_NOT_AVAILABLE: "This screen cannot change settings on this server.",
+    TELEGRAM_NOT_CONFIGURED: "Telegram is not set up: save a bot token and a webhook secret first.",
+    TELEGRAM_PAIR_REQUIRED: "Enter both the bot token and the webhook secret.",
+    TELEGRAM_NEW_SECRET_REQUIRED: "A different bot needs a new webhook secret.",
+    TELEGRAM_SECRET_TOO_SHORT: "The webhook secret must be at least 16 characters.",
+    PUBLIC_URL_NOT_SET: "The webhook cannot be registered: the server's public address is not set.",
+    SERVICE_UNAVAILABLE: "The service is not available. Try again shortly."
+  };
+
+  // The form field a refusal is about, so it can be marked and focused.
+  var FIELDS = {
+    INVALID_PHONE: "phone", DUPLICATE_PHONE: "phone", INVALID_EMAIL: "email", ALREADY_INVITED: "email",
+    INVALID_NAME: "name", FACILITY_REQUIRED: "facilities", DUPLICATE_LICENCE: "licence_number",
+    INVALID_LICENCE_EXPIRY: "licence_expiry", LICENCE_EXPIRED: "licence_expiry", VEHICLE_CARRIER_MISMATCH: "vehicle_id",
+    VEHICLE_INACTIVE: "vehicle_id", DUPLICATE_CONTRACT: "contract_ref", BAD_ORDER_NUMBER: "order_number",
+    DUPLICATE_ORDER_NUMBER: "order_number", SLOT_NOT_AVAILABLE: "slot_id", INVALID_DEPARTURE: "planned_departure"
   };
 
   // Codes that mean "sign in again".
@@ -75,7 +101,7 @@
     if (code === "ALREADY_CLAIMED" && data.claimed_by) {
       text = "Already claimed by " + String(data.claimed_by).replace(/^web:/, "") + ".";
     }
-    return { text: text, signIn: !!SIGN_IN[code] };
+    return { text: text, signIn: !!SIGN_IN[code], field: FIELDS[code] || "" };
   }
 
   // Put the refusal next to what was pressed. The sign-in page keeps its own status line.
@@ -111,6 +137,30 @@
       box.appendChild(link);
     }
     box.scrollIntoView({ block: "nearest" });
+    mark(source, box, why.field);
+  }
+
+  // Mark the field the refusal is about, tie the message to it and put the cursor there.
+  var serial = 0;
+  function mark(source, box, name) {
+    if (source.tagName !== "FORM") {
+      return;
+    }
+    Array.prototype.forEach.call(source.querySelectorAll("[aria-invalid]"), function (field) {
+      field.removeAttribute("aria-invalid");
+      field.removeAttribute("aria-describedby");
+    });
+    var field = name && source.querySelector("[name='" + name + "']");
+    if (!field) {
+      return;
+    }
+    if (!box.id) {
+      serial += 1;
+      box.id = "action-note-" + serial;
+    }
+    field.setAttribute("aria-invalid", "true");
+    field.setAttribute("aria-describedby", box.id);
+    field.focus();
   }
 
   // POST JSON; on success go to `next` (or reload), otherwise say why beside `source`. While a request is out the
@@ -270,6 +320,6 @@
     send(form, form.querySelector("button[type=submit]"), collect(form));
   }
 
-  window.SH = { init: init, say: say };
+  window.SH = { init: init, say: say, reason: reason };
   init();
 })();
