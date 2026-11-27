@@ -55,6 +55,28 @@ token and webhook secret, from the next message. **Register webhook** there repl
 - Saving a different bot's token also makes a new webhook secret, so the old bot is no longer accepted. Press **Register webhook**.
 - Every save, reset and test is in the audit log, without key values. Any admin can replace keys or switch tracing on.
 
+### Email and password sign-in (optional)
+
+Lets invited people set a password from an emailed link instead of using Google. Add to `.env` on the server and restart:
+
+```
+SETUHAUL_PASSWORD_LOGIN=1
+SETUHAUL_SMTP_HOST=smtp.gmail.com
+SETUHAUL_SMTP_PORT=465
+SETUHAUL_SMTP_USER=
+SETUHAUL_SMTP_PASSWORD=
+SETUHAUL_SMTP_FROM=
+```
+
+- `SETUHAUL_PUBLIC_URL` (above) is required: the links are built from it.
+- Gmail: turn on 2-Step Verification, then create an app password (Google Account > Security > App passwords) and use it as
+  `SETUHAUL_SMTP_PASSWORD`. It also opens the mailbox, so use a dedicated account.
+- The server must reach the mail server's port. Some hosts block outgoing mail ports. **Not verified.**
+- If a setting is missing, the container log says `Password sign-in disabled: set ...` and everything else runs as before.
+- Check it: invite a second address of your own, open the email, set a password, sign in.
+- Migration `020` (applied at start-up) adds the links table and rebuilds `auth_sessions`. To go back, deploy the previous
+  image and restore the pre-deploy backup.
+
 ## 2. `compose.server.yml`
 
 ```yaml

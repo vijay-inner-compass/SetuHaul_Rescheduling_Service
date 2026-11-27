@@ -257,11 +257,27 @@ Below, `<base>` is the public origin of your service, for example `https://haul.
 | `SETUHAUL_PUBLIC_URL` | origin only (`https://host[:port]`, no path or trailing slash); anything else, including a non-numeric port, stops start-up. Sets the redirect URI and the `Secure` cookie flag and is what the same-origin check compares scheme and host with. **Set it behind any proxy or HTTPS terminator**: without it the redirect URI comes from the request, and a proxy that rewrites `Host` can cause 403 `CROSS_SITE_REQUEST` on every change |
 | `SETUHAUL_BOOTSTRAP_ADMIN_EMAIL` | at every start-up this address is an active admin: created if missing, its role and status restored if disabled or demoted. It does not clear a locked break-glass password (see Owner step 3) |
 | `SETUHAUL_LOCAL_ADMIN` | `1` shows the break-glass password form on `/` and enables `POST /auth/local-admin`; otherwise that route is 404 |
+| `SETUHAUL_PASSWORD_LOGIN` | `1` turns on email and password sign-in (below). Also needs `SETUHAUL_PUBLIC_URL`, `SETUHAUL_SMTP_USER` and `SETUHAUL_SMTP_PASSWORD`; a missing one is named in a warning and the feature stays off |
 | `SETUHAUL_TELEGRAM_BOT_TOKEN` | the bot's token; used to send replies |
 | `SETUHAUL_TELEGRAM_WEBHOOK_SECRET` | checked against Telegram's `X-Telegram-Bot-Api-Secret-Token` header; at least 16 characters. If either Telegram value is missing or the secret is short, `/v1/telegram/webhook` answers 503 |
 | `SETUHAUL_TELEGRAM_AUTO_REGISTER` | `1` registers `<SETUHAUL_PUBLIC_URL>/v1/telegram/webhook` with Telegram at every start-up, using the bot token and secret in force (saved values over `.env`). Off by default. **Turn it on for one running copy only**: a bot has one webhook, and the last registration wins |
 | `SETUHAUL_COORDINATOR_TOKENS` | JSON map `{"<token>": "<name>"}`: bearer access to `/v1/coordinator/cases...` for services. Not limited to facilities; names may not start with `web:` |
 | `SETUHAUL_WEBHOOK_SECRET` | HMAC key of the signed driver and GPS channel (not Telegram); when unset, that channel refuses every request (401) |
+
+### Email and password sign-in
+
+With `SETUHAUL_PASSWORD_LOGIN=1` and the mail settings, inviting a user emails them a link to set a password, `/` offers email
+and password beside Google, and **Forgot password?** emails a reset link. **Send password link** on the Users tab covers
+resending an invitation.
+
+* A link works once: 48 hours for an invitation, 1 hour for a reset; a newer link cancels older ones. Disabling a user cancels
+  theirs.
+* Passwords are 12 to 1024 characters, stored only as scrypt hashes. Five wrong attempts lock password sign-in for 15 minutes;
+  Google sign-in is unaffected. Setting a password ends that user's sessions. A password session lasts 8 hours.
+* Emails: one per account per 2 minutes and 5 per hour; 30 forgot-password emails per hour in total, counted in Redis.
+* Every role may use it, admins included, so an admin account is as safe as that admin's mailbox.
+* While it is on, this form replaces the break-glass administrator form on `/`.
+* It does not change the partner-email mode and needs no IMAP settings. Not run against a real mail server.
 
 ### The Model tab (admin, report only)
 
@@ -287,7 +303,7 @@ from the next message. A saved value overrides the environment until **Reset to 
 
 ### Database
 
-Migrations 011 to 014 add the tables. `make_working_db` (section 7) creates a new migrated copy. To upgrade a working database you want to keep:
+Migrations 011 to 014 add the tables (later ones, up to 020 for password links, are applied by the same command). `make_working_db` (section 7) creates a new migrated copy. To upgrade a working database you want to keep:
 
 ```powershell
 python -c "from pathlib import Path; from setuhaul.db import open_connection, apply_migrations; c = open_connection(path=Path('data/working.sqlite3')); print(apply_migrations(c)); c.close()"

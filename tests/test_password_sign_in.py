@@ -13,12 +13,19 @@ import pytest
 from redis.exceptions import RedisError
 
 from setuhaul import partner_booking
-from setuhaul.auth import audit, links, local_admin, sessions, users
+from setuhaul.api import create_app_from_env
+from setuhaul.auth import account_mail, audit, links, local_admin, sessions, users
 from setuhaul.clock import FakeClock
 from setuhaul.config import load_settings
 from setuhaul.db import MIGRATIONS_DIR, apply_migrations, open_connection
 from setuhaul.identity import AuthError
-from setuhaul.mail_transport import InMemoryMailbox, MailDeliveryError, OutgoingMail
+from setuhaul.mail_transport import (
+    InMemoryMailbox,
+    MailDeliveryError,
+    OutgoingMail,
+    SmtpSender,
+)
+from setuhaul.mailcfg import load_mail_settings
 from tests.auth_helpers import World, build_world
 
 MIGRATION = "020_password_sign_in.sql"
@@ -529,3 +536,59 @@ def test_invite_result_is_said_on_screen() -> None:
     script = (Path(__file__).resolve().parents[1] / "src" / "setuhaul" / "auth" / "assets" / "common.js").read_text("utf-8")
     assert "invite_email" in script
     assert "Invitation emailed." in script and "Invited, but the email could not be sent." in script
+
+
+# ---- start-up settings -------------------------------------------------------------------------------------
+_ENV = {"SETUHAUL_PASSWORD_LOGIN": "1", "SETUHAUL_PUBLIC_URL": "https://haul.example.com",
+        "SETUHAUL_SMTP_USER": "box@example.test", "SETUHAUL_SMTP_PASSWORD": "not-a-real-app-password"}
+
+
+def test_switch_off_gives_no_sender() -> None:
+    for env in ({}, {**_ENV, "SETUHAUL_PASSWORD_LOGIN": "0"}):
+        assert account_mail.account_sender_from_env(env) == (None, ())
+
+
+def test_missing_settings_are_named_not_valued() -> None:
+    env = {"SETUHAUL_PASSWORD_LOGIN": "1", "SETUHAUL_SMTP_PASSWORD": "not-a-real-app-password"}
+    sender, missing = account_mail.account_sender_from_env(env)
+    assert sender is None and missing == ("SETUHAUL_PUBLIC_URL", "SETUHAUL_SMTP_USER")
+    sender, missing = account_mail.account_sender_from_env({**_ENV, "SETUHAUL_SMTP_PORT": "abc"})
+    assert sender is None and missing == ("SETUHAUL_SMTP_PORT",)
+
+
+def test_complete_settings_give_smtp_sender() -> None:
+    # No IMAP settings and no partner mode are needed.
+    sender, missing = account_mail.account_sender_from_env(_ENV)
+    assert isinstance(sender, SmtpSender) and missing == ()
+
+
+def test_partner_mode_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name, value in _ENV.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv("SETUHAUL_PARTNER_EMAIL_MODE", raising=False)
+    assert load_mail_settings().mode == "simulated"
+
+
+@pytest.mark.parametrize("on", [True, False])
+def test_the_real_service_reads_the_switch(world: World, monkeypatch: pytest.MonkeyPatch, on: bool) -> None:
+    for name, value in _ENV.items():
+        monkeypatch.setenv(name, value)
+    if not on:
+        monkeypatch.delenv("SETUHAUL_PASSWORD_LOGIN")
+    monkeypatch.setenv("SETUHAUL_REDIS_URL", "fakeredis://")
+    monkeypatch.setenv("SETUHAUL_DB_PATH", str(world.path))
+    app = create_app_from_env()
+    assert app.state.deps.password_login_on is on
+
+
+def test_start_up_names_what_is_missing(world: World, monkeypatch: pytest.MonkeyPatch,
+                                        caplog: pytest.LogCaptureFixture) -> None:
+    monkeypatch.setenv("SETUHAUL_PASSWORD_LOGIN", "1")
+    monkeypatch.setenv("SETUHAUL_SMTP_PASSWORD", "not-a-real-app-password")
+    for name in ("SETUHAUL_PUBLIC_URL", "SETUHAUL_SMTP_USER"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("SETUHAUL_REDIS_URL", "fakeredis://")
+    monkeypatch.setenv("SETUHAUL_DB_PATH", str(world.path))
+    assert create_app_from_env().state.deps.password_login_on is False
+    assert "Password sign-in disabled: set SETUHAUL_PUBLIC_URL, SETUHAUL_SMTP_USER" in caplog.text
+    assert "not-a-real-app-password" not in caplog.text

@@ -951,6 +951,8 @@ def telegram_from_env() -> tuple[bytes, TelegramClient | None]:
 
 def create_app_from_env() -> FastAPI:
     """``uvicorn --factory setuhaul.api:create_app_from_env``. Secrets come from the environment only."""
+    from setuhaul.auth.account_mail import account_sender_from_env
+
     # Central settings.
     s = load_settings()
     # Stop before anything opens the sample database: it is the pristine source that working copies are made from.
@@ -1012,8 +1014,15 @@ def create_app_from_env() -> FastAPI:
             boot.close()
     # Telegram: the webhook secret and, when both are usable, the client that sends replies.
     tg_secret, tg_client = telegram_from_env()
+    # Email and password sign-in, off unless switched on and complete.
+    password_sender, unset = account_sender_from_env(os.environ)
+    if unset:
+        import logging
+
+        logging.getLogger(__name__).warning("Password sign-in disabled: set %s", ", ".join(unset))
     # Assemble the dependencies and build the app.
     return create_app(AppDeps(
+        password_sender=password_sender,
         telegram_secret=tg_secret, telegram=tg_client,
         settings=SettingsSource(os.environ, stub=os.environ.get("SETUHAUL_USE_STUB_MODEL") == "1"),
         google=google, session_secret=os.environ.get("SETUHAUL_SESSION_SECRET", "").encode(),

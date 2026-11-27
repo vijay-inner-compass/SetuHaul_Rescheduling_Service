@@ -6,6 +6,9 @@ from __future__ import annotations
 # os for the environment.
 import os
 
+# Mapping types an environment passed in.
+from collections.abc import Mapping
+
 # dataclass for the immutable settings object.
 from dataclasses import dataclass, field
 
@@ -56,14 +59,10 @@ def _load_env_file() -> None:
             os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
-def load_mail_settings() -> MailSettings:
-    _load_env_file()
-    env = os.environ
-    mode = env.get("SETUHAUL_PARTNER_EMAIL_MODE", "simulated").strip().lower()
-    if mode not in MODES:
-        raise ValueError(f"SETUHAUL_PARTNER_EMAIL_MODE must be one of {MODES}")
+def load_smtp_settings(env: Mapping[str, str], mode: str = "simulated") -> MailSettings:
+    """The settings as written, without the checks that live partner mail needs. Raises ValueError on a bad number."""
     smtp_user = env.get("SETUHAUL_SMTP_USER", "")
-    settings = MailSettings(
+    return MailSettings(
         mode=mode,
         smtp_host=env.get("SETUHAUL_SMTP_HOST", "smtp.gmail.com"),
         smtp_port=int(env.get("SETUHAUL_SMTP_PORT", "465")),
@@ -78,6 +77,15 @@ def load_mail_settings() -> MailSettings:
         request_ttl_min=int(env.get("SETUHAUL_PARTNER_REQUEST_TTL_MIN", "120")),
         auth_serv_id=env.get("SETUHAUL_AUTH_SERV_ID", "mx.google.com"),
     )
+
+
+def load_mail_settings() -> MailSettings:
+    _load_env_file()
+    env = os.environ
+    mode = env.get("SETUHAUL_PARTNER_EMAIL_MODE", "simulated").strip().lower()
+    if mode not in MODES:
+        raise ValueError(f"SETUHAUL_PARTNER_EMAIL_MODE must be one of {MODES}")
+    settings = load_smtp_settings(env, mode)
     if mode == "live":
         # Name the missing variable, never its value.
         for name, value in (("SETUHAUL_SMTP_USER", settings.smtp_user), ("SETUHAUL_SMTP_PASSWORD", settings.smtp_password),
