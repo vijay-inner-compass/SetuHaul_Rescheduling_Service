@@ -8,7 +8,7 @@ import hashlib
 import secrets
 import sqlite3
 
-# timedelta for the two session lifetimes; Literal for the closed method set.
+# timedelta for the session lifetimes; Literal for the closed method set.
 from datetime import timedelta
 from typing import Literal
 
@@ -20,8 +20,8 @@ from setuhaul.db import parse_operational_timestamp
 
 # The browser cookie that carries the raw token.
 COOKIE_NAME = "setuhaul_session"
-# Google sign-in lasts a working day; break-glass local admin lasts one hour.
-_TTL = {"GOOGLE": timedelta(hours=8), "LOCAL_ADMIN": timedelta(hours=1)}
+# Google and password sign-in last a working day; break-glass local admin lasts one hour.
+_TTL = {"GOOGLE": timedelta(hours=8), "LOCAL_ADMIN": timedelta(hours=1), "PASSWORD": timedelta(hours=8)}
 
 
 def _hash(token: str) -> str:
@@ -30,7 +30,7 @@ def _hash(token: str) -> str:
 
 
 def create(
-    conn: sqlite3.Connection, user: users.User, method: Literal["GOOGLE", "LOCAL_ADMIN"], clock: Clock
+    conn: sqlite3.Connection, user: users.User, method: Literal["GOOGLE", "LOCAL_ADMIN", "PASSWORD"], clock: Clock
 ) -> str:
     # 32 random bytes, URL-safe: infeasible to guess.
     token = secrets.token_urlsafe(32)
