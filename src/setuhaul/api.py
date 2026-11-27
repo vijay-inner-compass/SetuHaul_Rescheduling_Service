@@ -48,6 +48,9 @@ from pathlib import Path
 # Typing helper.
 from typing import Any
 
+# Runs blocking database code in a worker thread so the event loop is not blocked.
+import anyio
+
 # FastAPI is the web framework.
 from fastapi import Depends, FastAPI, Request
 
@@ -62,8 +65,6 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 # The Redis client type.
 from redis import Redis
-
-# Runs blocking database code in a worker thread so the event loop is not blocked.
 from starlette.concurrency import run_in_threadpool
 
 # The Dock Access Pass check that runs before the conversation.
@@ -546,12 +547,26 @@ def create_app(deps: AppDeps) -> FastAPI:
         return {"commit": os.environ.get("GIT_COMMIT") or "unknown"}
 
     # Readiness: the database and cache can actually be used.
+    # Dedicated thread limiter so slow model calls saturating the default pool cannot starve /ready (V3).
+    ready_limiter = anyio.CapacityLimiter(2)
+    # Per-driver lock so two rapid messages from the same driver serialize instead of overwriting state (V1).
+    driver_locks_guard = threading.Lock()
+    driver_locks: dict[str, threading.Lock] = {}
+
+    def driver_lock(driver_id: str) -> threading.Lock:
+        with driver_locks_guard:
+            lock = driver_locks.get(driver_id)
+            if lock is None:
+                lock = threading.Lock()
+                driver_locks[driver_id] = lock
+            return lock
+
     @app.get("/ready")
     # The path the deploy standard asks every app for.
     @app.get("/health/ready")
     async def ready(request: Request) -> JSONResponse:
-        # Returns a reason code, or None if ready.
-        def check() -> str | None:
+        # Returns (fatal_reason, degraded_list). Driver messages and bookings still work via SQLite when Redis is down.
+        def check() -> tuple[str | None, list[str]]:
             try:
                 # A read-only connection, so a readiness probe can never write.
                 conn = open_connection(path=deps.db_path, readonly=True)
@@ -560,25 +575,24 @@ def create_app(deps: AppDeps) -> FastAPI:
                     conn.execute("select 1 from schema_migrations limit 1").fetchone()
                 finally:
                     conn.close()
-            # Database missing or broken.
+            # Database missing or broken: truly not ready.
             except (sqlite3.Error, FileNotFoundError):
-                return "DATABASE_UNAVAILABLE"
+                return "DATABASE_UNAVAILABLE", []
+            degraded: list[str] = []
             try:
-                # Is the cache reachable?
                 deps.redis.ping()
-            # Any cache failure means not ready.
-            except Exception:  # noqa: BLE001 - any cache failure means not ready
-                return "CACHE_UNAVAILABLE"
-            # Everything checked out: no problem to report.
-            return None
+            except Exception:  # noqa: BLE001 - Redis outage degrades caching only; service stays ready
+                degraded.append("cache")
+            return None, degraded
 
         # Run the blocking checks in a worker thread.
-        problem = await run_in_threadpool(check)
+        problem, degraded = await anyio.to_thread.run_sync(check, limiter=ready_limiter)
         if problem:
-            # Not ready: 503 with the reason.
             return JSONResponse({"ready": False, "reason_code": problem, "request_id": request.state.request_id}, status_code=503)
-        # Ready.
-        return JSONResponse({"ready": True, "request_id": request.state.request_id})
+        body: dict[str, Any] = {"ready": True, "request_id": request.state.request_id}
+        if degraded:
+            body["degraded"] = degraded
+        return JSONResponse(body)
 
     # ---- driver messages --------------------------------------------------------------------------------
     # Handle one driver message: open a connection and run the pipeline, turning database failures into 503.
@@ -662,63 +676,64 @@ def create_app(deps: AppDeps) -> FastAPI:
         if cur.rowcount == 0:  # another worker claimed it between our check and our insert
             return _reject(request_id, 409, "IN_PROGRESS")
 
-        # Collects this message's model calls.
-        recorder = TurnRecorder(clock)
-        try:
-            # The driver's newest open conversation thread.
-            row = conn.execute("select thread_id from chat_threads where driver_id=? and thread_status<>'CLOSED' "
-                               "order by opened_at desc, rowid desc limit 1", (driver_id,)).fetchone()
-            # Memory with live hold checks.
-            memory = ConversationMemoryStore(conn, deps.redis, clock, load_settings(), hold_checker=make_hold_checker(conn, clock))
-            # Use the open thread, or start one.
-            thread_id = row["thread_id"] if row else memory.open_thread(driver_id)
-            # A pass code is checked by the app. Everything after this line sees the message with any code blanked, so a code is
-            # never saved, put in a case or sent to a model.
-            clean = blank(payload.text)
-            # Everything written from here is this turn's, to be tagged with the load it is about.
-            before = chat_loads.mark(conn)
-            lang = str(detect_language(clean.replace(HIDDEN, ""), memory.load(driver_id, thread_id).state.language).language)
-            lang = lang if lang in LANGS else "en"
-            answer = pass_check.check(conn, clock, driver_id=driver_id, thread_id=thread_id, text=payload.text, lang=lang,
-                                      sink=SqlEscalationSink(conn, clock))
-            if answer is not None:
-                memory.append(driver_id, thread_id, "DRIVER", clean, external_message_id=payload.message_id)
-                memory.append(driver_id, thread_id, "AGENT", answer.text)
-                _record_turn(conn, memory, driver_id, thread_id, before, answer.shipment_id)
-                body = {"status": "REPLIED", "reply": answer.text, "language": lang, "reason_code": None, "case_id": answer.case_id}
+        with driver_lock(driver_id):
+            # Collects this message's model calls.
+            recorder = TurnRecorder(clock)
+            try:
+                # The driver's newest open conversation thread.
+                row = conn.execute("select thread_id from chat_threads where driver_id=? and thread_status<>'CLOSED' "
+                                   "order by opened_at desc, rowid desc limit 1", (driver_id,)).fetchone()
+                # Memory with live hold checks.
+                memory = ConversationMemoryStore(conn, deps.redis, clock, load_settings(), hold_checker=make_hold_checker(conn, clock))
+                # Use the open thread, or start one.
+                thread_id = row["thread_id"] if row else memory.open_thread(driver_id)
+                # A pass code is checked by the app. Everything after this line sees the message with any code blanked, so a code is
+                # never saved, put in a case or sent to a model.
+                clean = blank(payload.text)
+                # Everything written from here is this turn's, to be tagged with the load it is about.
+                before = chat_loads.mark(conn)
+                lang = str(detect_language(clean.replace(HIDDEN, ""), memory.load(driver_id, thread_id).state.language).language)
+                lang = lang if lang in LANGS else "en"
+                answer = pass_check.check(conn, clock, driver_id=driver_id, thread_id=thread_id, text=payload.text, lang=lang,
+                                          sink=SqlEscalationSink(conn, clock))
+                if answer is not None:
+                    memory.append(driver_id, thread_id, "DRIVER", clean, external_message_id=payload.message_id)
+                    memory.append(driver_id, thread_id, "AGENT", answer.text)
+                    _record_turn(conn, memory, driver_id, thread_id, before, answer.shipment_id)
+                    body = {"status": "REPLIED", "reply": answer.text, "language": lang, "reason_code": None, "case_id": answer.case_id}
+                    with immediate(conn):
+                        conn.execute("update inbound_messages set status='DONE', reply_json=?, completed_at=? where driver_id=? and message_id=?",
+                                     (json.dumps(body), clock.now().isoformat(), driver_id, payload.message_id))
+                    return JSONResponse({**body, "duplicate": False, "request_id": request_id})
+                # Bundle everything the conversation needs.
+                gateway, policy = model_in_force(deps, conn)
+                services = ConversationServices(
+                    conn=conn, memory=memory, gateway=recorder.wrap(gateway), policy=policy, sink=SqlEscalationSink(conn, clock),
+                    fallback_sink=JsonlEscalationSink(deps.fallback_path), exporter=deps.exporter,
+                    trace_env=env_in_force(deps, conn))
+                # Run the conversation (this is where the model is called).
+                reply = handle_message(InboundMessage(message_id=payload.message_id, text=clean),
+                                       TrustedConversationContext(driver=trusted, thread_id=thread_id), clock, services)
+                _record_turn(conn, memory, driver_id, thread_id, before)
+                # The response body; this exact body is stored so a duplicate delivery gets the same answer.
+                body = {"status": reply.status, "reply": reply.text, "language": reply.language, "reason_code": reply.escalation_reason,
+                        "case_id": reply.case_id}
                 with immediate(conn):
+                    # Mark the message processed and store its reply.
                     conn.execute("update inbound_messages set status='DONE', reply_json=?, completed_at=? where driver_id=? and message_id=?",
                                  (json.dumps(body), clock.now().isoformat(), driver_id, payload.message_id))
+                # Saved after the reply is stored; it cannot fail the message.
+                recorder.save(conn, reply.status, reply.escalation_reason)
+                # First-time answer.
                 return JSONResponse({**body, "duplicate": False, "request_id": request_id})
-            # Bundle everything the conversation needs.
-            gateway, policy = model_in_force(deps, conn)
-            services = ConversationServices(
-                conn=conn, memory=memory, gateway=recorder.wrap(gateway), policy=policy, sink=SqlEscalationSink(conn, clock),
-                fallback_sink=JsonlEscalationSink(deps.fallback_path), exporter=deps.exporter,
-                trace_env=env_in_force(deps, conn))
-            # Run the conversation (this is where the model is called).
-            reply = handle_message(InboundMessage(message_id=payload.message_id, text=clean),
-                                   TrustedConversationContext(driver=trusted, thread_id=thread_id), clock, services)
-            _record_turn(conn, memory, driver_id, thread_id, before)
-            # The response body; this exact body is stored so a duplicate delivery gets the same answer.
-            body = {"status": reply.status, "reply": reply.text, "language": reply.language, "reason_code": reply.escalation_reason,
-                    "case_id": reply.case_id}
-            with immediate(conn):
-                # Mark the message processed and store its reply.
-                conn.execute("update inbound_messages set status='DONE', reply_json=?, completed_at=? where driver_id=? and message_id=?",
-                             (json.dumps(body), clock.now().isoformat(), driver_id, payload.message_id))
-            # Saved after the reply is stored; it cannot fail the message.
-            recorder.save(conn, reply.status, reply.escalation_reason)
-            # First-time answer.
-            return JSONResponse({**body, "duplicate": False, "request_id": request_id})
-        # Anything went wrong: free the id so the channel's retry can succeed, then re-raise.
-        except BaseException:
-            with immediate(conn):  # free the id so the provider's retry can succeed
-                conn.execute("delete from inbound_messages where driver_id=? and message_id=? and status='PROCESSING'",
-                             (driver_id, payload.message_id))
-            # The calls made before the failure still happened.
-            recorder.save(conn, "ERROR", None)
-            raise
+            # Anything went wrong: free the id so the channel's retry can succeed, then re-raise.
+            except BaseException:
+                with immediate(conn):  # free the id so the provider's retry can succeed
+                    conn.execute("delete from inbound_messages where driver_id=? and message_id=? and status='PROCESSING'",
+                                 (driver_id, payload.message_id))
+                # The calls made before the failure still happened.
+                recorder.save(conn, "ERROR", None)
+                raise
 
     # The driver webhook.
     @app.post("/v1/driver/messages")

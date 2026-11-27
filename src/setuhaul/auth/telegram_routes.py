@@ -56,24 +56,24 @@ def register_telegram_routes(app: FastAPI, deps: AppDeps, pipeline: Pipeline) ->
         if send(client, chat_id, text):
             return
         shipment = active_shipment_for_driver(conn, driver_id)
-        if shipment is not None and queue_driver_notice(conn, driver_id, shipment, text, deps.clock.now()):
+        if queue_driver_notice(conn, driver_id, shipment, text, deps.clock.now()):
             return
         # The queue hangs off an appointment; with none to hang it on, leave a trace for an admin.
         audit.record(conn, actor_user_id=None, actor_email=None, action="TELEGRAM_REPLY_DROPPED", target_type="driver",
                      target_id=driver_id, outcome="FAILED", ip=None, detail=None, clock=deps.clock)
         conn.commit()
 
-    def handle(client: telegram.TelegramClient | None, update: dict[str, Any], update_id: int, rid: str) -> None:
+    def handle(client: telegram.TelegramClient | None, update: dict[str, Any], update_id: int, rid: str) -> bool:
         msg = update.get("message")
         if not isinstance(msg, dict):
-            return
+            return False
         chat, sender = msg.get("chat"), msg.get("from")
         if not isinstance(chat, dict) or not isinstance(sender, dict):
-            return
+            return False
         # Only private chats are served.
         chat_id, user_id = _int(chat.get("id")), _int(sender.get("id"))
         if chat.get("type") != "private" or chat_id is None or user_id is None or sender.get("is_bot") is True:
-            return
+            return False
         from setuhaul.api import MessageIn
 
         # A database that cannot be opened raises to the route, which answers 503 so Telegram retries later.
@@ -97,39 +97,40 @@ def register_telegram_routes(app: FastAPI, deps: AppDeps, pipeline: Pipeline) ->
                     send(client, chat_id, telegram.NEUTRAL_REFUSAL)
                 else:
                     send(client, chat_id, telegram.SHARE_PROMPT, button=True)
-                return
+                return False
             text = msg.get("text")
             # A photo, voice note, location or sticker cannot be read: say so rather than stay silent.
             if not isinstance(text, str) or not text.strip():
                 reply(conn, client, chat_id, driver_id, say("unsupported_content", passes.driver_language(conn, driver_id)))
-                return
+                return False
             if len(text) > MAX_TEXT:
                 reply(conn, client, chat_id, driver_id, telegram.TOO_LONG_REPLY)
-                return
+                return False
             try:
                 trusted = telegram.trusted_context(conn, driver_id)
                 # The update id (prefixed, so it cannot collide with the HMAC channel's ids) is the message id, so Telegram's retry of the same update is deduplicated.
                 payload = MessageIn(sender=trusted.phone_e164, message_id=f"tg:{update_id}", text=text)  # type: ignore[call-arg]
             except (AuthError, ValidationError):
                 send(client, chat_id, telegram.NEUTRAL_REFUSAL)
-                return
+                return False
             resp = pipeline(conn, trusted, payload, rid)
             body = json.loads(bytes(resp.body))
             if resp.status_code != 200:
                 _LOG.info("telegram message not answered: HTTP %s", resp.status_code)
                 # Another delivery of this same message is being worked on and will answer it.
                 if body.get("reason_code") == "IN_PROGRESS":
-                    return
+                    return True
                 lang = passes.driver_language(conn, driver_id)
                 if resp.status_code == 429:
                     answer = say("slow_down", lang, seconds=str(body.get("retry_after_seconds") or 60))
                 else:
                     answer = say("not_processed", lang)
                 reply(conn, client, chat_id, driver_id, answer)
-                return
+                return False
             # A replayed duplicate was already answered the first time.
             if not body.get("duplicate") and body.get("reply"):
                 reply(conn, client, chat_id, driver_id, str(body["reply"]))
+            return False
         finally:
             conn.close()
 
@@ -167,8 +168,10 @@ def register_telegram_routes(app: FastAPI, deps: AppDeps, pipeline: Pipeline) ->
         if update_id is None:
             return JSONResponse({"status": "REJECTED", "reason_code": "INVALID_REQUEST", "request_id": rid}, status_code=400)
         try:
-            await run_in_threadpool(handle, client, update, update_id, rid)
+            in_progress = await run_in_threadpool(handle, client, update, update_id, rid)
         except (sqlite3.Error, FileNotFoundError):
             return JSONResponse({"status": "REJECTED", "reason_code": "DATABASE_UNAVAILABLE", "request_id": rid}, status_code=503)
+        if in_progress:
+            return JSONResponse({"status": "REJECTED", "reason_code": "IN_PROGRESS", "request_id": rid}, status_code=503)
         # Always 200 for a well-formed update, so Telegram does not retry.
         return JSONResponse({"status": "OK", "request_id": rid})

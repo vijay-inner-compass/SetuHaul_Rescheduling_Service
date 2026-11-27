@@ -16,6 +16,7 @@ from setuhaul.auth import telegram
 from setuhaul.auth.onboarding import driver_eligible
 from setuhaul.clock import Clock
 from setuhaul.db import TimestampError, parse_operational_timestamp
+from setuhaul.jobs.expire_holds import record_runner_success
 from setuhaul.notifications import DeliveryResult, _mark
 from setuhaul.observability import log_failure
 
@@ -145,7 +146,9 @@ class DriverNoticeRunner:
             try:
                 # A warehouse move revokes the old pass; the replacement goes out from here, where the bot is.
                 passes.send_pending(conn, client, self._clock)
-                return send_driver_notifications(conn, self._clock, client, not_before=self._not_before)
+                result = send_driver_notifications(conn, self._clock, client, not_before=self._not_before)
+                record_runner_success(conn, "driver_notice_runner", self._clock.now())
+                return result
             finally:
                 conn.close()
         except Exception as exc:  # noqa: BLE001 - a locked database or a client fault is retried on the next pass

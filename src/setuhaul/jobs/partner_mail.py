@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import TypeVar
 
 from setuhaul.clock import Clock
+from setuhaul.jobs.expire_holds import record_runner_success
 from setuhaul.jobs.expire_partner_requests import run_expiry_once
 from setuhaul.jobs.poll_partner_replies import poll_partner_replies
 from setuhaul.jobs.send_partner_requests import send_pending_requests
@@ -88,6 +89,7 @@ class PartnerMailRunner:
             0,
         )
         expired = self._step("expire requests", lambda: run_expiry_once(db, clock), 0)
+        self._step("record success", lambda: record_runner_success(db, "partner_mail_runner", clock.now()), None)
         return PartnerMailResult(sent=sent, replies_handled=handled, expired=expired)
 
     def run_safely(self) -> None:

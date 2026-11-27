@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -253,14 +254,28 @@ def deliver(conn: sqlite3.Connection, client: TelegramClient | None, shipment_id
     return reason is None
 
 
+_PASS_LOCKS_GUARD = threading.Lock()
+_PASS_LOCKS: dict[str, threading.Lock] = {}
+
+
+def _shipment_pass_lock(shipment_id: str) -> threading.Lock:
+    with _PASS_LOCKS_GUARD:
+        lock = _PASS_LOCKS.get(shipment_id)
+        if lock is None:
+            lock = threading.Lock()
+            _PASS_LOCKS[shipment_id] = lock
+        return lock
+
+
 def send_new(conn: sqlite3.Connection, client: TelegramClient | None, *, actor: User | None, shipment_id: str, clock: Clock) -> bool:
     """Replace the shipment's pass and send it. When a person asks (lost or compromised), the driver must send it back again."""
-    with immediate(conn):
-        code = issue(conn, shipment_id, clock, actor)
-        if actor is not None:
-            conn.execute("update shipment_assignments set confirmed_at=null, failed_attempts=0, locked_at=null where shipment_id=?",
-                         (shipment_id,))
-    return deliver(conn, client, shipment_id, code, clock)
+    with _shipment_pass_lock(shipment_id):
+        with immediate(conn):
+            code = issue(conn, shipment_id, clock, actor)
+            if actor is not None:
+                conn.execute("update shipment_assignments set confirmed_at=null, failed_attempts=0, locked_at=null where shipment_id=?",
+                             (shipment_id,))
+        return deliver(conn, client, shipment_id, code, clock)
 
 
 def send_waiting(conn: sqlite3.Connection, client: TelegramClient | None, driver_id: str, clock: Clock) -> None:
@@ -268,11 +283,21 @@ def send_waiting(conn: sqlite3.Connection, client: TelegramClient | None, driver
     rows = conn.execute("select s.shipment_id from shipments s join shipment_assignments a using(shipment_id)"
                         " where s.driver_id=? and a.confirmed_at is null and s.current_status<>'CANCELLED'", (driver_id,)).fetchall()
     for r in rows:
-        try:
-            send_new(conn, client, actor=None, shipment_id=r["shipment_id"], clock=clock)
-        except AuthError:
-            # No appointment or a visit under way: nothing to send for that one.
-            continue
+        sid = str(r["shipment_id"])
+        with _shipment_pass_lock(sid):
+            # Another path (e.g. send_pending) may already have issued a live pass: do not revoke and duplicate it.
+            live = conn.execute(
+                f"select 1 from visit_shipments v join dock_access_authorizations p using(truck_visit_id) "
+                f"where v.shipment_id=? and p.status in {LIVE} limit 1", (sid,)
+            ).fetchone()
+            if live is not None:
+                continue
+            try:
+                with immediate(conn):
+                    code = issue(conn, sid, clock, None)
+                deliver(conn, client, sid, code, clock)
+            except AuthError:
+                continue
 
 
 def expire_due(conn: sqlite3.Connection, clock: Clock) -> int:

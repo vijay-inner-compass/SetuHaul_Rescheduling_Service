@@ -158,12 +158,13 @@ def handle_message(
     # Time the whole turn.
     with start_span("conversation.handle_message", rctx, exporter=services.exporter) as span:
         # Run the turn. Database failures and service outages are caught here and turned into a safe reply.
+        turn_box: list[TurnState] = []
         try:
             # The normal path.
             # An approved move that can no longer be booked goes back before the message is read.
             if facility_change.settle(services.conn, clock, trusted.driver.driver_id):
                 services.memory.invalidate(trusted.driver.driver_id, trusted.thread_id)
-            reply = _handle(message, trusted, clock, services, rctx)
+            reply = _handle(message, trusted, clock, services, rctx, turn_box)
             # And again afterwards: this message may have declined the last slot on offer. The reply already stands.
             with contextlib.suppress(sqlite3.Error):
                 if facility_change.settle(services.conn, clock, trusted.driver.driver_id):
@@ -173,7 +174,7 @@ def handle_message(
             # Mark the span with the reason.
             span.set_reason("DATABASE_UNAVAILABLE" if isinstance(exc, sqlite3.Error) else "SERVICE_UNAVAILABLE")
             # Build the 'cannot check bookings right now' reply.
-            reply = _unavailable(message, trusted, clock, services, rctx, repr(exc))
+            reply = _unavailable(message, trusted, clock, services, rctx, repr(exc), turn_box[0] if turn_box else None)
         # Tag the span if a hand-off happened.
         if reply.escalation_reason:
             span.set_reason(reply.escalation_reason)
@@ -208,7 +209,7 @@ def _handoff_request(
 # The database (or a service) failed mid-turn: promise nothing and record the hand-off where it survives.
 def _unavailable(
     message: InboundMessage, trusted: TrustedConversationContext, clock: Clock, services: ConversationServices,
-    rctx: RequestContext, detail: str,
+    rctx: RequestContext, detail: str, turn: TurnState | None = None,
 ) -> ConversationReply:
     """The database (or a service) failed mid-turn: promise nothing, record the hand-off where it survives."""
     # Reply in the driver's language if it can be told, otherwise English.
@@ -226,8 +227,27 @@ def _unavailable(
         # No case reference to give.
         case = None
     # The fixed wording: nothing was booked or held.
-    return ConversationReply(text=say("temp_unavailable", lang), language=str(lang), status="TEMPORARILY_UNAVAILABLE",
-                             escalation_reason="DATABASE_UNAVAILABLE", case_id=case)
+    # Word what really committed, or claim nothing either way if a write tool ran; only claim "nothing booked or held"
+    # when no tool executed before the failure.
+    if turn is not None and turn.confirmed_appointment_id is not None:
+        try:
+            text = say("confirmed", lang, **confirmed_appointment_facts(services.conn, turn.confirmed_appointment_id))
+        except Exception:  # noqa: BLE001
+            text = say("temp_unavailable_uncertain", lang)
+    elif turn is not None and turn.cancelled_appointment_id is not None:
+        text = say("cancelled", lang, ref=turn.cancelled_appointment_id)
+    elif turn is not None and turn.hold is not None:
+        text = say("hold_placed", lang, **{k: v for k, v in turn.hold.items() if k not in ("appointment_id", "status", "note")})
+    elif turn is not None and (turn.executed or turn.committed):
+        text = say("temp_unavailable_uncertain", lang)
+    else:
+        text = say("temp_unavailable", lang)
+    return ConversationReply(
+        text=text, language=str(lang), status="TEMPORARILY_UNAVAILABLE",
+        escalation_reason="DATABASE_UNAVAILABLE", case_id=case,
+        verified_hold=bool(turn and turn.hold),
+        verified_confirmed=bool(turn and turn.confirmed_appointment_id),
+    )
 
 
 # System facts given to the model: the live hold, active shipments, latest menu and whether expiry was already announced.
@@ -301,7 +321,7 @@ def _guard(text: str, lang: str, turn: TurnState, live_hold: bool) -> str:
 # The main workflow for one message.
 def _handle(
     message: InboundMessage, trusted: TrustedConversationContext, clock: Clock, services: ConversationServices,
-    rctx: RequestContext,
+    rctx: RequestContext, turn_box: list[TurnState],
 ) -> ConversationReply:
     # Short names for the identity and memory.
     driver_id, thread_id, mem = trusted.driver.driver_id, trusted.thread_id, services.memory
@@ -354,6 +374,7 @@ def _handle(
                        exporter=services.exporter)
     # The tool checkpoints for this message.
     registry = ToolRegistry(tctx)
+    turn_box.append(tctx.turn)
     # The prompt (with system facts) plus conversation.
     facts = _facts(ctx, services, clock, lang)
     # Only that something is waiting: no id, number, destination or time. Absent otherwise.

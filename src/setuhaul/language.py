@@ -314,6 +314,11 @@ T: dict[str, dict[str, str]] = {
         "hinglish": "Aapki appointment cancel kar di gayi hai. Reference {ref}.",
     },
     # Told when a service failed mid-turn: promises nothing and says nothing was changed.
+    "temp_unavailable_uncertain": {
+        "en": "I cannot check bookings right now, so I cannot confirm whether anything changed. Operations has been told and will follow up.",
+        "hi": "मैं अभी बुकिंग की जांच नहीं कर सकता, इसलिए पुष्टि नहीं कर सकता कि कुछ बदला है या नहीं। ऑपरेशंस को सूचित कर दिया गया है।",
+        "hinglish": "Abhi booking check nahi kar pa raha hoon, isliye confirm nahi kar sakta ki kuch badla ya nahi. Operations ko bata diya gaya hai.",
+    },
     "temp_unavailable": {
         "en": "I cannot check or change bookings right now, so I cannot promise anything. Nothing has been "
               "booked or held by this message. Operations has been told.",

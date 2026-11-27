@@ -65,6 +65,17 @@ class MaintenanceResult:
     purged_option_sets: int
 
 
+def record_runner_success(conn: sqlite3.Connection, job_name: str, now: datetime) -> None:
+    """Record when a background runner last succeeded in maintenance_runs so admins can inspect liveness."""
+    with immediate(conn):
+        conn.execute(
+            "insert into maintenance_runs (job_name, last_run_at, last_run_epoch) values (?,?,?) "
+            "on conflict(job_name) do update set last_run_at=excluded.last_run_at, "
+            "last_run_epoch=excluded.last_run_epoch",
+            (job_name, now.isoformat(), int(now.timestamp())),
+        )
+
+
 def expire_due_holds(conn: sqlite3.Connection, clock: Clock, limit: int = 100) -> ExpiryBatchResult:
     """Expire up to ``limit`` holds whose TTL has elapsed (``expires_at <= now``, inclusive)."""
     # One reading of "now" for the whole pass, so every hold is judged against the same moment.
@@ -209,6 +220,7 @@ class MaintenanceRunner:
                 "purge_inbound_messages", lambda: retention.purge_inbound_messages(db, now - timedelta(days=p.inbound_days), p.batch_size)), 0)
             self._step("retention: model calls", lambda: self._run_daily_retention(
                 "purge_model_calls", lambda: retention.purge_model_calls(db, now - timedelta(days=p.model_calls_days), p.batch_size)), 0)
+        self._step("record success", lambda: record_runner_success(db, "maintenance_runner", clock.now()), None)
         return MaintenanceResult(expired=expired, purged_option_sets=purged)
 
     def run_safely(self) -> None:

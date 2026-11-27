@@ -81,7 +81,7 @@ def test_ready_when_everything_is_up_and_not_ready_without_the_cache(env, monkey
     assert client.get("/ready").json()["ready"] is True
     monkeypatch.setattr(deps.redis, "ping", lambda: (_ for _ in ()).throw(ConnectionError("redis down")))
     r = client.get("/ready")
-    assert r.status_code == 503 and r.json()["reason_code"] == "CACHE_UNAVAILABLE" and "redis down" not in r.text
+    assert r.status_code == 200 and r.json()["ready"] is True and r.json()["degraded"] == ["cache"] and "redis down" not in r.text
 
 
 def test_health_ready_is_the_same_check_as_ready(env) -> None:  # type: ignore[no-untyped-def]

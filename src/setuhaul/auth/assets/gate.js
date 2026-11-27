@@ -61,4 +61,63 @@
       window.location.reload();
     });
   });
+
+  // Pass scanning (F17): extract DAP-... token from wedge/camera scans and advance focus to vehicle number.
+  var codeInput = form.elements.code;
+  var scanBtn = document.getElementById("scan-pass");
+  var scanVideo = document.getElementById("scan-video");
+  function normaliseScannedCode(raw) {
+    var m = String(raw || "").toUpperCase().match(/DAP-[A-Z0-9-]{6,}/);
+    return m ? m[0] : String(raw || "").trim();
+  }
+  if (codeInput) {
+    codeInput.addEventListener("keydown", function (event) {
+      if (event.key === "Enter" && codeInput.value.trim() && !form.elements.vehicle_registration.value.trim()) {
+        event.preventDefault();
+        codeInput.value = normaliseScannedCode(codeInput.value);
+        form.elements.vehicle_registration.focus();
+      }
+    });
+  }
+  if (scanBtn && scanVideo && "BarcodeDetector" in window && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    scanBtn.hidden = false;
+    var stream = null;
+    function stopScan() {
+      if (stream) {
+        stream.getTracks().forEach(function (tr) { tr.stop(); });
+        stream = null;
+      }
+      scanVideo.hidden = true;
+      scanBtn.textContent = "Scan pass";
+    }
+    scanBtn.addEventListener("click", function () {
+      if (stream) { stopScan(); return; }
+      var detector = new window.BarcodeDetector({ formats: ["qr_code", "code_128", "code_39"] });
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }).then(function (s) {
+        stream = s;
+        scanVideo.srcObject = s;
+        scanVideo.hidden = false;
+        scanBtn.textContent = "Stop scan";
+        return scanVideo.play();
+      }).then(function () {
+        function tick() {
+          if (!stream) { return; }
+          detector.detect(scanVideo).then(function (codes) {
+            if (codes && codes.length) {
+              codeInput.value = normaliseScannedCode(codes[0].rawValue);
+              forget();
+              stopScan();
+              form.elements.vehicle_registration.focus();
+              return;
+            }
+            window.requestAnimationFrame(tick);
+          }).catch(function () { stopScan(); });
+        }
+        window.requestAnimationFrame(tick);
+      }).catch(function () {
+        result.textContent = "Camera unavailable. Type or use a handheld scanner.";
+        stopScan();
+      });
+    });
+  }
 })();

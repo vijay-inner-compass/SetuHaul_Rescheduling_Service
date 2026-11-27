@@ -11,19 +11,20 @@ import json
 import logging
 import secrets
 import sqlite3
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from redis.exceptions import RedisError
 from starlette.concurrency import run_in_threadpool
 
 from setuhaul.auth import audit, local_admin, sessions, users
-from setuhaul.auth.authz import AuthzError
+from setuhaul.auth.authz import AuthzError, require_role
 from setuhaul.auth.client_ip import client_ip
 from setuhaul.auth.http import reject as _reject
 from setuhaul.auth.signin_notice import page_or_json
+from setuhaul.auth.users import User
 from setuhaul.db import open_connection
 from setuhaul.identity import AuthError
 from setuhaul.rate_limit import check_auth_rate_limit
@@ -309,6 +310,18 @@ def register_auth_routes(app: FastAPI, deps: AppDeps) -> None:
             return resp
 
         return await run_in_threadpool(with_conn, rid, write)
+
+    @app.get("/v1/admin/runners")
+    async def admin_runners(request: Request, _: Annotated[User, Depends(require_role("ADMIN"))]) -> Response:
+        rid = request.state.request_id
+
+        def read(conn: sqlite3.Connection) -> Response:
+            rows = conn.execute(
+                "select job_name, last_run_at, last_run_epoch from maintenance_runs order by job_name"
+            ).fetchall()
+            return JSONResponse({"runners": [dict(r) for r in rows], "request_id": rid})
+
+        return await run_in_threadpool(with_conn, rid, read)
 
     @app.get("/auth/me")
     async def me(request: Request) -> Response:

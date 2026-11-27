@@ -21,7 +21,8 @@ def render_gate(conn: sqlite3.Connection, user: User, clock: Clock) -> HTMLRespo
         '<section><h2>Arriving truck</h2><p class="note">Type the vehicle number you see on the truck and the number on the '
         "driver's licence. Compare the licence photo with the driver yourself.</p>"
         '<form id="gate-form">'
-        '<label>Dock Access Pass <input name="code" required maxlength="80" autocomplete="off" spellcheck="false"></label>'
+        '<label>Dock Access Pass <input name="code" required maxlength="80" autocomplete="off" spellcheck="false" autofocus placeholder="Scan or type DAP-..."> <button type="button" id="scan-pass" hidden>Scan pass</button></label>'
+        '<video id="scan-video" hidden playsinline muted style="max-width:320px;width:100%"></video>'
         '<label>Vehicle number <input name="vehicle_registration" required maxlength="40" autocomplete="off"></label>'
         '<label>Licence number <input name="licence_number" required maxlength="60" autocomplete="off"></label>'
         '<button type="submit">Check pass</button></form>'
