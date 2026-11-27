@@ -474,6 +474,14 @@ def _who(label: str) -> str:
     return f"<strong>{esc(name)}</strong>" + (f"<span>{esc(order)}</span>" if order else "")
 
 
+def _cross(dock: str, slot: dict[str, Any]) -> str:
+    # The small cross on a booked cell. The label is "driver · order"; the click handler is the shared data-api one.
+    name, _, order = slot["label"].partition(" · ")
+    ask = f"Free {dock} {slot['start']} for {order} ({name})? The shipment stays and will need a new slot."
+    return (f'<button type="button" class="free-slot" data-api="/v1/warehouse/appointments/{_segment(slot["appointment_id"])}/free"'
+            f' data-confirm="{esc(ask)}" aria-label="{esc(f"Free dock {dock} {slot['start']}, order {order}")}">&times;</button>')
+
+
 def _bay_card(dock: dict[str, Any], moment: datetime) -> str:
     # What a worker on the floor asks: what is on this bay now, and what comes next. Judged on real start and end times,
     # not the clock hour, because a booking can start at half past.
@@ -516,6 +524,7 @@ def _board_section(board: dict[str, Any] | None, options: list[tuple[str, str]],
             marker = " now" if hour == current else ""
             text = "".join(_who(s["label"]) if s["status"] in ("BOOKED", "HELD") and s["label"]
                            else f'<em>{esc(s["label"] or _STATUS_WORDS.get(s["status"], s["status"].title()))}</em>' for s in slots)
+            text += "".join(_cross(dock["code"], s) for s in slots if s.get("freeable"))
             cells.append(f'<td class="cell cell-{kind}{past}{marker}">{text}</td>')
         rows.append(f'<tr><th scope="row"><b>{esc(dock["code"])}</b><span>{esc(dock["type"])}</span></th>{"".join(cells)}</tr>')
     table = f'<div class="scroll"><table class="board"><thead><tr>{head}</tr></thead><tbody>{"".join(rows)}</tbody></table></div>'

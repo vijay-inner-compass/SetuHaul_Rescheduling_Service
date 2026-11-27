@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from tests.auth_helpers import JAIPUR, World
 from tests.exception_helpers import D1, D2, booked_world
@@ -72,3 +75,47 @@ def test_blocked_slots_are_not_offered_for_new_shipments(tmp_path: Path) -> None
     page = client.get(PAGE).text
     assert f'value="{taken}"' not in page and f'value="{kept}"' in page
     assert query(world, "select count(*) from dock_blocks")[0][0] == 1
+
+
+# ---- the cross on the dock board ------------------------------------------------------------------------
+def free_url(appointment_id: str) -> str:
+    return f"/v1/warehouse/appointments/{appointment_id}/free"
+
+
+def test_a_booked_future_cell_has_a_cross_with_a_label(tmp_path: Path) -> None:
+    world, _, appt = booked_world(tmp_path)
+    world.clock.advance(timedelta(hours=22))  # 08:00 on the day of the booking, so the board shows it
+    page = world.client("wh_a").get(PAGE).text
+    assert f'data-api="{free_url(appt)}"' in page
+    assert 'aria-label="Free dock D1 09:00, order ORD-261127-001"' in page
+    cell = board_cell(world, "D1", 9)
+    assert (cell["appointment_id"], cell["freeable"]) == (appt, True)
+
+
+@pytest.mark.parametrize("change", ["held", "started", "on_site", "unloading"])
+def test_no_cross_on_held_started_on_site_or_unloading_cells(tmp_path: Path, change: str) -> None:
+    world, shipment_id, appt = booked_world(tmp_path)
+    world.clock.advance(timedelta(hours=22))
+    if change == "held":
+        query(world, "update appointments set appointment_status='HELD', is_current=0 where appointment_id=?", appt)
+        query(world, "insert into appointment_hold_meta(appointment_id, driver_id, thread_id, option_set_id, request_fingerprint,"
+                     " expires_at, expires_epoch) values (?,'DRV001','THR-T-FAC-JAI-01','OS-1','fp','2026-11-28T12:00:00+05:30',?)",
+              appt, int(world.clock.now().timestamp()) + 600)
+    elif change == "started":
+        world.clock.advance(timedelta(hours=1, minutes=5))
+    elif change == "on_site":
+        query(world, "update shipments set current_status='AT_GATE' where shipment_id=?", shipment_id)
+    else:
+        query(world, "update appointments set appointment_status='IN_PROGRESS' where appointment_id=?", appt)
+    assert free_url(appt) not in world.client("wh_a").get(PAGE).text
+    assert board_cell(world, "D1", 9)["freeable"] is False
+
+
+def test_free_route_frees_and_then_answers_409(tmp_path: Path) -> None:
+    world, _, appt = booked_world(tmp_path)
+    client = world.client("wh_a")
+    first = client.post(free_url(appt), json={})
+    assert first.status_code == 200 and first.json()["reached"] is False
+    again = client.post(free_url(appt), json={})
+    assert again.status_code == 409 and again.json()["reason_code"] == "NOT_BOOKED" and again.json()["message"]
+    assert query(world, "select count(*) from notification_outbox where recipient_type='DRIVER'")[0][0] == 1

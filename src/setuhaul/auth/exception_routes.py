@@ -1,4 +1,4 @@
-"""Warehouse routes for exceptions: blocking a dock and reopening it."""
+"""Warehouse routes for exceptions: blocking a dock, reopening it, and freeing one booked slot."""
 
 # Lazy annotations.
 from __future__ import annotations
@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 
-from setuhaul import dock_blocks
+from setuhaul import dock_blocks, release
 from setuhaul.auth.authz import require_role
 from setuhaul.auth.http import reject
 from setuhaul.auth.users import User
@@ -29,6 +29,11 @@ _MESSAGES = {
     "INVALID_TIMES": "The end must be after the start and after now.",
     "REASON_REQUIRED": "Say why the dock is blocked.",
     "BLOCK_NOT_FOUND": "That block has already ended. Reload the page.",
+    "APPOINTMENT_NOT_FOUND": "That booking is not one of yours.",
+    "NOT_BOOKED": "That slot is no longer booked. Reload the page.",
+    "SLOT_STARTED": "That slot has already started.",
+    "UNLOADING": "Unloading has started, so the slot cannot be freed.",
+    "TRUCK_ON_SITE": "The truck is already inside, so the slot cannot be freed.",
     "PLAN_CHANGED": "Bookings or free slots have changed. Check the new list and confirm again.",
 }
 
@@ -68,6 +73,19 @@ def register_exception_routes(app: FastAPI, deps: Any) -> None:
 
     def ok(rid: str, status: int = 200, **fields: Any) -> Response:
         return JSONResponse({"status": "OK", **fields, "request_id": rid}, status_code=status)
+
+    @app.post("/v1/warehouse/appointments/{appointment_id}/free")
+    async def free(request: Request, appointment_id: str,
+                   user: Annotated[User, Depends(require_role("WAREHOUSE_AUTHORITY", "ADMIN"))]) -> Response:
+        rid = request.state.request_id
+
+        def write(conn: sqlite3.Connection) -> Response:
+            found = release.free_slot(conn, actor=user, appointment_id=appointment_id, clock=deps.clock)
+            reached = release.tell_driver(conn, deps.clock, telegram_on(), found, "slot_freed", order=found.order_reference,
+                                          dock=found.dock_code, start=f"{found.start:%H:%M}", date=f"{found.start:%d %b %Y}")
+            return ok(rid, appointment_id=appointment_id, order_reference=found.order_reference, reached=reached)
+
+        return await run_in_threadpool(run, rid, write)
 
     @app.post("/v1/warehouse/dock-blocks/preview")
     async def preview(request: Request, body: dock_blocks.BlockRequest,

@@ -40,6 +40,11 @@
     }).then(function (response) {
       return response.json().catch(function () { return null; }).then(function (data) {
         if (response.ok) {
+          // A freed slot whose driver the message cannot reach: kept across the reload so staff can phone them.
+          if (data && data.reached === false && data.order_reference) {
+            window.sessionStorage.setItem("exceptions", "Slot freed. Could not reach the driver of " + data.order_reference +
+              ". Please phone them.");
+          }
           if (next) {
             window.location.assign(next);
           } else {
