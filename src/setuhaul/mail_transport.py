@@ -139,7 +139,9 @@ class ImapReader:
     def fetch_unseen(self) -> list[IncomingMail]:
         """Recent mail with our subject, by UID. Not the Seen flag: a person opening the inbox must not hide a reply."""
         try:
-            conn = imaplib.IMAP4_SSL(self._s.imap_host, self._s.imap_port, ssl_context=ssl.create_default_context())
+            conn = imaplib.IMAP4_SSL(
+                self._s.imap_host, self._s.imap_port, ssl_context=ssl.create_default_context(), timeout=_TIMEOUT_S
+            )
             self._conn = conn
             conn.login(self._s.imap_user, self._s.imap_password)
             conn.select(self._s.imap_folder)
@@ -178,6 +180,7 @@ class ImapReader:
             except Exception:  # noqa: BLE001, S110 - closing is best effort
                 pass
             self._conn = None
+        self._nums.clear()
 
 
 class InMemoryMailbox:

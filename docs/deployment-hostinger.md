@@ -178,5 +178,6 @@ docker exec -it setuhaul-app-1 python scripts/set_admin_password.pyc you@example
 - Dock Access Pass: migration `017` rebuilds `users`; to go back, deploy the previous image and restore the pre-deploy backup
   (see `dock-access-pass.md`).
 - Migration `023` rebuilds the driver notice table; to go back, deploy the previous image and restore the pre-deploy backup.
-- Partner email in live mode also needs the jobs in `src/setuhaul/jobs/` scheduled; this set-up does not schedule them.
+- Partner email in live mode (`SETUHAUL_PARTNER_EMAIL_MODE=live` with SMTP and IMAP settings) is run automatically by the service's own background `PartnerMailRunner` thread; no external scheduler is needed.
+- Downstream notices for `WAREHOUSE_PLANNER`, `CONSIGNEE` and `OPERATIONS` stay `PENDING` in `notification_outbox`; no outbound transport is connected for them yet (only `DRIVER` notices are sent via Telegram).
 - Never run `docker compose down -v` or prune volumes: that deletes the database.

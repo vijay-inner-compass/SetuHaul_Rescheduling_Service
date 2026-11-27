@@ -6,6 +6,7 @@ updated: 2026-11-28
 sources:
   - code: src/setuhaul/events.py
   - code: src/setuhaul/jobs/send_driver_notifications.py
+  - code: src/setuhaul/jobs/partner_mail.py
   - code: src/setuhaul/partner_booking.py
   - code: src/setuhaul/escalation.py
   - code: src/setuhaul/driver_messages.py
@@ -40,5 +41,18 @@ warehouse approval, decline, expiry and failure (`src/setuhaul/partner_booking.p
 
 > ⚠️ A notice older than 30 minutes is marked `TOO_OLD` and never sent (`src/setuhaul/jobs/send_driver_notifications.py:23`).
 
-Partner answers only arrive if the partner mail jobs run, and nothing in the deployed service runs them yet
-([deployment guide](../deployment-hostinger.md)).
+Partner answers are polled automatically when `SETUHAUL_PARTNER_EMAIL_MODE=live` and SMTP/IMAP credentials are configured:
+`PartnerMailRunner` (`src/setuhaul/jobs/partner_mail.py`) runs `send_pending_requests`, `poll_partner_replies` and
+`run_expiry_once` on its own background thread so a slow or unreachable mail server never delays hold expiry or Telegram
+driver notices 
+
+## Downstream notices (planner, consignee, operations)
+
+Confirmations and cancellations also queue `WAREHOUSE_PLANNER`, `CONSIGNEE` and `OPERATIONS` rows in
+`notification_outbox` (`src/setuhaul/notifications.py:63`). No outbound transport is connected for those three
+audiences yet, so their rows remain `PENDING` in the deployed service.
+
+> ⚠️ Do not wire `src/setuhaul/jobs/deliver_notifications.py` (`deliver_pending_notifications`) into the deployed
+> service as-is: it selects every `recipient_type` including `DRIVER` and would mark driver notices `SENT` without
+> delivering them to Telegram.
+

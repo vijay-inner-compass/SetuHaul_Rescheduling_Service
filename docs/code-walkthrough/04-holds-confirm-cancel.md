@@ -58,7 +58,7 @@ that a failure anywhere leaves the original appointment intact and nothing half-
 ## History, outbox and delivery
 
 * `events.append_appointment_event` writes immutable history (triggers abort UPDATE and DELETE).
-* `notifications.enqueue_downstream` queues three notices inside the booking transaction. Delivery happens **outside** it
+* `notifications.enqueue_downstream` queues three notices (`WAREHOUSE_PLANNER`, `CONSIGNEE`, `OPERATIONS`) inside the booking transaction. No outbound transport is connected for those three audiences in the deployed service yet, so their rows stay `PENDING` in `notification_outbox`; only `DRIVER` notices are sent in production (via Telegram by `DriverNoticeRunner`). In tests and the demo console, delivery runs **outside** the booking transaction
   (`deliver_pending_notifications`): at least once, with a stable `dedupe_key`. A delivery failure never touches the
   appointment. A transient failure retries up to 3 attempts; a permanent one is never retried.
 
