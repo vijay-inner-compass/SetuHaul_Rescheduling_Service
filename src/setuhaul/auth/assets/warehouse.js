@@ -327,7 +327,7 @@
     }).then(function (response) {
       return response.json().catch(function () { return null; }).then(function (data) {
         if (!response.ok) {
-          line.textContent = window.SH.reason(response.status, data).text;
+          line.textContent = window.SH.reason(response.status, data, form).text;
           return;
         }
         var text = data.slots_created + " slots added.";

@@ -12,6 +12,7 @@ from datetime import date, timedelta
 
 from setuhaul.auth import audit
 from setuhaul.auth.phone import normalise_e164
+from setuhaul.auth.refusals import InvalidRequest
 from setuhaul.auth.users import User
 from setuhaul.clock import Clock
 from setuhaul.db import immediate
@@ -77,7 +78,7 @@ def add_driver(
         raise AuthError("INVALID_PHONE")
     licence = licence_number.strip()
     if not licence:
-        raise AuthError("INVALID_REQUEST")
+        raise InvalidRequest(("licence_number", "is missing"))
     # A sane name: non-empty, bounded, no control characters.
     if not name.strip() or len(name) > 120 or any(ord(c) < 32 or ord(c) == 127 for c in name):
         raise AuthError("INVALID_NAME")

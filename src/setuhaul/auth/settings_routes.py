@@ -17,7 +17,7 @@ from redis.exceptions import RedisError
 from starlette.concurrency import run_in_threadpool
 
 from setuhaul import app_settings
-from setuhaul.auth import audit
+from setuhaul.auth import audit, refusals
 from setuhaul.auth.authz import require_role
 from setuhaul.auth.http import reject as _reject
 from setuhaul.auth.users import User
@@ -107,9 +107,9 @@ _APP_PASSWORD = re.compile(r"^[a-z]{4}( [a-z]{4}){3}$")
 def parse_body(model: type[_Body], raw: object) -> Any:
     try:
         return model.model_validate(raw)
-    except ValidationError:
-        # Nothing of the input is passed on.
-        raise AuthError("INVALID_REQUEST") from None
+    except ValidationError as exc:
+        # Only the field names and our own limits are passed on, nothing of the input.
+        raise refusals.InvalidRequest(*refusals.problems_from(exc.errors())) from None
 
 
 def model_changes(body: ModelBody, now: app_settings.Effective, base: dict[str, str]) -> tuple[dict[str, str], list[str]]:
@@ -131,7 +131,7 @@ def model_changes(body: ModelBody, now: app_settings.Effective, base: dict[str, 
             remove.append("SETUHAUL_MODEL_API_KEY")
     if body.api_key:
         if not provider:
-            raise AuthError("INVALID_REQUEST")
+            raise refusals.InvalidRequest(("provider", "is missing"))
         values["SETUHAUL_MODEL_API_KEY"] = body.api_key
         # A key is saved together with its provider, so a later .env change cannot send it elsewhere.
         values["SETUHAUL_MODEL_PROVIDER"] = provider
@@ -278,7 +278,7 @@ def register_settings_routes(app: FastAPI, deps: AppDeps) -> None:
         try:
             return fn(conn)  # type: ignore[no-any-return]
         except AuthError as exc:
-            return _reject(rid, _STATUS.get(exc.code, 422), exc.code)
+            return _reject(rid, _STATUS.get(exc.code, 422), exc.code, **refusals.details_of(exc))
         except sqlite3.Error:
             return _reject(rid, 503, "DATABASE_UNAVAILABLE")
         finally:
@@ -406,7 +406,7 @@ def register_settings_routes(app: FastAPI, deps: AppDeps) -> None:
                 if ok:
                     fingerprint = app_settings.webhook_fingerprint(token, secret, deps.public_url)
         except AuthError as exc:
-            return _reject(rid, _STATUS.get(exc.code, 422), exc.code)
+            return _reject(rid, _STATUS.get(exc.code, 422), exc.code, **refusals.details_of(exc))
         failed = record(rid, user, action, section, ok, fingerprint)
         if failed is not None:
             return failed

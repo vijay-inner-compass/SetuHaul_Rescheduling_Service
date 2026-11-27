@@ -17,6 +17,7 @@ from datetime import date, datetime
 from setuhaul.auth import audit
 from setuhaul.auth.authz import AuthzError, assert_facility, facility_clause
 from setuhaul.auth.onboarding import driver_eligible
+from setuhaul.auth.refusals import InvalidRequest
 from setuhaul.auth.users import User
 from setuhaul.clock import Clock
 from setuhaul.db import IST, TimestampError, immediate, parse_operational_timestamp
@@ -97,15 +98,16 @@ def create(
     # Sane text fields: non-empty, bounded, no control characters.
     name, ref = customer_name.strip(), contract_ref.strip()
     if not name or len(name) > _MAX_NAME or _has_control(name):
-        raise AuthError("INVALID_REQUEST")
+        raise InvalidRequest(("customer_name", f"must be 1 to {_MAX_NAME} characters of ordinary text"))
     if _CONTRACT_REF.fullmatch(ref) is None:
-        raise AuthError("INVALID_REQUEST")
+        raise InvalidRequest(("contract_ref", "is not in the expected format"))
     # Both dates must be plausible.
-    if any(d is not None and not _FIRST_DATE <= d <= _LAST_DATE for d in (starts_on, ends_on)):
-        raise AuthError("INVALID_REQUEST")
+    for field, day in (("starts_on", starts_on), ("ends_on", ends_on)):
+        if day is not None and not _FIRST_DATE <= day <= _LAST_DATE:
+            raise InvalidRequest((field, f"must be between {_FIRST_DATE.year} and {_LAST_DATE.year}"))
     # A contract cannot end before it starts.
     if ends_on is not None and ends_on < starts_on:
-        raise AuthError("INVALID_REQUEST")
+        raise InvalidRequest(("ends_on", "is before the start date"))
     pid = _new_id()
     # One transaction: the existence checks, the row and the audit row stand or fall together.
     with immediate(conn):

@@ -38,8 +38,8 @@
     });
   }
 
-  function refusal(result) {
-    return window.SH.reason(result.status, result.data).text;
+  function refusal(result, form) {
+    return window.SH.reason(result.status, result.data, form).text;
   }
 
   function save(form, body) {
@@ -63,7 +63,7 @@
       if (result.ok) {
         window.location.reload();
       } else {
-        window.SH.say(refusal(result));
+        window.SH.say(refusal(result, form));
       }
     }).catch(function () { window.SH.say("Network error"); });
   }
@@ -96,7 +96,7 @@
         button.disabled = true;
         out.textContent = "Checking...";
         post(url, body).then(function (result) {
-          out.textContent = result.ok ? (result.data.ok ? "Worked: " : "Failed: ") + result.data.message : refusal(result);
+          out.textContent = result.ok ? (result.data.ok ? "Worked: " : "Failed: ") + result.data.message : refusal(result, form);
         }).catch(function () { out.textContent = "Network error"; })
           .then(function () { button.disabled = false; });
       });

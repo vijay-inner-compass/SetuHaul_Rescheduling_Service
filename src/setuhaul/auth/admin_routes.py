@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
-from setuhaul.auth import onboarding, projects
+from setuhaul.auth import onboarding, projects, refusals
 from setuhaul.auth.authz import require_role
 from setuhaul.auth.http import reject as _reject
 from setuhaul.auth.users import User
@@ -71,7 +71,7 @@ def register_admin_routes(app: FastAPI, deps: AppDeps) -> None:
         try:
             return fn(conn)  # type: ignore[no-any-return]
         except AuthError as exc:
-            return _reject(rid, _STATUS.get(exc.code, 422), exc.code)
+            return _reject(rid, _STATUS.get(exc.code, 422), exc.code, **refusals.details_of(exc))
         except sqlite3.IntegrityError as exc:
             # The UNIQUE constraints are the backstop for a race the up-front checks lost; the column name says which.
             message = str(exc)

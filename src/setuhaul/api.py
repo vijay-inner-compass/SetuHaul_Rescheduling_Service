@@ -68,7 +68,7 @@ from starlette.concurrency import run_in_threadpool
 from setuhaul import pass_check
 
 # Web sessions, the role guard and the facility scope of cases.
-from setuhaul.auth import same_origin, sessions
+from setuhaul.auth import refusals, same_origin, sessions
 from setuhaul.auth.account_mail import account_sender_from_env
 from setuhaul.auth.authz import AuthzError, require_role
 from setuhaul.auth.google import GoogleVerifier
@@ -423,8 +423,9 @@ def create_app(deps: AppDeps) -> FastAPI:
     # Malformed request: a clean 422, not a framework error page.
     @app.exception_handler(RequestValidationError)
     async def invalid(request: Request, exc: RequestValidationError) -> JSONResponse:
-        # INVALID_REQUEST.
-        return _reject(request.state.request_id, 422, "INVALID_REQUEST")
+        # INVALID_REQUEST, naming each field at fault; nothing that was sent is repeated.
+        found = refusals.problems_from(exc.errors(), skip=1)
+        return _reject(request.state.request_id, 422, "INVALID_REQUEST", **refusals.details(found))
 
     # Any unexpected error: a generic 500 with only the request id. No internal detail leaves the process.
     @app.exception_handler(Exception)
