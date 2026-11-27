@@ -344,10 +344,10 @@ curl -X POST "https://api.telegram.org/bot<BOT_TOKEN>/setWebhook" -d "url=<base>
 6. To cut access: **Disable** a user (their sessions end at once); **Suspend** an approved onboarded driver (admin screen, **Onboarded drivers**;
    **Re-approve** undoes it while the licence is valid); or **Revoke Telegram** for a driver. A revoke is sticky: sharing the number again,
    from that or any other account, is refused until someone allowed to clicks **Allow re-link** (audited), after which the driver can link again.
-7. To work a hand-off case: `/warehouse` > **Messages** > **Open cases** > **Claim**, then choose an outcome, write the message the driver will
+7. To work a hand-off case: `/warehouse` > **Operations** > **Cases** > **Claim**, then choose an outcome, write the message the driver will
    receive and **Resolve**. Only the claimant can resolve. **Recently resolved** offers **Reopen** inside the reopen window (24 hours by default).
    A case that names no load is visible to admins only.
-8. Cases that name no load belong to admins: the admin screen counts them under **Cases with no load**; work them on `/warehouse` > **Messages**.
+8. Cases that name no load belong to admins: the admin screen counts them under **Cases with no load**; work them on `/warehouse` > **Operations** > **Cases**.
 9. Admins can **Re-enable** a disabled user and **Change facilities** for warehouse and security users; both are audited. A re-enabled
    user signs in again.
 
@@ -388,11 +388,12 @@ Rules enforced by the server:
 
 On `/warehouse`, for your own facilities (an admin: all):
 
-* **Block a dock** (Dock board tab): choose dock, type, from, optional to, and a reason, then **Check bookings**. The warning lists
+* **Layout:** the Dock board tab shows a compact board with an **Operations** panel beside it (Cases, Chats, Requests).
+* **Block a dock** (Dock board tab, under the board): choose dock, type, from, optional to, and a reason, then **Check bookings**. The warning lists
   each affected booking and where it would move. **Block and move** applies exactly that list; if things changed meanwhile you are
   shown the new list. A booking that fits nowhere is freed and its shipment waits for a slot. Trucks already inside are left alone.
 * **Reopen** ends one block early. Bookings already moved stay where they are.
-* **Free a slot:** the **x** on a booked, not yet started slot under "Today by hour". The shipment stays and needs a new slot.
+* **Free a slot:** click the booked cell on the dock board, then **Free this slot**. The shipment stays and needs a new slot.
 * **Delete a driver** (Drivers tab): lists the unfinished shipments that will be cancelled and asks for the driver's name. Admins
   may delete anyone; warehouse staff only drivers they added. Nothing is erased.
 * **Restore** (admin): Admin screen, **Deleted drivers**. Cancelled shipments and project allocations do not come back, and

@@ -97,3 +97,9 @@ def test_driver_tab_walks_through_registering_and_messaging() -> None:
     assert telegram.NEUTRAL_REFUSAL.split(".")[0] in " ".join(tasks[ERRORS])
     for key in ("unsupported_content", "slow_down"):
         assert say(key, "en", seconds="60").split(".")[0] in " ".join(tasks[ERRORS]), key
+
+
+def test_warehouse_instructions_describe_the_board_and_operations_panel() -> None:
+    text = " ".join(step for key, _, tasks in wiki_pages.TOPICS for _, steps in tasks for step in steps)
+    assert "Messages tab" not in text and "small ×" not in text and "under Messages" not in text
+    assert "Free this slot" in text and "Operations" in text

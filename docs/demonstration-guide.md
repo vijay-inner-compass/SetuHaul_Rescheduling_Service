@@ -84,7 +84,7 @@ model, guarantees one holder per slot (`python scripts/show_phase5.py`).
 ### E. Change warehouse
 
 1. As Manoj: `Please change facility to Gurugram`. Reply: the request is sent and the destination has **not** changed.
-2. On the console's browser open `http://127.0.0.1:8800/warehouse`, then **Messages**, and approve the request. The `--auto-login`
+2. On the console's browser open `http://127.0.0.1:8800/warehouse`, then **Operations > Requests**, and approve the request. The `--auto-login`
    user can approve it; otherwise use an admin or a Gurugram warehouse user.
 3. The driver's chat shows *The move to SetuHaul Gurugram Cross-Dock is approved. I am holding 16:00-17:00 at dock D1 ...* The hold
    lasts 15 minutes; confirm with `yes`.
@@ -125,11 +125,12 @@ removed, so a first booking has no "original ended" step. The hard rules still a
 
 On `/warehouse`, for your own facilities (an admin: all):
 
-* **Block a dock** (Dock board tab): choose dock, type, from, optional to, and a reason, then **Check bookings**. The warning lists
+* **Layout:** the Dock board tab shows a compact board with an **Operations** panel beside it (Cases, Chats, Requests).
+* **Block a dock** (Dock board tab, under the board): choose dock, type, from, optional to, and a reason, then **Check bookings**. The warning lists
   each affected booking and where it would move. **Block and move** applies exactly that list; if things changed meanwhile you are
   shown the new list. A booking that fits nowhere is freed and its shipment waits for a slot. Trucks already inside are left alone.
 * **Reopen** ends one block early. Bookings already moved stay where they are.
-* **Free a slot:** the **x** on a booked, not yet started slot under "Today by hour". The shipment stays and needs a new slot.
+* **Free a slot:** click the booked cell on the dock board, then **Free this slot**. The shipment stays and needs a new slot.
 * **Delete a driver** (Drivers tab): lists the unfinished shipments that will be cancelled and asks for the driver's name. Admins
   may delete anyone; warehouse staff only drivers they added. Nothing is erased.
 * **Restore** (admin): Admin screen, **Deleted drivers**. Cancelled shipments and project allocations do not come back, and

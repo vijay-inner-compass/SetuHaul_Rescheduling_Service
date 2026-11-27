@@ -42,23 +42,24 @@ _START: tuple[Task, ...] = (
 
 _WAREHOUSE: tuple[Task, ...] = (
     ("See what needs attention", (
-        ("The cards at the top count open cases, requests waiting for a partner, drivers awaiting approval, licences that "
-        "are not valid and facility requests. Click a card to go to its tab."),
-        "The dock board and messages update by themselves. The Projects, Shipments and Drivers tabs do not: reload the page.",
+        "The cards at the top count waiting work and licences that are not valid. Click a card to go to it.",
+        "The dock board and the Operations panel update by themselves. The other tabs do not: reload the page.",
     )),
     ("Read the dock board", (
-        "On the Dock board tab, choose the facility.",
-        "“On the bays now” shows what is on each dock at this moment and what comes next.",
-        "“Today by hour” shows each slot as Free, Booked, Held (not yet confirmed) or Blocked.",
+        "On the Dock board tab, click the facility's button at the top.",
+        ("Each row is a dock and each column an hour. A cell with initials has a booking; the colour says Free, Booked, "
+        "Held (not yet confirmed) or Blocked."),
+        "Hover over a cell, or click it, to see the dock, time, driver, order and any block reason.",
+        "Open “On the bays now” under the board to see what is on each dock at this moment and what comes next.",
     )),
     ("Free a booked slot", (
-        "On the Dock board, find the booking under “Today by hour”.",
-        "Click the small × on it and confirm. The shipment is kept and needs a new slot; the driver is told.",
-        "There is no × on held slots, slots that have started, unloading, or trucks already inside.",
+        "Click the booking's cell on the dock board.",
+        "Click “Free this slot” and confirm. The shipment is kept and needs a new slot; the driver is told.",
+        "The button is not offered for held slots, slots that have started, unloading, or trucks already inside.",
         "If the screen says the driver could not be reached, phone them.",
     )),
     ("Block a dock", (
-        "On the Dock board tab, go to “Block a dock”.",
+        "On the Dock board tab, open “Block a dock” under the board.",
         "Choose the dock and type, enter From (India time), leave To empty to block until reopened, and give a reason.",
         "Click “Check bookings”. Read which bookings are affected and where each would move.",
         "Click “Block and move” (or “Block” if none are affected). Drivers are told their new dock and time.",
@@ -71,16 +72,15 @@ _WAREHOUSE: tuple[Task, ...] = (
         "Only that block ends. Bookings that were already moved stay where they are.",
     )),
     ("Work on a case", (
-        "Open the Messages tab. A case is a problem the assistant handed to a person.",
+        "In the Operations panel beside the board, choose “Cases”. A case is a problem the assistant handed to a person.",
         "Click “Claim” so others know you are working on it.",
         "Choose an outcome, write the message the driver will receive, and click “Resolve”.",
         "A recently resolved case can be brought back with “Reopen”.",
     )),
-    ("Answer facility requests and read chats", (
-        "On Messages, “Facility change requests” lists drivers asking to deliver elsewhere. Approve or Reject each one.",
-        ("“Driver chats” shows the conversations of drivers you may see. You can read them; to write to a driver, resolve "
-        "their case."),
-        "“Partner slot requests” shows requests sent to partner warehouses by email and their answers.",
+    ("Answer requests and read chats", (
+        "In Operations, “Requests” lists drivers asking to deliver elsewhere. Approve or Reject each one.",
+        "“Chats” shows the conversations of drivers you may see. To write to a driver, resolve their case.",
+        "“Requests” also shows slot requests sent to partner warehouses by email and their answers.",
     )),
     ("Manage projects", (
         "On the Projects tab, fill in “New project” and click “Create”.",
