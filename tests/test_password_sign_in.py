@@ -82,7 +82,7 @@ def test_migration_keeps_existing_sessions(tmp_path: Path) -> None:
         conn.execute("insert into auth_sessions(session_id, user_id, created_at, expires_at, auth_method) "
                      "values ('s1','U1','c','e','GOOGLE')")
         conn.commit()
-        assert apply_migrations(conn) == [MIGRATION]
+        assert apply_migrations(conn)[0] == MIGRATION
         assert [tuple(r) for r in conn.execute("select * from auth_sessions")] == [("s1", "U1", "c", "e", None, "GOOGLE")]
         indexes = {r[0] for r in conn.execute("select name from sqlite_master where type='index'")}
         assert "ix_auth_sessions_user" in indexes

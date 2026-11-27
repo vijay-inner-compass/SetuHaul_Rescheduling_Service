@@ -15,7 +15,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from setuhaul import passes
+from setuhaul import chat_loads, passes
 from setuhaul.allocation import rank_options
 from setuhaul.auth import audit
 from setuhaul.auth.authz import facility_ids
@@ -150,12 +150,13 @@ def _tell(conn: sqlite3.Connection, clock: Clock, memory: ConversationMemoryStor
     """Put a message in the driver's chat, in their language, and queue it for their phone."""
     text = say(key, _language(conn, driver_id, thread_id), **fields)
     now = clock.now()
-    if thread_id is not None and memory is not None:
-        memory.append(driver_id, thread_id, "OPERATIONS", text)
-    elif thread_id is not None:
-        # Callers without the cache (the sweeps) write the durable log; the cache is rebuilt from it.
-        conn.execute("insert into chat_messages (chat_message_id, thread_id, sender_type, message_text, message_ts) "
-                     "values (?,?, 'OPERATIONS', ?, ?)", ("MSG-" + uuid.uuid4().hex[:12].upper(), thread_id, text, now.isoformat()))
+    with chat_loads.recording(conn, thread_id, shipment_id):
+        if thread_id is not None and memory is not None:
+            memory.append(driver_id, thread_id, "OPERATIONS", text)
+        elif thread_id is not None:
+            # Callers without the cache (the sweeps) write the durable log; the cache is rebuilt from it.
+            conn.execute("insert into chat_messages (chat_message_id, thread_id, sender_type, message_text, message_ts) "
+                         "values (?,?, 'OPERATIONS', ?, ?)", ("MSG-" + uuid.uuid4().hex[:12].upper(), thread_id, text, now.isoformat()))
     queue_driver_notice(conn, driver_id, shipment_id, text, now, happened_at)
 
 

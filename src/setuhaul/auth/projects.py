@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 import secrets
 import sqlite3
-from datetime import date, datetime
+from datetime import date
 
 from setuhaul.auth import audit
 from setuhaul.auth.authz import AuthzError, assert_facility, facility_clause
@@ -20,7 +20,7 @@ from setuhaul.auth.onboarding import driver_eligible
 from setuhaul.auth.refusals import InvalidRequest
 from setuhaul.auth.users import User
 from setuhaul.clock import Clock
-from setuhaul.db import IST, TimestampError, immediate, parse_operational_timestamp
+from setuhaul.db import IST, immediate
 from setuhaul.identity import AuthError
 
 # Field bounds.
@@ -226,25 +226,6 @@ def visible_driver_ids(conn: sqlite3.Connection, user: User, today: date) -> set
     projects whose ends_on is before `today` (IST) drop out.
     """
     return {r["driver_id"] for r in _live_allocations(conn, user, today)}
-
-
-def chat_window_starts(conn: sqlite3.Connection, user: User, today: date) -> dict[str, datetime]:
-    """For each visible driver, the instant from which the user may read their chat: the earliest live allocation.
-
-    A released allocation shows nothing, and re-allocating resets allocated_at, so the time between a release and a
-    re-allocation (and the earlier allocation itself) is never shown. An unreadable allocated_at hides the driver.
-    """
-    starts: dict[str, datetime] = {}
-    for row in _live_allocations(conn, user, today):
-        # Parsed, so stored forms with different offsets or precision compare as instants.
-        try:
-            start = parse_operational_timestamp(row["allocated_at"])
-        except TimestampError:
-            continue
-        # On several of the user's projects at once: the earliest live allocation opens the window.
-        if row["driver_id"] not in starts or start < starts[row["driver_id"]]:
-            starts[row["driver_id"]] = start
-    return starts
 
 
 def list_projects(conn: sqlite3.Connection, user: User) -> list[dict[str, object]]:

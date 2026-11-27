@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import Depends, FastAPI, Request
@@ -17,7 +17,7 @@ from setuhaul.auth.http import reject as _reject
 from setuhaul.auth.onboarding import NOT_DELETED
 from setuhaul.auth.users import User
 from setuhaul.board import build_board
-from setuhaul.db import IST, TimestampError, open_connection, parse_operational_timestamp
+from setuhaul.db import TimestampError, open_connection, parse_operational_timestamp
 from setuhaul.identity import AuthError
 
 if TYPE_CHECKING:
@@ -98,19 +98,14 @@ def partner_requests_in_scope(conn: sqlite3.Connection, user: User, limit: int =
     return [dict(r) for r in rows]
 
 
-def _windowed_chats(conn: sqlite3.Connection, user: User, now: datetime, limit: int, per_driver: int) -> list[dict[str, Any]]:
-    # A warehouse authority: only messages sent at or after the start of a live allocation on one of their own projects.
-    starts = projects.chat_window_starts(conn, user, now.astimezone(IST).date())
-    # No visible drivers means nothing at all, never "no filter".
-    if not starts:
-        return []
-    ids = sorted(starts)
-    # A coarse SQL pre-filter on the date prefix (two days of slack covers any offset); the exact test is on parsed instants below.
-    floor = (min(starts.values()).date() - timedelta(days=2)).isoformat()
+def _facility_chats(conn: sqlite3.Connection, user: User, limit: int, per_driver: int) -> list[dict[str, Any]]:
+    # A warehouse authority: only messages recorded for a load going to one of their facilities. The scope is in the SQL,
+    # and no facility means nothing at all.
+    clause, params = facility_clause(user, "l.facility_id")
     rows = conn.execute(
-        "select t.driver_id, m.rowid as seq, m.sender_type, m.message_text, m.message_ts from chat_messages m"
-        f" join chat_threads t on t.thread_id=m.thread_id where m.is_duplicate=0 and t.driver_id in ({','.join('?' * len(ids))})"
-        " and m.message_ts>=?", (*ids, floor)).fetchall()
+        "select t.driver_id, m.rowid as seq, m.sender_type, m.message_text, m.message_ts from chat_message_loads l"
+        " join chat_messages m using(chat_message_id) join chat_threads t on t.thread_id=m.thread_id"
+        f" where m.is_duplicate=0 and {clause}", params).fetchall()
     # A question and its reply can share a timestamp, so ties follow insertion order (message ids are random).
     kept: dict[str, list[tuple[datetime, int, sqlite3.Row]]] = {}
     for r in rows:
@@ -119,8 +114,7 @@ def _windowed_chats(conn: sqlite3.Connection, user: User, now: datetime, limit: 
             ts = parse_operational_timestamp(r["message_ts"])
         except TimestampError:
             continue
-        if ts >= starts[r["driver_id"]]:
-            kept.setdefault(r["driver_id"], []).append((ts, r["seq"], r))
+        kept.setdefault(r["driver_id"], []).append((ts, r["seq"], r))
     # Most recently active drivers first, capped; then each driver's newest messages, shown oldest first.
     order = sorted(kept, key=lambda d: (-max(k[0] for k in kept[d]).timestamp(), d))[:limit]
     out: list[dict[str, Any]] = []
@@ -137,12 +131,12 @@ def driver_chats_in_scope(conn: sqlite3.Connection, user: User, now: datetime, l
                           messages: int = 20) -> list[dict[str, Any]]:
     """Recent messages of the drivers the user may see.
 
-    A warehouse authority: only drivers on their own live projects, and only messages sent during that allocation.
+    A warehouse authority: only messages about loads going to their facilities, whoever added the driver.
     An admin: every chatting driver, whole history.
     """
     per_driver = clamp(messages, 20, MAX_MESSAGES)
     if user.role != "ADMIN":
-        return _windowed_chats(conn, user, now, clamp(limit, 50, MAX_LIMIT), per_driver)
+        return _facility_chats(conn, user, clamp(limit, 50, MAX_LIMIT), per_driver)
     out: list[dict[str, Any]] = []
     # Most recently active drivers first, capped.
     active = conn.execute(

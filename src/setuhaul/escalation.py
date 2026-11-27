@@ -40,6 +40,7 @@ from typing import Any, Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # The injectable clock.
+from setuhaul import chat_loads
 from setuhaul.clock import Clock
 
 # Settings give the SLA and reopen window.
@@ -200,9 +201,10 @@ def _set_thread(conn: sqlite3.Connection, thread_id: str, status: str) -> None:
 def _post_update(conn: sqlite3.Connection, case: sqlite3.Row, text: str, now: datetime) -> None:
     """Updates arrive in the driver's chat thread, as an OPERATIONS message."""
     # The message is written straight into chat_messages; memory's cache is rebuilt on the driver's next turn.
-    conn.execute(
-        "insert into chat_messages (chat_message_id, thread_id, sender_type, message_text, message_ts) "
-        "values (?,?, 'OPERATIONS', ?, ?)", ("MSG-" + uuid.uuid4().hex[:12].upper(), case["thread_id"], text, now.isoformat()))
+    with chat_loads.recording(conn, case["thread_id"], case["shipment_id"]):
+        conn.execute(
+            "insert into chat_messages (chat_message_id, thread_id, sender_type, message_text, message_ts) "
+            "values (?,?, 'OPERATIONS', ?, ?)", ("MSG-" + uuid.uuid4().hex[:12].upper(), case["thread_id"], text, now.isoformat()))
 
 
 def _lang(case: sqlite3.Row) -> str:

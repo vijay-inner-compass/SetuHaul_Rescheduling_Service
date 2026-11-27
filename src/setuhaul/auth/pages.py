@@ -807,8 +807,8 @@ def _messages_section(conn: sqlite3.Connection, user: User, now: datetime, waiti
     partners = partner_requests_in_scope(conn, user)
     reqs = [[esc(r["request_ref"]), _named(r["facility_name"], r["facility_id"]), esc(r["shipment_id"]), esc(word(r["status"])),
              esc(word(r["email_status"])), esc(f"{when(r['proposed_start'])} to {_clock(r['proposed_end'])}")] for r in partners]
-    note = ('<p class="note">Drivers on projects created by an administrator do not appear in a warehouse authority\'s chats; '
-            "only drivers on projects you created are shown.</p>")
+    note = ("" if user.role == "ADMIN" else '<p class="note">You see messages about loads going to your facilities. Messages not '
+            "yet tied to a load are visible to administrators only.</p>")
     chats = driver_chats_in_scope(conn, user, now)
     waiting = len(pending_changes_in_scope(conn, user)) + sum(1 for r in partners if r["status"] == "PENDING_PARTNER")
     views = (

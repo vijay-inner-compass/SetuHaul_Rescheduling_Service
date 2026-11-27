@@ -373,9 +373,9 @@ Rules enforced by the server:
 
 * An address that was not invited gets `NOT_INVITED` and no user row. Unverified Google addresses are refused.
 * A warehouse authority sees only their facilities; a case, board or project elsewhere answers "not found". Only a project's creator or an admin changes its drivers.
-* Their driver chats cover only drivers actively allocated to `ACTIVE`, unexpired (`ends_on` not passed, IST) projects they created, in
-  facilities they still hold, and only messages sent since that allocation began. Messages from before the allocation, after a release, or
-  between a release and a re-allocation are not shown. Admins see every chat.
+* Their driver chats are the messages recorded for loads going to their facilities, whoever added the driver. Each message is
+  tagged when written with the load it is about (the one selected in the conversation, or the driver's only unfinished load)
+  and that load's destination then. Messages with no tag, including older live chats, are seen by admins only.
 * Their driver list shows drivers they added plus those project drivers, with the phone masked.
 * **Revoke Telegram** and **Allow re-link** are for an admin or the warehouse authority who added the driver; supplied drivers: admin only.
   Allocating a driver to your project does not grant them. Anything else answers 404 `DRIVER_NOT_FOUND`.

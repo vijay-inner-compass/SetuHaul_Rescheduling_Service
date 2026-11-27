@@ -113,7 +113,7 @@ def test_warehouse_page_has_board_and_no_audit_section(world: World) -> None:
     assert "needs help" in r.text and f"PR-T-{JAIPUR}" in r.text and "hello from DRV001" in r.text
     assert f"PR-T-{GURUGRAM}" not in r.text and "hello from DRV006" not in r.text
     # The note about admin-created projects.
-    assert "created by an administrator" in r.text
+    assert "You see messages about loads going to your facilities." in r.text
 
 
 def _facilities(page: str) -> list[str]:

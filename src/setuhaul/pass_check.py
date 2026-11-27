@@ -36,6 +36,8 @@ class PassReply(BaseModel):
     kind: Literal["CONFIRMED", "MISMATCH", "LOCKED"]
     text: str
     case_id: str | None = None
+    # The one load the answer is about, when it is clear.
+    shipment_id: str | None = None
 
 
 def _waiting(row: sqlite3.Row) -> bool:
@@ -85,9 +87,11 @@ def check(conn: sqlite3.Connection, clock: Clock, *, driver_id: str, thread_id: 
                 confirmed.append(r)
             elif wrong:
                 conn.execute("update shipment_assignments set failed_attempts=? where shipment_id=?", (attempts, r["shipment_id"]))
+    about: str | None = None
     if confirmed:
         text_out = "\n".join(say("pass_confirmed", lang, order=r["order_reference"], facility=r["facility_name"],
                                  when=f"{parse_operational_timestamp(r['planned_ts']):%d %b %Y %H:%M}") for r in confirmed)
+        about = str(confirmed[0]["shipment_id"]) if len(confirmed) == 1 else None
         kind: Literal["CONFIRMED", "MISMATCH", "LOCKED"] = "CONFIRMED"
     elif newly_locked or named or all(r["locked_at"] is not None for r in waiting):
         # Repeating a pass that is already theirs is not about a locked shipment.
@@ -99,9 +103,9 @@ def check(conn: sqlite3.Connection, clock: Clock, *, driver_id: str, thread_id: 
     else:
         return None
     if newly_locked is None:
-        return PassReply(kind=kind, text=text_out)
+        return PassReply(kind=kind, text=text_out, shipment_id=about)
     # Recorded after the lock is committed: the sink opens its own transaction. It names a shipment so that warehouse sees it.
     case = sink.record(HandoffRequest(
         reason_code="PASS_CONFIRMATION_LOCKED", driver_id=driver_id, thread_id=thread_id, shipment_id=newly_locked,
         summary=f"Pass confirmation locked after {MAX_ATTEMPTS} wrong codes.", created_at=clock.now()))
-    return PassReply(kind=kind, text=text_out, case_id=case)
+    return PassReply(kind=kind, text=text_out, case_id=case, shipment_id=newly_locked)
