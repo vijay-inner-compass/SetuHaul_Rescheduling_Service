@@ -14,6 +14,7 @@ from starlette.concurrency import run_in_threadpool
 from setuhaul.auth import projects, telegram
 from setuhaul.auth.authz import AuthzError, assert_facility, facility_clause, require_role
 from setuhaul.auth.http import reject as _reject
+from setuhaul.auth.onboarding import NOT_DELETED
 from setuhaul.auth.users import User
 from setuhaul.board import build_board
 from setuhaul.db import IST, TimestampError, open_connection, parse_operational_timestamp
@@ -70,6 +71,7 @@ def drivers_in_scope(conn: sqlite3.Connection, user: User, today: date, driver_i
         marks = f" or d.driver_id in ({','.join('?' * len(visible))})" if visible else ""
         where = [f"(p.created_by_user_id=?{marks})"]
         args = [user.user_id, *visible]
+    where.append(NOT_DELETED)
     if driver_id is not None:
         where.append("d.driver_id=?")
         args.append(driver_id)

@@ -48,6 +48,14 @@ def _next_driver_id(conn: sqlite3.Connection) -> str:
     return f"DRV{top + 1:03d}"
 
 
+# A deleted driver, to be used inside a query over drivers aliased `d`.
+NOT_DELETED = "not exists (select 1 from driver_deletions x where x.driver_id=d.driver_id and x.restored_at is null)"
+
+
+def is_deleted(conn: sqlite3.Connection, driver_id: str) -> bool:
+    return conn.execute("select 1 from driver_deletions where driver_id=? and restored_at is null", (driver_id,)).fetchone() is not None
+
+
 def add_driver(
     conn: sqlite3.Connection,
     *,
@@ -90,14 +98,14 @@ def add_driver(
         if not veh["active_flag"]:
             raise AuthError("VEHICLE_INACTIVE")
         # Compare normalised phones against every existing row: supplied numbers are stored hyphenated.
-        for (existing,) in conn.execute("select phone from drivers"):
+        for owner, existing in conn.execute("select driver_id, phone from drivers"):
             if normalise_e164(existing) == canonical:
-                raise AuthError("DUPLICATE_PHONE")
+                raise AuthError("DRIVER_DELETED_RESTORE" if is_deleted(conn, owner) else "DUPLICATE_PHONE")
         # Licence numbers compare ignoring case, spaces and hyphens.
         key = _licence_key(licence)
-        for (existing,) in conn.execute("select licence_number from drivers"):
+        for owner, existing in conn.execute("select driver_id, licence_number from drivers"):
             if _licence_key(existing) == key:
-                raise AuthError("DUPLICATE_LICENCE")
+                raise AuthError("DRIVER_DELETED_RESTORE" if is_deleted(conn, owner) else "DUPLICATE_LICENCE")
         driver_id = _next_driver_id(conn)
         # Inactive until an admin approves.
         conn.execute(
@@ -125,6 +133,9 @@ def _decide(conn: sqlite3.Connection, actor: User, driver_id: str, clock: Clock,
     with immediate(conn):
         if conn.execute("select 1 from drivers where driver_id=?", (driver_id,)).fetchone() is None:
             raise AuthError("DRIVER_NOT_FOUND")
+        # Restore first: approving must not bring a deleted driver back by the side door.
+        if is_deleted(conn, driver_id):
+            raise AuthError("DRIVER_DELETED")
         # Only app-created profiles in a state this decision may leave; supplied drivers have none, so are never touched.
         prof = conn.execute(
             "select licence_expiry, approval_status from driver_profiles where driver_id=? and created_by_user_id is not null",
@@ -166,7 +177,8 @@ def decided(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return list(conn.execute(
         "select d.driver_id, d.driver_name, d.phone, d.carrier_id, p.vehicle_id, p.licence_expiry, p.approval_status"
         " from drivers d join driver_profiles p on p.driver_id=d.driver_id"
-        " where p.approval_status in ('APPROVED','REJECTED') and p.created_by_user_id is not null order by d.driver_id"))
+        f" where p.approval_status in ('APPROVED','REJECTED') and p.created_by_user_id is not null and {NOT_DELETED}"
+        " order by d.driver_id"))
 
 
 def pending(conn: sqlite3.Connection) -> list[sqlite3.Row]:
@@ -174,7 +186,8 @@ def pending(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return list(conn.execute(
         "select d.driver_id, d.driver_name, d.phone, d.licence_number, d.carrier_id, p.vehicle_id, p.licence_expiry,"
         " p.created_by_user_id from drivers d join driver_profiles p on p.driver_id=d.driver_id"
-        " where p.approval_status='PENDING_APPROVAL' and p.created_by_user_id is not null order by d.driver_id"))
+        f" where p.approval_status='PENDING_APPROVAL' and p.created_by_user_id is not null and {NOT_DELETED}"
+        " order by d.driver_id"))
 
 
 def licence_valid(conn: sqlite3.Connection, driver_id: str, today: date) -> bool:
