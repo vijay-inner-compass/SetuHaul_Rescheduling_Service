@@ -31,7 +31,7 @@ from setuhaul.settings_checks import check_bot, check_model, register_webhook
 if TYPE_CHECKING:
     from setuhaul.api import AppDeps
 
-_STATUS = {"UNKNOWN_SECTION": 404, "SETTINGS_NOT_AVAILABLE": 409, "TOO_SOON": 429}
+_STATUS = {"UNKNOWN_SECTION": 404, "SETTINGS_NOT_AVAILABLE": 409, "EMAIL_TEST_TOO_SOON": 429}
 # One test email per this many seconds, per admin.
 _TEST_EVERY_S = 60
 LANGSMITH_CONFIRM = "SEND_TO_LANGSMITH"
@@ -377,7 +377,7 @@ def register_settings_routes(app: FastAPI, deps: AppDeps) -> None:
                 env = {**now.env, **_email_changes(parse_body(EmailBody, raw), now)}
                 try:
                     if not deps.redis.set(f"settings:testmail:{user.user_id}", 1, nx=True, ex=_TEST_EVERY_S):
-                        raise AuthError("TOO_SOON")
+                        raise AuthError("EMAIL_TEST_TOO_SOON")
                 except RedisError:
                     # An administrator's test goes ahead when it cannot be counted.
                     pass

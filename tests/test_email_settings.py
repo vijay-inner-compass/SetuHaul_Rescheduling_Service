@@ -256,7 +256,7 @@ def test_second_test_within_a_minute_is_refused(tmp_path: Path) -> None:
     admin = admin_of(world)
     admin.post(TEST, json=MAILBOX)
     r = admin.post(TEST, json=MAILBOX)
-    assert (r.status_code, r.json()["reason_code"]) == (429, "TOO_SOON") and len(boxes.sent) == 1
+    assert (r.status_code, r.json()["reason_code"]) == (429, "EMAIL_TEST_TOO_SOON") and len(boxes.sent) == 1
 
 
 def email_block(page: str) -> str:

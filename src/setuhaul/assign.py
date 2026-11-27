@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 import uuid
-from datetime import datetime
+from datetime import date, datetime, time, timedelta
 
 from setuhaul import passes, release
 from setuhaul.auth import audit
@@ -73,18 +73,54 @@ def message_of(exc: AuthError) -> str:
     return text
 
 
-def open_slots(conn: sqlite3.Connection, facility_id: str, now: datetime) -> list[sqlite3.Row]:
-    """Slots of the facility that are ahead of now, open, not booked or held, and not under a dock event."""
-    free = conn.execute(
+def open_slots_page(
+    conn: sqlite3.Connection,
+    facility_id: str,
+    now: datetime,
+    *,
+    day: date | None = None,
+    limit: int | None = None,
+) -> tuple[list[sqlite3.Row], bool]:
+    """Open, unoccupied, unblocked slots ahead of ``now``. Returns ``(rows, has_more)`` without silent truncation."""
+    after = now.astimezone(IST).isoformat()
+    where = [
+        "s.facility_id=?",
+        "s.slot_status='OPEN'",
+        "s.slot_start_ts>?",
+        f"not exists (select 1 from appointments a where a.slot_id=s.slot_id and a.appointment_status in {_TAKEN})",
+    ]
+    params: list[object] = [facility_id, after]
+    if day is not None:
+        day_start = datetime.combine(day, time(0, 0), tzinfo=IST)
+        day_end = day_start + timedelta(days=1)
+        where.append("s.slot_start_ts>=? and s.slot_start_ts<?")
+        params.extend([day_start.isoformat(), day_end.isoformat()])
+    sql = (
         "select s.slot_id, d.dock_code, s.slot_start_ts from appointment_slots s join docks d using(dock_id)"
-        " where s.facility_id=? and s.slot_status='OPEN' and s.slot_start_ts>? and not exists (select 1 from appointments a"
-        f" where a.slot_id=s.slot_id and a.appointment_status in {_TAKEN})"
-        " order by s.slot_start_ts, d.dock_code limit 3000", (facility_id, now.astimezone(IST).isoformat())).fetchall()
+        f" where {' and '.join(where)} order by s.slot_start_ts, d.dock_code"
+    )
+    free = conn.execute(sql, params).fetchall()
     # A dock event is not written on the slot, so slots under one are dropped here.
     state = build_facility_state(conn, facility_id, now)
     blocked = {i for i, s in state.slots.items() if any(
         e.start < s.end and (e.end is None or e.end > s.start) for e in state.effective_events(s.dock_id))}
-    return [r for r in free if r["slot_id"] not in blocked]
+    visible = [r for r in free if r["slot_id"] not in blocked]
+    if limit is not None and len(visible) > limit:
+        return visible[:limit], True
+    return visible, False
+
+
+def open_slots(
+    conn: sqlite3.Connection,
+    facility_id: str,
+    now: datetime,
+    *,
+    day: date | None = None,
+    limit: int | None = None,
+) -> list[sqlite3.Row]:
+    """Slots of the facility that are ahead of now, open, not booked or held, and not under a dock event."""
+    rows, _ = open_slots_page(conn, facility_id, now, day=day, limit=limit)
+    return rows
 
 
 def _arrival(conn: sqlite3.Connection, shipment_id: str, clock: Clock) -> EtaEvidence:

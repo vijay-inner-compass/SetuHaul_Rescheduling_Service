@@ -320,10 +320,10 @@ class ConversationMemoryStore:
         # Rebuild the window from the durable chat log, oldest first, skipping messages flagged as duplicates.
         rows = self._db.execute(
             "select sender_type, message_text, message_ts from chat_messages "
-            "where thread_id=? and is_duplicate=0 order by message_ts, rowid",
-            (thread_id,),
+            "where thread_id=? and is_duplicate=0 order by message_ts desc, rowid desc limit ?",
+            (thread_id, self._s.memory_max_turns),
         )
-        return self._trim([self._turn(r[0], r[1], r[2]) for r in rows])
+        return self._trim([self._turn(r[0], r[1], r[2]) for r in reversed(list(rows))])
 
     def rebuild_from_durable_history(self, driver_id: str, thread_id: str) -> ConversationContext:
         thread = self._require_thread(driver_id, thread_id)

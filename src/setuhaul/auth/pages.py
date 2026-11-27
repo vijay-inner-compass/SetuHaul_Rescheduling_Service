@@ -210,7 +210,7 @@ def _landing(google: bool, local_admin: bool, notice: str = "", password: bool =
         # Folded away when Google is the normal way in; open when the password is the only way in.
         state = "" if google else " open"
         backup = (f'<details class="backup"{state}><summary>Administrator password</summary>'
-                  '<form data-api="/auth/local-admin">'
+                  '<form method="post" data-api="/auth/local-admin">'
                   '<label for="email">Email</label><input id="email" name="email" type="email" required autocomplete="username">'
                   '<label for="password">Password</label><span class="secret">'
                   '<input id="password" name="password" type="password" required autocomplete="current-password">'
@@ -464,10 +464,10 @@ def _configuration_section(conn: sqlite3.Connection, deps: AppDeps) -> str:
     def block(section: str, title: str, fields: str, buttons: str, note: str = "") -> str:
         extra = f'<p class="note">{esc(note)}</p>' if note else ""
         if not live:
-            return f"<h3>{esc(title)}</h3>{extra}<form>{fields}</form>"
+            return f"<h3>{esc(title)}</h3>{extra}<form method=\"post\">{fields}</form>"
         reset = _button("Reset to .env", f"/v1/admin/settings/{section}/reset", body={},
                         confirm=f"Remove the saved {title} settings and use .env?")
-        return (f'<h3>{esc(title)}</h3>{extra}<div><form data-settings="{section}">{fields}{buttons}'
+        return (f'<h3>{esc(title)}</h3>{extra}<div><form method="post" data-settings="{section}">{fields}{buttons}'
                 f'<button type="submit">Save</button>{reset}</form><p class="note" data-result></p></div>')
 
     def check(label: str, path: str) -> str:
@@ -959,7 +959,7 @@ def _drivers_section(conn: sqlite3.Connection, user: User, today: date) -> str:
 
 
 def render_warehouse(conn: sqlite3.Connection, user: User, now: Any, facility: str | None,
-                     remembered: str | None = None, day: str | None = None) -> HTMLResponse:
+                     remembered: str | None = None, day: str | None = None, *, live_only: bool = False) -> HTMLResponse:
     # The facilities the user may pick from: an admin all of them, anyone else only their own.
     if user.role == "ADMIN":
         wanted = conn.execute("select facility_id, facility_name from facilities order by facility_id").fetchall()
@@ -998,6 +998,15 @@ def render_warehouse(conn: sqlite3.Connection, user: User, now: Any, facility: s
     tabs = _tabs((("board", "Dock board"), ("projects", "Projects"), ("shipments", "Shipments"),
                   ("drivers", "Drivers")),
                  {"board": len(case_ids_in_scope(conn, user, ("OPEN", "CLAIMED"))) + len(pending_changes_in_scope(conn, user))})
+    if live_only:
+        live_body = (
+            '<div class="wh">' + _attention(conn, user, today) + tabs
+            + _board_section(board, options, chosen, now, blocks,
+                             _messages_section(conn, user, now, _waiting_for_partner(board)),
+                             wanted_day, "")
+            + "</div>"
+        )
+        return _respond(f"<!doctype html><html><body>{live_body}</body></html>")
     # warehouse.js writes how fresh the live parts are here.
     fresh = '<p class="live" data-live><span data-live-state role="status"></span> <span data-live-time></span></p>'
     body = ('<div class="wh">' + _attention(conn, user, today) + tabs + fresh
@@ -1093,8 +1102,9 @@ def register_pages(app: FastAPI, deps: AppDeps) -> None:
             return user
         facility = request.query_params.get("facility") or None
         remembered = request.cookies.get(FACILITY_COOKIE)
+        live = "x-live" in request.headers
         page = read_page(user, lambda conn: render_warehouse(conn, user, deps.clock.now(), facility, remembered,
-                                                          request.query_params.get("day")))
+                                                             request.query_params.get("day"), live_only=live))
         # Remember a choice the user made and could see; the live refresh asks for the same page and must not move it.
         if facility and page.status_code == 200 and "x-live" not in request.headers:
             page.set_cookie(FACILITY_COOKIE, facility, max_age=30 * 86400, path="/warehouse", httponly=True, samesite="lax")

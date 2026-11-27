@@ -318,7 +318,35 @@
     var sync = function () {
       if (facility) {
         limit(form.elements.dock_ids, "facility", facility.value);
-        limit(form.elements.slot_id, "facility", facility.value);
+        if (form.elements.slot_id && form.elements.slot_id.getAttribute("data-slots-url")) {
+          var slotSelect = form.elements.slot_id;
+          var url = slotSelect.getAttribute("data-slots-url") + "?facility_id=" + encodeURIComponent(facility.value);
+          fetch(url, { credentials: "same-origin" })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (data) {
+              if (!data || !Array.isArray(data.slots)) { return; }
+              var prev = slotSelect.value;
+              slotSelect.innerHTML = "";
+              if (!data.slots.length) {
+                var empty = document.createElement("option");
+                empty.value = "";
+                empty.textContent = "No open slots: open availability first";
+                slotSelect.appendChild(empty);
+                return;
+              }
+              data.slots.forEach(function (s) {
+                var opt = document.createElement("option");
+                opt.value = s.slot_id;
+                opt.textContent = s.label;
+                opt.setAttribute("data-facility", facility.value);
+                slotSelect.appendChild(opt);
+              });
+              if (prev) { slotSelect.value = prev; }
+            })
+            .catch(function () {});
+        } else {
+          limit(form.elements.slot_id, "facility", facility.value);
+        }
       }
       if (driver && driver.selectedIndex >= 0) {
         limit(form.elements.vehicle_id, "carrier", driver.options[driver.selectedIndex].getAttribute("data-carrier"));

@@ -123,11 +123,17 @@ def apply_migrations(conn: sqlite3.Connection, directory: Path = MIGRATIONS_DIR)
         conn.execute("pragma foreign_keys=off")
         try:
             # begin ... commit: the whole script and its stamp succeed together or not at all.
-            conn.executescript(f"begin;\n{script}\n{stamp}\ncommit;")
+            conn.executescript(f"begin;\n{script}\n{stamp}\n")
             # After the change, verify no row now points at a missing parent.
             violations = conn.execute("pragma foreign_key_check").fetchall()
             if violations:
+                conn.rollback()
                 raise sqlite3.IntegrityError(f"{path.name} left foreign key violations: {violations}")
+            conn.commit()
+        except BaseException:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
         finally:
             # Always restore foreign-key enforcement, even if the migration failed.
             conn.execute("pragma foreign_keys=on")

@@ -75,9 +75,9 @@
     INVALID_PORT: "The port is a number from 1 to 65535. Gmail uses 465.",
     SMTP_PASSWORD_REQUIRED: "Type the app password again: the server, port or user changed.",
     EMAIL_NOT_SET_UP: "Enter the sending user and the app password first.",
-    TOO_SOON: "A test email was just sent. Wait a minute and try again.",
+    EMAIL_TEST_TOO_SOON: "A test email was just sent. Wait a minute and try again.",
     LINK_INVALID: "This link has been used or has expired. Use Forgot password? to get a new one.",
-    TOO_SOON: "A link was sent to this user a short while ago. Try again in a few minutes.",
+    PASSWORD_LINK_TOO_SOON: "A link was sent to this user a short while ago. Try again in a few minutes.",
     TRY_LATER: "A link cannot be sent just now. Try again shortly.",
     EMAIL_FAILED: "The email could not be sent. Check the mail settings, then try again.",
     USER_DISABLED: "That user is disabled. Re-enable them first."

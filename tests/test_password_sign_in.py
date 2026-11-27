@@ -441,7 +441,7 @@ def test_link_uses_public_url_not_host_header(world: World) -> None:
 def test_admin_send_link_codes(world: World) -> None:
     assert _send_link(world).status_code == 200
     assert _mails(world)[-1].subject == "You're invited to SetuHaul"
-    assert _code(_send_link(world)) == (429, "TOO_SOON")
+    assert _code(_send_link(world)) == (429, "PASSWORD_LINK_TOO_SOON")
     _set_password(world, "wh_b")
     assert _send_link(world, "wh_b").status_code == 200
     assert _mails(world)[-1].subject == "Reset your SetuHaul password"

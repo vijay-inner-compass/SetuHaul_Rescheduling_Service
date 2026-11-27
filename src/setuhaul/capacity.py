@@ -23,7 +23,7 @@ from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 # Timestamp parsing.
-from setuhaul.db import parse_operational_timestamp
+from setuhaul.db import IST, parse_operational_timestamp
 
 # The consignee commitment contract.
 from setuhaul.schemas import ConsigneeCommitment
@@ -177,6 +177,13 @@ def _hhmm(raw: str) -> time:
     return time(int(h), int(m))
 
 
+# Capacity window around as_of: 2 days back covers overnight slots, active visits and timezone offsets;
+# 30 days ahead covers the 14-day rolling horizon and future bookings. Active/held slots outside the window
+# are always included so holds, gate checks and occupancy are never dropped.
+WINDOW_BACK = timedelta(days=2)
+WINDOW_AHEAD = timedelta(days=30)
+
+
 def build_facility_state(conn: sqlite3.Connection, facility_id: str, as_of: datetime) -> FacilityState:
     # The facility's own settings: timezone and opening hours.
     fac = conn.execute(
@@ -191,6 +198,7 @@ def build_facility_state(conn: sqlite3.Connection, facility_id: str, as_of: date
         for r in conn.execute(
             "select rule_type, rule_value from facility_rules where facility_id=? and active_flag=1",
             (facility_id,),
+            # args bound above
         )
     }
     # Docks, keyed by id.
@@ -201,21 +209,32 @@ def build_facility_state(conn: sqlite3.Connection, facility_id: str, as_of: date
         )
         for r in conn.execute("select * from docks where facility_id=?", (facility_id,))
     }
-    # Slots, keyed by id, with timestamps parsed into aware datetimes.
+    win_start = (as_of - WINDOW_BACK).astimezone(IST).isoformat()
+    win_end = (as_of + WINDOW_AHEAD).astimezone(IST).isoformat()
+    marks = ",".join("?" for _ in ACTIVE_STATUSES)
+    # Slots in the operational window, plus any slot carrying an active appointment or live hold outside the window.
     slots = {
         r["slot_id"]: SlotRow(
             r["slot_id"], r["facility_id"], r["dock_id"],
             parse_operational_timestamp(r["slot_start_ts"]), parse_operational_timestamp(r["slot_end_ts"]),
             r["slot_status"], r["block_reason"],
         )
-        for r in conn.execute("select * from appointment_slots where facility_id=?", (facility_id,))
+        for r in conn.execute(
+            "select * from appointment_slots where facility_id=? and slot_end_ts >= ? and slot_start_ts <= ? "
+            "union "
+            f"select s.* from appointment_slots s join appointments a using(slot_id) "
+            f"where s.facility_id=? and a.appointment_status in ({marks})",
+            (facility_id, win_start, win_end, facility_id, *ACTIVE_STATUSES),
+        )
     }
     # Dock events for this facility's docks; an empty end time means open-ended.
     events = []
     for r in conn.execute(
         "select e.*, b.ended_at from dock_status_events e join docks d using(dock_id) "
-        "left join dock_blocks b using(dock_event_id) where d.facility_id=?",
-        (facility_id,),
+        "left join dock_blocks b using(dock_event_id) "
+        "where d.facility_id=? and e.event_start_ts <= ? and (e.event_end_ts is null or e.event_end_ts >= ?)",
+        (facility_id, win_end, win_start),
+        # args bound above
     ):
         start = parse_operational_timestamp(r["event_start_ts"])
         end = parse_operational_timestamp(r["event_end_ts"]) if r["event_end_ts"] else None
@@ -247,7 +266,10 @@ def build_facility_state(conn: sqlite3.Connection, facility_id: str, as_of: date
             parse_operational_timestamp(r["window_start"]), parse_operational_timestamp(r["window_end"]),
             r["available_crews"], bool(r["equipment_available"]),
         )
-        for r in conn.execute("select * from labour_windows where facility_id=?", (facility_id,))
+        for r in conn.execute(
+            "select * from labour_windows where facility_id=? and window_end >= ? and window_start <= ?",
+            (facility_id, win_start, win_end),
+        )
     ]
     # Assemble the snapshot.
     return FacilityState(

@@ -55,7 +55,7 @@ def shipments_section(conn: sqlite3.Connection, user: User, now: datetime, facil
     # cannot crowd another off the list.
     slots = ""
     for facility_id in own:
-        free = open_slots(conn, facility_id, now)
+        free = open_slots(conn, facility_id, now, limit=20)
         slots += "".join(_option(r["slot_id"], f"{facility_id} {r['dock_code']} {_when(r['slot_start_ts'])}",
                                  facility=facility_id) for r in free)
         if not free:
@@ -90,7 +90,7 @@ def shipments_section(conn: sqlite3.Connection, user: User, now: datetime, facil
         + _select("Priority", "priority_code", "".join(_option(v, v) for v in ("NORMAL", "LOW", "HIGH", "CRITICAL")))
         + _input("Unload minutes", "expected_unload_min", "number", 'value="50" min="1" required')
         + _input("Planned departure", "planned_departure", "datetime-local")
-        + _select("Planned dock slot", "slot_id", slots)
+        + _select("Planned dock slot", "slot_id", slots, 'required data-slots-url="/v1/warehouse/open-slots"')
         + _input("Latest arrival (optional)", "latest_arrival", "datetime-local", "")
         + _yes_no("Penalty if later", "penalty_applies")
         + '<button type="submit">Create shipment</button><p class="note" data-form-result role="alert"></p></form>')

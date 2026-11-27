@@ -100,26 +100,36 @@ def partner_requests_in_scope(conn: sqlite3.Connection, user: User, limit: int =
 
 def _facility_chats(conn: sqlite3.Connection, user: User, limit: int, per_driver: int) -> list[dict[str, Any]]:
     # A warehouse authority: only messages recorded for a load going to one of their facilities. The scope is in the SQL,
-    # and no facility means nothing at all.
+    # and no facility means nothing at all. Bounded in SQL so cost does not grow with total message history (F08).
     clause, params = facility_clause(user, "l.facility_id")
-    rows = conn.execute(
-        "select t.driver_id, m.rowid as seq, m.sender_type, m.message_text, m.message_ts from chat_message_loads l"
+    active = conn.execute(
+        "select t.driver_id, max(m.message_ts) as last_ts from chat_message_loads l"
         " join chat_messages m using(chat_message_id) join chat_threads t on t.thread_id=m.thread_id"
-        f" where m.is_duplicate=0 and {clause}", params).fetchall()
-    # A question and its reply can share a timestamp, so ties follow insertion order (message ids are random).
-    kept: dict[str, list[tuple[datetime, int, sqlite3.Row]]] = {}
-    for r in rows:
-        # A stored time that cannot be read is never shown (fail closed).
-        try:
-            ts = parse_operational_timestamp(r["message_ts"])
-        except TimestampError:
-            continue
-        kept.setdefault(r["driver_id"], []).append((ts, r["seq"], r))
-    # Most recently active drivers first, capped; then each driver's newest messages, shown oldest first.
-    order = sorted(kept, key=lambda d: (-max(k[0] for k in kept[d]).timestamp(), d))[:limit]
+        f" where m.is_duplicate=0 and {clause} group by t.driver_id order by last_ts desc, t.driver_id limit ?",
+        (*params, limit),
+    ).fetchall()
+    ranked: list[tuple[float, str, list[tuple[datetime, int, sqlite3.Row]]]] = []
+    for row in active:
+        driver_id = str(row["driver_id"])
+        msgs = conn.execute(
+            "select m.rowid as seq, m.sender_type, m.message_text, m.message_ts from chat_message_loads l"
+            " join chat_messages m using(chat_message_id) join chat_threads t on t.thread_id=m.thread_id"
+            f" where m.is_duplicate=0 and t.driver_id=? and {clause} order by m.message_ts desc, m.rowid desc limit ?",
+            (driver_id, *params, per_driver),
+        ).fetchall()
+        parsed: list[tuple[datetime, int, sqlite3.Row]] = []
+        for m in msgs:
+            try:
+                ts = parse_operational_timestamp(m["message_ts"])
+            except TimestampError:
+                continue
+            parsed.append((ts, int(m["seq"]), m))
+        if parsed:
+            ranked.append((-max(p[0] for p in parsed).timestamp(), driver_id, parsed))
+    ranked.sort(key=lambda item: (item[0], item[1]))
     out: list[dict[str, Any]] = []
-    for driver_id in order:
-        recent = sorted(kept[driver_id], key=lambda k: (k[0], k[1]))[-per_driver:]
+    for _, driver_id, parsed in ranked:
+        recent = sorted(parsed, key=lambda k: (k[0], k[1]))[-per_driver:]
         name = conn.execute("select driver_name from drivers where driver_id=?", (driver_id,)).fetchone()
         out.append({"driver_id": driver_id, "driver_name": name["driver_name"] if name else None,
                     "messages": [{"role": m["sender_type"], "text": m["message_text"], "timestamp": m["message_ts"]}
@@ -223,6 +233,45 @@ def register_warehouse_routes(app: FastAPI, deps: AppDeps) -> None:
             if built is None:
                 return _reject(rid, 404, "FACILITY_NOT_FOUND")
             return JSONResponse({**built, "request_id": rid})
+
+        return await run_in_threadpool(with_conn, rid, read)
+
+    @app.get("/v1/warehouse/open-slots")
+    async def warehouse_open_slots(
+        request: Request,
+        user: Annotated[User, Depends(require_role("WAREHOUSE_AUTHORITY", "ADMIN"))],
+        facility_id: str,
+        day: str | None = None,
+        limit: int = 200,
+    ) -> Response:
+        from datetime import date as _date
+
+        from setuhaul.assign import open_slots_page
+
+        rid = request.state.request_id
+        parsed_day: _date | None = None
+        if day:
+            try:
+                parsed_day = _date.fromisoformat(day)
+            except ValueError:
+                return _reject(rid, 422, "INVALID_REQUEST")
+
+        def read(conn: sqlite3.Connection) -> Response:
+            try:
+                assert_facility(user, facility_id)
+            except AuthzError:
+                return _reject(rid, 404, "FACILITY_NOT_FOUND")
+            rows, has_more = open_slots_page(
+                conn, facility_id, deps.clock.now(), day=parsed_day, limit=clamp(limit, 200, 500)
+            )
+            items = [
+                {
+                    "slot_id": r["slot_id"],
+                    "label": f"{facility_id} {r['dock_code']} {parse_operational_timestamp(r['slot_start_ts']):%d %b %Y %H:%M}",
+                }
+                for r in rows
+            ]
+            return JSONResponse({"slots": items, "has_more": has_more, "request_id": rid})
 
         return await run_in_threadpool(with_conn, rid, read)
 

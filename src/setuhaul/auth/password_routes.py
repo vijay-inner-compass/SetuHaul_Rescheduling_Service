@@ -205,7 +205,7 @@ def register_password_routes(app: FastAPI, deps: AppDeps) -> None:
                          target_type="user", target_id=user_id, outcome=sent, ip=None, detail=None, clock=deps.clock)
             conn.commit()
             if sent == "THROTTLED":
-                return _reject(rid, 429, "TOO_SOON")
+                return _reject(rid, 429, "PASSWORD_LINK_TOO_SOON")
             if sent == "FAILED":
                 return _reject(rid, 502, "EMAIL_FAILED")
             return JSONResponse({"status": "OK", "user_id": user_id, "request_id": rid})
