@@ -231,6 +231,15 @@ T: dict[str, dict[str, str]] = {
         "hinglish": "{facility} mein koi slot book nahi hua, isliye aapka load {origin} hi jayega; aapki booking waisi hi hai. "
                     "Ab bhi badalna ho toh dobara bataiye.",
     },
+    # The warehouse freed the booking; the load is kept and needs a new slot.
+    "slot_freed": {
+        "en": "For order {order}: the warehouse has freed your booking at dock {dock}, {start} on {date}. You have no slot now. "
+              "Reply here to get a new one.",
+        "hi": "ऑर्डर {order} के लिए: वेयरहाउस ने {date} को डॉक {dock} पर {start} की आपकी बुकिंग हटा दी है। अभी आपके पास कोई स्लॉट नहीं है। "
+              "नया स्लॉट पाने के लिए यहाँ जवाब दें।",
+        "hinglish": "Order {order} ke liye: warehouse ne {date} ko dock {dock} par {start} ki aapki booking hata di hai. Abhi aapke "
+                    "paas koi slot nahi hai. Naya slot paane ke liye yahan reply karein.",
+    },
     # One earlier slot, held because the truck has come closer. The current booking stays unless the driver says yes.
     "earlier_hold": {
         "en": "For order {order}: your truck is closer now, so I am holding an earlier slot at {facility}: {start}-{end} at dock "
