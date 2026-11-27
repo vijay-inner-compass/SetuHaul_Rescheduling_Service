@@ -19,6 +19,7 @@ from setuhaul.model_gateway import (
     ModelUnavailable,
     PermanentModelError,
     ScriptedGateway,
+    ScriptExhausted,
     ToolCall,
     ToolResult,
     TransientModelError,
@@ -151,7 +152,7 @@ def test_external_tracing_is_forced_off(clock: FakeClock, monkeypatch: pytest.Mo
 
 
 def test_scripted_gateway_fails_loudly_when_over_called() -> None:
-    with pytest.raises(AssertionError, match="ran out of steps"):
+    with pytest.raises(ScriptExhausted, match="ran out of steps"):
         ScriptedGateway([]).complete(USER, TOOLS, POLICY)
 
 

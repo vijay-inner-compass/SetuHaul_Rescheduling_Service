@@ -265,26 +265,46 @@ class SqlEscalationSink:
 
 
 def ingest_fallback_file(conn: sqlite3.Connection, path: Path, clock: Clock) -> int:
-    """Load hand-offs that were written while the database was down; the file is renamed afterwards."""
+    """Load hand-offs that were written while the database was down. Safe to run on every sweep."""
     path = Path(path)
-    # No fallback file means no outage happened: nothing to load.
-    if not path.exists():
-        return 0
+    # The file is moved aside first, so hand-offs written meanwhile start a new file. One left over from a load that was
+    # interrupted is finished before a new one is taken.
+    loading = path.with_name(path.name + ".loading")
+    if not loading.exists():
+        if not path.exists():
+            return 0
+        path.rename(loading)
     n = 0
-    for line in path.read_text(encoding="utf-8").splitlines():
-        # Skip blank lines.
+    broken: list[str] = []
+    lines = loading.read_text(encoding="utf-8", errors="replace").splitlines()
+    for line in lines:
         if not line.strip():
             continue
-        d = json.loads(line)
-        # The old case id was only a placeholder; a real one is assigned on ingest.
-        d.pop("case_id", None)
-        req = HandoffRequest.model_validate(d)
-        # Duplicates fold into existing cases, so re-ingesting cannot flood the queue; count only new cases.
-        if create_handoff(conn, req, clock, source="FALLBACK_FILE").created:
-            n += 1
-    # Rename the file so it is not ingested twice.
-    path.rename(path.with_suffix(path.suffix + ".ingested"))
+        try:
+            d = json.loads(line)
+            # The old case id was only a placeholder; a real one is assigned on ingest.
+            d.pop("case_id", None)
+            req = HandoffRequest.model_validate(d)
+            # Duplicates fold into existing cases, so re-ingesting cannot flood the queue; count only new cases.
+            if create_handoff(conn, req, clock, source="FALLBACK_FILE").created:
+                n += 1
+        # A line that can never be loaded (cut off mid-write, unknown thread) must not hold back the others.
+        # A busy or broken database is not caught: the file stays and the next sweep tries again.
+        except (ValueError, TypeError, AttributeError, sqlite3.IntegrityError):
+            broken.append(line)
+    if broken:
+        _append_lines(path.with_name(path.name + ".rejected"), broken)
+        logging.getLogger(__name__).error("%d fallback hand-off line(s) could not be loaded; see %s.rejected",
+                                          len(broken), path.name)
+    # Keep what was read, for the record, adding to any earlier outage's.
+    _append_lines(path.with_name(path.name + ".ingested"), lines)
+    loading.unlink()
     return n
+
+
+def _append_lines(path: Path, lines: list[str]) -> None:
+    with path.open("a", encoding="utf-8") as fh:
+        fh.writelines(line + "\n" for line in lines)
 
 
 def list_open_cases(conn: sqlite3.Connection, statuses: tuple[str, ...] = ("OPEN", "CLAIMED"), limit: int = 50) -> list[CaseView]:

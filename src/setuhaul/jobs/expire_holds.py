@@ -24,6 +24,8 @@ from dataclasses import dataclass
 
 # timedelta for the purge interval.
 from datetime import timedelta
+from pathlib import Path
+from typing import TypeVar
 
 # The transactional expiry of one hold (releases the slot, writes history, queues the notice).
 from setuhaul import facility_change, gate, round_clock
@@ -37,8 +39,10 @@ from setuhaul.config import load_settings
 
 # immediate(): a BEGIN IMMEDIATE transaction.
 from setuhaul.db import immediate
+from setuhaul.escalation import ingest_fallback_file
 
 # Old option sets are purged after their retention period.
+from setuhaul.observability import log_failure
 from setuhaul.option_history import RETENTION, purge_option_sets
 
 # The name under which the purge's last run time is stored in maintenance_runs.
@@ -85,6 +89,9 @@ def expire_due_holds(conn: sqlite3.Connection, clock: Clock, limit: int = 100) -
     return ExpiryBatchResult(expired=len(done), appointment_ids=tuple(done))
 
 
+_T = TypeVar("_T")
+
+
 class MaintenanceRunner:
     def __init__(
         self,
@@ -92,11 +99,14 @@ class MaintenanceRunner:
         clock: Clock,
         interval_seconds: float | None = None,
         conn_factory: Callable[[], sqlite3.Connection] | None = None,
+        fallback_path: Path | None = None,
     ) -> None:
         # A connection for run_once() (None when the runner is only used to start a background thread).
         self._conn = conn
         # A function that opens a fresh connection; needed because SQLite connections cannot be shared across threads.
         self._factory = conn_factory
+        # Where hand-offs are written when the database is down; loaded back by the sweep.
+        self._fallback = fallback_path
         self._clock = clock
         # Seconds between sweeps: the argument, or the configured default (30 s).
         self._interval = interval_seconds or load_settings().expiry_sweep_seconds
@@ -121,29 +131,46 @@ class MaintenanceRunner:
         # Due if it has never run, or at least 24 hours have passed.
         return row is None or int(self._clock.now().timestamp()) - row["last_run_epoch"] >= PURGE_EVERY.total_seconds()
 
-    def run_once(self) -> MaintenanceResult:
-        # Always expire overdue holds first: that is time-critical.
-        expired = expire_due_holds(self._db(), self._clock).expired
-        # An approved facility move whose offer just lapsed goes back to where the booking is.
-        facility_change.settle(self._db(), self._clock)
-        # Unused passes expire; a truck still inside after its window is raised with the warehouse.
-        gate.sweep(self._db(), self._clock)
-        # Creates only what is missing, so a new day appears at the end of the range soon after midnight.
-        round_clock.top_up(self._db(), self._clock)
-        purged = 0
+    # One failing step is logged and skipped: the others (and the next pass) still run.
+    def _step(self, name: str, work: Callable[[], _T], otherwise: _T) -> _T:
+        try:
+            return work()
+        except Exception as exc:  # noqa: BLE001
+            self._db().rollback()
+            log_failure(logging.getLogger(__name__), f"maintenance: {name}", exc)
+            return otherwise
+
+    def _purge(self) -> int:
         # The housekeeping purge only runs once a day.
-        if self._purge_due():
-            now = self._clock.now()
-            # Delete option sets older than the retention period (30 days).
-            purged = purge_option_sets(self._db(), now - RETENTION)
-            # Record when the purge ran; "on conflict ... do update" is an upsert keyed by job name.
-            with immediate(self._db()):
-                self._db().execute(
-                    "insert into maintenance_runs (job_name, last_run_at, last_run_epoch) values (?,?,?) "
-                    "on conflict(job_name) do update set last_run_at=excluded.last_run_at, "
-                    "last_run_epoch=excluded.last_run_epoch",
-                    (PURGE_JOB, now.isoformat(), int(now.timestamp())),
-                )
+        if not self._purge_due():
+            return 0
+        now = self._clock.now()
+        # Delete option sets older than the retention period (30 days).
+        purged = purge_option_sets(self._db(), now - RETENTION)
+        # Record when the purge ran; "on conflict ... do update" is an upsert keyed by job name.
+        with immediate(self._db()):
+            self._db().execute(
+                "insert into maintenance_runs (job_name, last_run_at, last_run_epoch) values (?,?,?) "
+                "on conflict(job_name) do update set last_run_at=excluded.last_run_at, "
+                "last_run_epoch=excluded.last_run_epoch",
+                (PURGE_JOB, now.isoformat(), int(now.timestamp())),
+            )
+        return purged
+
+    def run_once(self) -> MaintenanceResult:
+        db, clock, fallback = self._db(), self._clock, self._fallback
+        # Always expire overdue holds first: that is time-critical.
+        expired = self._step("hold expiry", lambda: expire_due_holds(db, clock).expired, 0)
+        # Hand-offs written during a database outage join the queue.
+        if fallback is not None:
+            self._step("fallback hand-offs", lambda: ingest_fallback_file(db, fallback, clock), 0)
+        # An approved facility move whose offer just lapsed goes back to where the booking is.
+        self._step("facility change follow-up", lambda: facility_change.settle(db, clock), 0)
+        # Unused passes expire; a truck still inside after its window is raised with the warehouse.
+        self._step("gate sweep", lambda: gate.sweep(db, clock), 0)
+        # Creates only what is missing, so a new day appears at the end of the range soon after midnight.
+        self._step("slot top-up", lambda: round_clock.top_up(db, clock), 0)
+        purged = self._step("option purge", self._purge, 0)
         return MaintenanceResult(expired=expired, purged_option_sets=purged)
 
     def run_safely(self) -> None:
@@ -151,7 +178,7 @@ class MaintenanceRunner:
         try:
             self.run_once()
         except Exception as exc:  # noqa: BLE001 - the sweep must outlive any single failure
-            logging.getLogger(__name__).error("maintenance sweep failed: %s", type(exc).__name__)
+            log_failure(logging.getLogger(__name__), "maintenance sweep", exc)
 
     def start(self) -> None:
         """Prototype loop for a single process.
@@ -162,16 +189,16 @@ class MaintenanceRunner:
         if self._factory is None:
             raise RuntimeError("start() needs conn_factory so the background thread owns its connection")
         # A throwaway runner for the first sweep, which happens immediately at startup.
-        boot = MaintenanceRunner(self._factory(), self._clock, self._interval)  # opened and closed on this thread
+        boot = MaintenanceRunner(self._factory(), self._clock, self._interval, fallback_path=self._fallback)  # opened and closed on this thread
         try:
             boot.run_safely()  # sweep at startup, as the plan requires
         finally:
             boot.close()
-        factory = self._factory
+        factory, fallback = self._factory, self._fallback
 
         def loop() -> None:
             # The loop opens its own connection inside its own thread.
-            worker = MaintenanceRunner(factory(), self._clock, self._interval)
+            worker = MaintenanceRunner(factory(), self._clock, self._interval, fallback_path=fallback)
             try:
                 # Event.wait(timeout) sleeps for the interval but wakes at once if stop() is called; it returns True then.
                 while not self._stop.wait(self._interval):

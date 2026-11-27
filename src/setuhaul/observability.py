@@ -8,12 +8,14 @@ import json
 
 # logging is the standard logger.
 import logging
+import os
 
 # re for the redaction patterns.
 import re
 
 # time.perf_counter measures span durations.
 import time
+import traceback
 
 # uuid generates request and span ids.
 import uuid
@@ -26,6 +28,23 @@ from typing import Any
 
 # The service's logger name; deployments attach their own handlers to it.
 logger = logging.getLogger("setuhaul")
+
+
+# uvicorn configures only its own loggers, so without this every INFO line of the service is dropped.
+def configure_logging() -> None:
+    logger.setLevel(logging.INFO)
+    if not any(getattr(h, "_setuhaul", False) for h in logger.handlers):
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+        handler._setuhaul = True  # type: ignore[attr-defined]
+        logger.addHandler(handler)
+
+
+# What failed and where, without the exception's own words: library messages can quote tokens, addresses or message text.
+def log_failure(log: logging.Logger, what: str, exc: BaseException) -> None:
+    frames = traceback.extract_tb(exc.__traceback__)
+    where = " < ".join(f"{os.path.basename(f.filename)}:{f.lineno} {f.name}" for f in reversed(frames[-6:]))
+    log.error("%s failed: %s at %s", what, type(exc).__name__, where or "unknown")
 
 # Any dictionary key containing one of these words has its value masked before logging.
 _SECRET_KEY = re.compile(r"(key|token|secret|password|authorization|signature)", re.IGNORECASE)

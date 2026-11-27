@@ -14,6 +14,7 @@ from __future__ import annotations
 # hashlib/json build request fingerprints.
 import hashlib
 import json
+import logging
 
 # sqlite3 for the Connection type and its error classes.
 import sqlite3
@@ -65,6 +66,7 @@ from setuhaul.identity import AuthError
 
 # Downstream notices for confirmed changes.
 from setuhaul.notifications import enqueue_downstream
+from setuhaul.observability import log_failure
 
 # Stored menus and their comparison with live state.
 from setuhaul.option_history import OptionDiffItem, context_now, diff_option_set, get_option_set
@@ -424,6 +426,8 @@ def release_hold_in_txn(
 
 # ---- atomic confirmation ---------------------------------------------------------------------------
 # The idempotency "action" name for confirmations.
+_log = logging.getLogger(__name__)
+
 ACTION_CONFIRM = "CONFIRM_RESCHEDULE"
 fault_hook: Callable[[str], None] | None = None  # tests inject failures at named write points
 
@@ -635,9 +639,11 @@ def confirm_reschedule(conn: sqlite3.Connection, cmd: ConfirmCommand, clock: Clo
     except sqlite3.OperationalError as exc:
         if _is_lock_error(exc):
             return ConfirmationResult(status="LOCK_TIMEOUT", outcome=OutcomeClass.LOCK_TIMEOUT)
+        log_failure(_log, "confirm booking", exc)
         return ConfirmationResult(status="SYSTEM_ERROR", outcome=OutcomeClass.SYSTEM_ERROR)
     # Anything else: the transaction rolled back (immediate() guarantees it), so report an error and promise nothing.
-    except Exception:  # noqa: BLE001 - any failure must roll back and be reported as SYSTEM_ERROR, never raised to the driver turn
+    except Exception as exc:  # noqa: BLE001 - any failure must roll back and be reported as SYSTEM_ERROR, never raised to the driver turn
+        log_failure(_log, "confirm booking", exc)
         return ConfirmationResult(status="SYSTEM_ERROR", outcome=OutcomeClass.SYSTEM_ERROR)
 
 

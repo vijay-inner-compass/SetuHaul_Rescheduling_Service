@@ -11,6 +11,9 @@ from __future__ import annotations
 # json stores the cache blob and state as text.
 import json
 
+# logging says when the cache is unreachable.
+import logging
+
 # sqlite3 for the Connection type.
 import sqlite3
 
@@ -31,6 +34,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # The Redis client type.
 from redis import Redis
+from redis.exceptions import RedisError
 
 # The injectable clock.
 from setuhaul.clock import Clock
@@ -60,6 +64,9 @@ def cache_key(driver_id: str, thread_id: str) -> str:
 
 
 # One message in the recent-conversation window.
+_log = logging.getLogger(__name__)
+
+
 class Turn(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -212,18 +219,22 @@ class ConversationMemoryStore:
         # Then update the Redis cache. If the cache is empty, rebuild it from the database
         # (which already includes this message); otherwise append to the cached window and trim.
         key = cache_key(driver_id, thread_id)
-        raw = self._redis.get(key)
+        raw = self._cached(key)
         if raw is None:  # cold cache: rebuild from SQL, which already contains this message
             self.rebuild_from_durable_history(driver_id, thread_id)
         else:
             blob = json.loads(raw)
             turns = [Turn(**t) for t in blob["turns"]] + [self._turn(sender_type, text, ts)]
             blob["turns"] = [t.model_dump() for t in self._trim(turns)]
+            blob["upto"] = self._newest(thread_id)
             self._write_cache(key, blob)
 
     def invalidate(self, driver_id: str, thread_id: str) -> None:
         """Drop the cached window so the next load rebuilds from SQL (used when others write to the thread)."""
-        self._redis.delete(cache_key(driver_id, thread_id))
+        try:
+            self._redis.delete(cache_key(driver_id, thread_id))
+        except RedisError:
+            _log.warning("conversation cache unreachable; not invalidated")
 
     # ---- state -------------------------------------------------------------------------------
     def _read_state(self, driver_id: str, thread_id: str, thread: sqlite3.Row) -> ConversationState:
@@ -248,7 +259,7 @@ class ConversationMemoryStore:
         self._db.commit()
         # Keep the cache in step if it exists (if not, the next load rebuilds it from SQL anyway).
         key = cache_key(driver_id, thread_id)
-        raw = self._redis.get(key)
+        raw = self._cached(key)
         if raw is not None:
             blob = json.loads(raw)
             blob["state"] = json.loads(state.model_dump_json())
@@ -286,7 +297,24 @@ class ConversationMemoryStore:
 
     def _write_cache(self, key: str, blob: dict[str, Any]) -> None:
         # ex= sets Redis' own expiry (24 hours): an idle conversation's cache disappears by itself.
-        self._redis.set(key, json.dumps(blob), ex=self._s.memory_ttl_seconds)
+        try:
+            self._redis.set(key, json.dumps(blob), ex=self._s.memory_ttl_seconds)
+        except RedisError:
+            _log.warning("conversation cache unreachable; not written")
+
+    # The cache is only a copy: if Redis cannot be reached, carry on from the database.
+    def _cached(self, key: str) -> str | None:
+        try:
+            raw: str | None = self._redis.get(key)  # type: ignore[assignment]
+        except RedisError:
+            _log.warning("conversation cache unreachable; reading the database")
+            return None
+        return raw
+
+    # The newest message row of a thread: a cached window that stops short of it has missed something.
+    def _newest(self, thread_id: str) -> int:
+        row = self._db.execute("select max(rowid) from chat_messages where thread_id=?", (thread_id,)).fetchone()
+        return int(row[0] or 0)
 
     def _history_turns(self, thread_id: str) -> list[Turn]:
         # Rebuild the window from the durable chat log, oldest first, skipping messages flagged as duplicates.
@@ -308,20 +336,25 @@ class ConversationMemoryStore:
                 "identity": {"driver_id": driver_id, "thread_id": thread_id},
                 "state": json.loads(state.model_dump_json()),
                 "turns": [t.model_dump() for t in turns],
+                "upto": self._newest(thread_id),
             },
         )
         return self._finish(driver_id, thread_id, turns, state, from_cache=False)
 
     def load(self, driver_id: str, thread_id: str) -> ConversationContext:
-        self._require_thread(driver_id, thread_id)
-        raw = self._redis.get(cache_key(driver_id, thread_id))
+        thread = self._require_thread(driver_id, thread_id)
+        raw = self._cached(cache_key(driver_id, thread_id))
         # Cache miss (expired, evicted, or Redis restarted): rebuild from SQL. Nothing is lost.
         if raw is None:
             return self.rebuild_from_durable_history(driver_id, thread_id)
-        # Cache hit: decode and use it.
+        # Cache hit: use the cached messages, unless something was written that the cache never saw (an outage, or a
+        # message added directly to the database).
         blob = json.loads(raw)
+        if blob.get("upto") != self._newest(thread_id):
+            return self.rebuild_from_durable_history(driver_id, thread_id)
         turns = [Turn(**t) for t in blob["turns"]]
-        state = ConversationState.model_validate(blob["state"])
+        # State always comes from the database: a copy that missed a write must never bring back an old hold or question.
+        state = self._read_state(driver_id, thread_id, thread)
         return self._finish(driver_id, thread_id, turns, state, from_cache=True)
 
     # ---- hold reconciliation -----------------------------------------------------------------

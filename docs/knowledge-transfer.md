@@ -248,8 +248,8 @@ If the driver waits more than 3 minutes, the sweep expires the hold, the next me
 | Model claims "confirmed" with nothing committed | text replaced by a safe sentence |
 | Model leaks the prompt (even partly) | reply blocked |
 | Model invents `driver_id` or a quote | `INVALID_ARGUMENTS` / `APPROVAL_NOT_PRESENT`, no write |
-| Database down mid-turn | safe reply, hand-off written to a fallback file, ingested later |
-| Redis lost | rebuilt from SQL |
+| Database down mid-turn | safe reply, hand-off written to a fallback file; the maintenance sweep loads it into the queue (unloadable lines go to `.rejected`) |
+| Redis lost or unreachable | the driver is still served from SQL; message rate limits are not checked meanwhile; web sign-in and the gate still need Redis |
 | Duplicate webhook delivery | stored reply returned, no second model call |
 | Notification delivery fails | appointment untouched; retried (outbox) |
 | No slot fits / contradictory data / missing evidence | hand-off case with context; booking unchanged |

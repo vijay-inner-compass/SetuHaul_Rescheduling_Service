@@ -8,11 +8,14 @@ acceptable for an abuse limit and is documented rather than hidden.
 # Lazy annotations.
 from __future__ import annotations
 
+# The Redis client type (real Redis in production, fakeredis in tests and the demo).
+import logging
+
 # dataclass for small immutable value objects.
 from dataclasses import dataclass
 
-# The Redis client type (real Redis in production, fakeredis in tests and the demo).
 from redis import Redis
+from redis.exceptions import RedisError
 
 # Clock is injected so tests and the demo control which window a message falls in.
 from setuhaul.clock import Clock
@@ -44,7 +47,7 @@ class RateLimitResult:
     retry_after_seconds: int = 0
 
 
-def check_rate_limit(
+def _count(
     redis: Redis,
     driver_id: str,
     clock: Clock,
@@ -79,3 +82,19 @@ def check_rate_limit(
         return RateLimitResult(False, "RATE_LIMIT_HOUR", 3600 - epoch % 3600)
     # Within both limits.
     return RateLimitResult(True)
+
+
+# The limits protect against abuse; they are not worth silencing every driver when Redis is down, so an outage lets
+# messages through (the sender is still a verified driver, and each message has its own model cost stop).
+def check_rate_limit(
+    redis: Redis,
+    driver_id: str,
+    clock: Clock,
+    limits: RateLimits | None = None,
+    channel: str = "default",
+) -> RateLimitResult:
+    try:
+        return _count(redis, driver_id, clock, limits, channel)
+    except RedisError:
+        logging.getLogger(__name__).warning("rate limit not checked: Redis unreachable")
+        return RateLimitResult(True)

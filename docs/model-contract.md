@@ -57,6 +57,7 @@ times the tool returned. A lapsed hold is reported once from the `HOLD_EXPIRED` 
 | Model fails before any commit | safe status, nothing booked or held | `MODEL_UNAVAILABLE` escalation; a refused request's reason goes to the server log (`model_call.refused`) |
 | Model fails after a commit | the deterministic committed-state wording | nothing |
 | Round / tool / deadline / budget limit | hand-off wording with case reference | `MODEL_LOOP_LIMIT` |
+| Model step crashes or the provider answers with something unreadable | as for a model failure; anything already committed is still worded | `MODEL_UNAVAILABLE` escalation; error type and place in the log |
 | Database fails mid-turn | temporary-unavailable, nothing promised | `DATABASE_UNAVAILABLE` in the JSONL fallback (a DB outage cannot be recorded in the DB) |
 | No slot, missing labour/consignee evidence, approval needed, ETA contradiction, cancellation cutoff | hand-off wording | reason code plus eta, rejection counts, missing inputs, recent turns, tools run |
 | Unsupported language | one bilingual language question, then hand-off | `LANGUAGE_UNSUPPORTED` |

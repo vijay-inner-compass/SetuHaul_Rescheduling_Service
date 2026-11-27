@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 # sqlite3 for the Connection type.
+import logging
 import sqlite3
 
 # datetime/timedelta for times and the cut-off.
@@ -52,6 +53,7 @@ from setuhaul.identity import AuthError
 
 # Downstream notices (planner, consignee, operations).
 from setuhaul.notifications import enqueue_downstream
+from setuhaul.observability import log_failure
 
 # Stored menus.
 from setuhaul.option_history import OptionSet, record_option_set
@@ -60,6 +62,8 @@ from setuhaul.option_history import OptionSet, record_option_set
 from setuhaul.schemas import EtaEvidence
 
 # The idempotency "action" name for cancellations, so a cancel and a confirm with the same message id never collide.
+_log = logging.getLogger(__name__)
+
 ACTION_CANCEL = "CANCEL_APPOINTMENT"
 # Statuses of a real, live appointment (a HELD proposal is not included).
 _ACTIVE = "('PENDING_CONFIRMATION','CONFIRMED','IN_PROGRESS')"
@@ -238,9 +242,11 @@ def cancel_confirmed_appointment(
     except sqlite3.OperationalError as exc:
         if _is_lock_error(exc):
             return CancellationResult(status="LOCK_TIMEOUT", outcome=OutcomeClass.LOCK_TIMEOUT)
+        log_failure(_log, "cancel appointment", exc)
         return CancellationResult(status="SYSTEM_ERROR", outcome=OutcomeClass.SYSTEM_ERROR)
     # Anything else: the transaction has already rolled back, so report a system error and promise nothing.
-    except Exception:  # noqa: BLE001 - any failure must roll back and be reported as SYSTEM_ERROR
+    except Exception as exc:  # noqa: BLE001 - any failure must roll back and be reported as SYSTEM_ERROR
+        log_failure(_log, "cancel appointment", exc)
         return CancellationResult(status="SYSTEM_ERROR", outcome=OutcomeClass.SYSTEM_ERROR)
 
 

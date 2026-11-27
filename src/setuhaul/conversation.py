@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import contextlib
 
+# logging records a crash in the model step.
+import logging
+
 # re finds clock times in model text for the output guard.
 import re
 
@@ -64,7 +67,13 @@ from setuhaul.model_gateway import (
 )
 
 # Request ids, spans and structured logs.
-from setuhaul.observability import InMemoryExporter, RequestContext, log_event, start_span
+from setuhaul.observability import (
+    InMemoryExporter,
+    RequestContext,
+    log_event,
+    log_failure,
+    start_span,
+)
 
 # The system prompt and the leak detector.
 from setuhaul.partner_booking import render_partner_status
@@ -354,10 +363,19 @@ def _handle(
     # Time the model loop.
     with start_span("model.loop", rctx, exporter=services.exporter) as span:
         # Run the model with its caps: rounds, tool executions, deadline and cost.
-        outcome: LoopOutcome = run_bounded_loop(services.gateway, services.policy, messages, registry.schemas(),
-                                                registry.execute, clock,
-                                                trace_env=services.trace_env)
+        try:
+            outcome: LoopOutcome = run_bounded_loop(services.gateway, services.policy, messages, registry.schemas(),
+                                                    registry.execute, clock,
+                                                    trace_env=services.trace_env)
         # A safety stop: mark the span.
+        # Database and service failures keep their own handling (the caller says nothing was promised).
+        except (sqlite3.Error, ServiceUnavailable):
+            raise
+        # Anything else unforeseen is treated as "the model is unavailable". _finalize still words whatever the tools had
+        # already committed, so a hold placed before the crash is never reported as "nothing happened".
+        except Exception as exc:  # noqa: BLE001
+            log_failure(logging.getLogger(__name__), "model loop", exc)
+            outcome = LoopOutcome(status="MODEL_UNAVAILABLE", error_code=f"UNEXPECTED_{type(exc).__name__}")
         if outcome.status != "DONE":
             span.set_reason(outcome.error_code or outcome.status)
 
