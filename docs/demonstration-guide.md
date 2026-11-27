@@ -94,6 +94,23 @@ model, guarantees one holder per slot (`python scripts/show_phase5.py`).
 * `my truck is 60 minutes late`, then `never mind, keep my original slot`: *I have released the hold. Your original appointment is unchanged.*
 * `please cancel my appointment`: with the demo data this goes to a person (case reference) and nothing is changed.
 
+#### Example: release a held slot on the dock board
+
+The board has no release button: a click on a free cell books it. A hold is released from the driver's side.
+
+Press **Reset demo** (**Supplied schedule**), open `http://127.0.0.1:8800/demo/driver-login` (Manoj Sharma) and keep the
+console's **Dock board** on SetuHaul Jaipur beside it.
+
+| Step | Type (driver page) | Driver sees | Dock board shows |
+|---|---|---|---|
+| 1 | `my truck is 60 minutes late` | *I am holding 12:00-13:00 at dock D2 ...* | D2 12:00 **Held**; D4 10:00 still **Booked** (the original) |
+| 2 | `never mind, keep my original slot` | *I have released the hold. Your original appointment is unchanged.* | D2 12:00 free again; D4 10:00 still **Booked** |
+
+Other ways a hold ends:
+
+* `no` releases it and holds the next slot (scenario A).
+* **+3 min and sweep** lets it lapse (scenario B).
+
 ### G. Languages
 
 `bhai meri gaadi 60 minute late hai` gets the held-slot message in Hinglish. Hindi in Devanagari depends on the configured model.
