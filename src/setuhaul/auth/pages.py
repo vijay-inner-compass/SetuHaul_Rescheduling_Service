@@ -15,7 +15,9 @@ from urllib.parse import quote
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
+from setuhaul import driver_messages
 from setuhaul.api import WEB_PREFIX, claim_label, env_in_force, model_in_force
+from setuhaul.assign import open_slots
 from setuhaul.auth import audit, onboarding, projects, sessions, telegram, users
 from setuhaul.auth.admin_api import DEFAULT_AUDIT_LIMIT, parse_since
 from setuhaul.auth.authz import AuthzError, assert_facility, require_role
@@ -700,7 +702,17 @@ def _named(name: str, ident: str) -> str:
     return f'{esc(name)} <span class="id">{esc(ident)}</span>'
 
 
-def _case_actions(c: CaseView, me: str, owner: str) -> str:
+def _slot_picker(conn: sqlite3.Connection, c: CaseView, now: datetime) -> str:
+    # The slot to book with "Assigned a slot": free ones at the load's destination. warehouse.js shows it for that outcome.
+    row = conn.execute("select destination_facility_id from shipments where shipment_id=?", (c.shipment_id,)).fetchone()
+    free = [] if row is None else open_slots(conn, row["destination_facility_id"], now)
+    choices = [(r["slot_id"], f"{r['dock_code']} {_clock(r['slot_start_ts'])}") for r in free]
+    first = "Choose a slot to book" if choices else "No open slots: open availability first"
+    return (f'<label class="assign">Slot to book <select name="slot_id" data-key="{esc(f"assign:{c.case_id}")}">'
+            f'<option value="" selected disabled>{first}</option>{_options(choices)}</select></label>')
+
+
+def _case_actions(conn: sqlite3.Connection, c: CaseView, me: str, owner: str, now: datetime) -> str:
     # Only what the service would accept from this user is drawn: claim an open case, resolve your own claim, reopen a resolved one.
     cid = c.case_id
     base = f"/v1/coordinator/cases/{_segment(cid)}"
@@ -716,6 +728,7 @@ def _case_actions(c: CaseView, me: str, owner: str) -> str:
             f'data-confirm="{esc(f"Send this message to the driver and close case {cid}?")}" '
             'data-done="Case resolved. Your message was added to the driver\'s chat.">'
             f'<label>Outcome <select name="resolution_code" required data-key="{esc(f"outcome:{cid}")}">{options}</select></label>'
+            f'{_slot_picker(conn, c, now)}'
             f'<label>Message to the driver <textarea name="note" rows="3" maxlength="500" required data-key="{esc(f"note:{cid}")}">'
             f'</textarea></label><button type="submit" data-key="{esc(f"resolve:{cid}")}">Resolve</button></form>')
 
@@ -734,7 +747,7 @@ def _case_history(conn: sqlite3.Connection, case_id: str) -> str:
             f'<ol>{"".join(lines)}</ol></details>')
 
 
-def _case_cards(conn: sqlite3.Connection, user: User, cases: list[CaseView], empty: str) -> str:
+def _case_cards(conn: sqlite3.Connection, user: User, cases: list[CaseView], empty: str, now: datetime) -> str:
     if not cases:
         return f'<p class="empty">{esc(empty)}</p>'
     me = WEB_PREFIX + user.email
@@ -752,7 +765,7 @@ def _case_cards(conn: sqlite3.Connection, user: User, cases: list[CaseView], emp
         cards.append(f'<li class="case" data-key="{esc(f"case:{c.case_id}")}" tabindex="-1"><div class="case-head"><b>{esc(c.case_id)}</b>'
                      f'<span class="pill">{esc(word(c.status))}</span><span class="reason" title="{esc(c.reason_code)}">{esc(why(c.reason_code))}</span></div>{note}{outcome}'
                      f'<div class="meta"><span>Load {esc(c.shipment_id or "none")}</span><span>{esc(claimed)}</span></div>'
-                     f"{_case_history(conn, c.case_id)}{_case_actions(c, me, owner)}</li><!--case-->")
+                     f"{_case_history(conn, c.case_id)}{_case_actions(conn, c, me, owner, now)}</li><!--case-->")
     return f'<ul class="cases">{"".join(cards)}</ul>'
 
 
@@ -765,10 +778,24 @@ def _recently_resolved(conn: sqlite3.Connection, user: User, now: datetime) -> s
         return ""
     recent.sort(key=lambda c: c.resolved_at or since, reverse=True)
     return (f'<details class="resolved" data-key="resolved"><summary data-key="resolved-toggle">Recently resolved ({len(recent)})</summary>'
-            f'{_case_cards(conn, user, recent, "")}</details>')
+            f'{_case_cards(conn, user, recent, "", now)}</details>')
 
 
-def _chat_browser(chats: list[dict[str, Any]]) -> str:
+def _to_driver(driver_id: str, failed: list[dict[str, Any]]) -> str:
+    # What did not reach this driver's phone, and the box to write to them.
+    items = "".join(
+        f'<li><span>{esc(_short(f["text"]))}</span> '
+        + (_button("Resend", f"/v1/warehouse/notices/{f['outbox_id']}/resend", done="Message queued again.",
+                   key=f"resend:{f['outbox_id']}") if f["gave_up"] else '<em>retrying</em>')
+        + "</li>" for f in failed)
+    undelivered = f'<div class="undelivered"><b>Not delivered to the phone</b><ul>{items}</ul></div>' if items else ""
+    return (f'{undelivered}<form class="to-driver" data-api="/v1/warehouse/drivers/{_segment(driver_id)}/messages" '
+            'data-done="Message added to the driver&#39;s chat.">'
+            f'<label>Message to the driver <textarea name="text" rows="2" maxlength="500" required data-key="{esc(f"msg:{driver_id}")}">'
+            f'</textarea></label><button type="submit" data-key="{esc(f"send:{driver_id}")}">Send</button></form>')
+
+
+def _chat_browser(chats: list[dict[str, Any]], failed: dict[str, list[dict[str, Any]]] | None = None) -> str:
     # A list of drivers beside one conversation at a time, each in its own scrolling box, so long chats never stretch the page.
     if not chats:
         return '<p class="empty">No chats to show.</p>'
@@ -785,7 +812,7 @@ def _chat_browser(chats: list[dict[str, Any]]) -> str:
             bubbles.append(f'<li class="bubble {css}"><span class="role">{who}</span><p>{esc(m["text"])}</p>'
                            f'<time>{esc(_clock(m["timestamp"]))}</time></li>')
         threads.append(f'<div class="thread" id="thread-{number}"><h4>{esc(name)} <span>{esc(d["driver_id"])}</span></h4>'
-                       f'<ol>{"".join(bubbles)}</ol></div>')
+                       f'<ol>{"".join(bubbles)}</ol>{_to_driver(d["driver_id"], (failed or {}).get(d["driver_id"], []))}</div>')
     return (f'<div class="chats"><ul class="chat-list">{"".join(names)}</ul><div class="threads">{"".join(threads)}</div></div>')
 
 
@@ -812,9 +839,9 @@ def _messages_section(conn: sqlite3.Connection, user: User, now: datetime, waiti
     chats = driver_chats_in_scope(conn, user, now)
     waiting = len(pending_changes_in_scope(conn, user)) + sum(1 for r in partners if r["status"] == "PENDING_PARTNER")
     views = (
-        ("cases", "Cases", len(found), '<h3>Open cases</h3>' + _case_cards(conn, user, found, "No open cases.")
+        ("cases", "Cases", len(found), '<h3>Open cases</h3>' + _case_cards(conn, user, found, "No open cases.", now)
          + _recently_resolved(conn, user, now)),
-        ("chats", "Chats", len(chats), f"<h3>Driver chats</h3>{note}{_chat_browser(chats)}"),
+        ("chats", "Chats", len(chats), f"<h3>Driver chats</h3>{note}{_chat_browser(chats, driver_messages.undelivered(conn, user))}"),
         ("requests", "Requests", waiting, _facility_requests(conn, user) + "<h3>Partner slot requests</h3>"
          + _table(("Request", "Facility", "Load", "Status", "Email", "Proposed"), reqs, "No partner requests.")
          + waiting_for_partner),

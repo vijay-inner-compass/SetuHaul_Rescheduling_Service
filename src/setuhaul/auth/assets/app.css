@@ -166,6 +166,12 @@ body.login { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1
 .wh .case .case-resolve label, .wh .case .case-resolve select { width: 100%; }
 .wh .case .case-resolve textarea { box-sizing: border-box; width: 100%; font: inherit; resize: vertical; }
 .wh .case .case-resolve button { align-self: flex-start; }
+.wh .case .case-resolve label[hidden] { display: none; }
+.wh .to-driver { display: flex; flex-direction: column; align-items: flex-start; gap: 0.4rem; margin: 0; padding: 0.6rem 0.9rem; border-top: 1px solid var(--sh-line); }
+.wh .to-driver label, .wh .to-driver textarea { box-sizing: border-box; width: 100%; }
+.wh .to-driver textarea { font: inherit; resize: vertical; }
+.wh .undelivered { max-height: 6rem; overflow-y: auto; padding: 0.5rem 0.9rem; border-top: 1px solid var(--sh-line); font-size: 0.85rem; }
+.wh .undelivered ul { margin: 0.3rem 0 0; padding: 0; list-style: none; }
 .wh .resolved { margin-top: 0.8rem; }
 .wh .resolved > summary { cursor: pointer; font-weight: 600; margin-bottom: 0.6rem; }
 .wh .note-fold summary { cursor: pointer; }
