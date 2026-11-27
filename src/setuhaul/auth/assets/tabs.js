@@ -10,6 +10,8 @@
     // Looked up each time: the live refresh replaces whole sections.
     var panels = document.querySelectorAll("[data-panel]");
     var wanted = window.location.hash.slice(1);
+    // The messages moved into a panel beside the board; old links to them still open it.
+    if (wanted === "messages") { wanted = "board"; }
     var known = Array.prototype.some.call(panels, function (p) { return p.getAttribute("data-panel") === wanted; });
     // No choice, or an unknown one: the first tab.
     var key = known ? wanted : tabs[0].getAttribute("data-tab");

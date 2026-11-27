@@ -49,8 +49,8 @@ def test_admin_screen_shows_every_waiting_queue(world: World) -> None:
 
 
 def test_messages_tab_carries_its_count(world: World) -> None:
-    assert _count(_get(world, "wh_a", "/warehouse"), "messages") == "1"
-    assert ".wh .messages-count" in (ASSETS / "warehouse.js").read_text(encoding="utf-8")
+    assert _count(_get(world, "wh_a", "/warehouse"), "board") == "1"
+    assert ".wh .board-count" in (ASSETS / "warehouse.js").read_text(encoding="utf-8")
 
 
 def test_partner_count_covers_every_facility_in_scope(world: World) -> None:

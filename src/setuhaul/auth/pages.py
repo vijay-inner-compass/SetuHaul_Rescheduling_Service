@@ -591,11 +591,11 @@ def _bay_card(dock: dict[str, Any], moment: datetime) -> str:
 
 
 def _board_section(board: dict[str, Any] | None, options: list[tuple[str, str]], selected: str | None, moment: datetime,
-                   blocks: str = "") -> str:
+                   blocks: str = "", ops: str = "") -> str:
     selector = _facility_chooser(options, selected)
     if board is None:
         return (f'<section id="board" data-panel="board"><h2>Dock board</h2>{selector}'
-                '<p class="empty">No facility to show.</p></section>')
+                f'<div class="board-layout"><div class="board-main"><p class="empty">No facility to show.</p></div>{ops}</div></section>')
     hours, current = board["hours"], moment.astimezone(IST).hour
     head = '<th scope="col">Dock</th>' + "".join(
         f'<th scope="col"{" class=\"now\"" if h == current else ""}>{esc(f"{h:02d}:00")}</th>' for h in hours)
@@ -615,13 +615,22 @@ def _board_section(board: dict[str, Any] | None, options: list[tuple[str, str]],
     legend = "".join(f'<span class="legend-key cell-{c}">{w}</span>' for c, w in
                      (("available", "Free"), ("booked", "Booked"), ("held", "Held, not yet confirmed"), ("blocked", "Blocked")))
     bays = "".join(_bay_card(d, moment) for d in board["docks"])
-    pend = [[esc(p["request_ref"]), esc(p["order_reference"]), esc(p["driver"]), esc(f"{p['start']}-{p['end']}")]
-            for p in board["pending_partner"]]
-    waiting = _table(("Request", "Order", "Driver", "Proposed"), pend, "No requests are waiting for a partner.")
+    below = (f'<details data-key="bays"><summary>On the bays now</summary><ul class="bays">{bays}</ul></details>'
+             + (f'<details data-key="blocking"><summary>Block a dock</summary>{blocks}</details>' if blocks else ""))
     return (f'<section id="board" data-panel="board"><h2>Dock board</h2>{selector}'
             f'<p class="legend asof">Facility {esc(board["facility"])}, {esc(f"{moment.astimezone(IST):%a %d %b, %H:%M}")}</p>'
-            f'<h3>On the bays now</h3><ul class="bays">{bays}</ul>'
-            f'<h3>Today by hour</h3><p class="keys">{legend}</p><p id="block-result" class="note" role="status"></p>{table}{_SLOT_DETAIL}<h3>Waiting for partner reply</h3><div class="waiting">{waiting}</div>{blocks}</section>')
+            f'<div class="board-layout"><div class="board-main"><p class="keys">{legend}</p>'
+            f'<p id="block-result" class="note" role="status"></p>{table}{_SLOT_DETAIL}{below}</div>{ops}</div></section>')
+
+
+def _waiting_for_partner(board: dict[str, Any] | None) -> str:
+    # Requests for this facility still waiting for a partner's reply: never shown as booked slots.
+    if board is None:
+        return ""
+    rows = [[esc(p["request_ref"]), esc(p["order_reference"]), esc(p["driver"]), esc(f"{p['start']}-{p['end']}")]
+            for p in board["pending_partner"]]
+    table = _table(("Request", "Order", "Driver", "Proposed"), rows, "No requests are waiting for a partner.")
+    return f'<h3>Waiting for partner reply</h3><div class="waiting">{table}</div>'
 
 
 def _clock(stamp: str) -> str:
@@ -748,18 +757,29 @@ def _facility_requests(conn: sqlite3.Connection, user: User) -> str:
     return f'<h3>Facility change requests</h3>{table}'
 
 
-def _messages_section(conn: sqlite3.Connection, user: User, now: datetime) -> str:
+def _messages_section(conn: sqlite3.Connection, user: User, now: datetime, waiting_for_partner: str = "") -> str:
+    """The Operations panel beside the board: cases, driver chats and requests."""
     found = [c for c in (get_case(conn, i) for i in case_ids_in_scope(conn, user, ("OPEN", "CLAIMED"))) if c is not None]
+    partners = partner_requests_in_scope(conn, user)
     reqs = [[esc(r["request_ref"]), _named(r["facility_name"], r["facility_id"]), esc(r["shipment_id"]), esc(word(r["status"])),
-             esc(word(r["email_status"])), esc(f"{when(r['proposed_start'])} to {_clock(r['proposed_end'])}")] for r in partner_requests_in_scope(conn, user)]
+             esc(word(r["email_status"])), esc(f"{when(r['proposed_start'])} to {_clock(r['proposed_end'])}")] for r in partners]
     note = ('<p class="note">Drivers on projects created by an administrator do not appear in a warehouse authority\'s chats; '
             "only drivers on projects you created are shown.</p>")
-    return (f'<section id="messages" data-panel="messages" data-count="{len(found)}"><h2>Messages</h2>' + _facility_requests(conn, user) + '<h3>Open cases</h3>'
-            + _case_cards(conn, user, found, "No open cases.") + _recently_resolved(conn, user, now)
-            + f"<h3>Driver chats</h3>{note}" + _chat_browser(driver_chats_in_scope(conn, user, now))
-            + "<h3>Partner slot requests</h3>"
-            + _table(("Request", "Facility", "Load", "Status", "Email", "Proposed"), reqs, "No partner requests.")
-            + "</section>")
+    chats = driver_chats_in_scope(conn, user, now)
+    waiting = len(pending_changes_in_scope(conn, user)) + sum(1 for r in partners if r["status"] == "PENDING_PARTNER")
+    views = (
+        ("cases", "Cases", len(found), '<h3>Open cases</h3>' + _case_cards(conn, user, found, "No open cases.")
+         + _recently_resolved(conn, user, now)),
+        ("chats", "Chats", len(chats), f"<h3>Driver chats</h3>{note}{_chat_browser(chats)}"),
+        ("requests", "Requests", waiting, _facility_requests(conn, user) + "<h3>Partner slot requests</h3>"
+         + _table(("Request", "Facility", "Load", "Status", "Email", "Proposed"), reqs, "No partner requests.")
+         + waiting_for_partner),
+    )
+    buttons = "".join(f'<button type="button" data-view="{key}" data-key="view:{key}">{label} <span class="count">{n or ""}</span></button>'
+                      for key, label, n, _ in views)
+    panes = "".join(f'<div data-pane="{key}">{body}</div>' for key, _, _, body in views)
+    return (f'<aside id="messages" class="ops" aria-label="Operations" data-count="{len(found)}"><h2>Operations</h2>'
+            f'<div class="views">{buttons}</div>{panes}</aside>')
 
 
 def _attention(conn: sqlite3.Connection, user: User, today: date) -> str:
@@ -872,13 +892,13 @@ def render_warehouse(conn: sqlite3.Connection, user: User, now: Any, facility: s
 
     blocks = "" if chosen is None else blocks_section(conn, user, chosen, now)
 
-    tabs = _tabs((("board", "Dock board"), ("messages", "Messages"), ("projects", "Projects"), ("shipments", "Shipments"),
+    tabs = _tabs((("board", "Dock board"), ("projects", "Projects"), ("shipments", "Shipments"),
                   ("drivers", "Drivers")),
-                 {"messages": len(case_ids_in_scope(conn, user, ("OPEN", "CLAIMED"))) + len(pending_changes_in_scope(conn, user))})
+                 {"board": len(case_ids_in_scope(conn, user, ("OPEN", "CLAIMED"))) + len(pending_changes_in_scope(conn, user))})
     # warehouse.js writes how fresh the live parts are here.
     fresh = '<p class="live" data-live><span data-live-state role="status"></span> <span data-live-time></span></p>'
     body = ('<div class="wh">' + _attention(conn, user, today) + tabs + fresh
-            + _board_section(board, options, chosen, now, blocks) + _messages_section(conn, user, now)
+            + _board_section(board, options, chosen, now, blocks, _messages_section(conn, user, now, _waiting_for_partner(board)))
             + _projects_section(conn, user, today, options, chosen) + shipments_section(conn, user, now, options)
             + _drivers_section(conn, user, today) + "</div>")
     nav = ('<a href="/warehouse">Warehouse</a>' + (' <a href="/admin">Admin</a>' if user.role == "ADMIN" else "")

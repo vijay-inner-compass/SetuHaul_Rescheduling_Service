@@ -44,7 +44,7 @@
 (function () {
   "use strict";
   // The parts that change on their own. Forms are left alone so nothing being typed is lost.
-  var LIVE = [".wh .attention", ".wh .messages-count", "#board .asof", "#board .bays", "#board .scroll", "#board .waiting", "#board .blocks-list", "#messages"];
+  var LIVE = [".wh .attention", ".wh .board-count", "#board .asof", "#board .bays", "#board .scroll", "#board .waiting", "#board .blocks-list", "#messages"];
   var EVERY_MS = 3000;
   var seen = {};
   // What the server last sent, taken before any script changes the page.
@@ -67,6 +67,26 @@
       }
     });
   }
+  // Which part of the Operations panel is shown. Kept across the reload that follows an action.
+  var view = window.sessionStorage.getItem("ops-view") || "cases";
+  function showView() {
+    Array.prototype.forEach.call(document.querySelectorAll("#messages [data-pane]"), function (pane) {
+      pane.hidden = pane.getAttribute("data-pane") !== view;
+    });
+    Array.prototype.forEach.call(document.querySelectorAll("#messages button[data-view]"), function (b) {
+      b.setAttribute("aria-pressed", String(b.getAttribute("data-view") === view));
+    });
+  }
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest("#messages button[data-view]");
+    if (!button) { return; }
+    view = button.getAttribute("data-view");
+    window.sessionStorage.setItem("ops-view", view);
+    showView();
+    // A thread shown for the first time has only now got a height to scroll.
+    reopen(null);
+  });
+
   // The chosen driver if still listed, otherwise the first one.
   function reopen(keep) {
     var all = document.querySelectorAll("button[data-driver]");
@@ -88,6 +108,7 @@
   });
   // A thread opened while its tab was hidden has no height yet, so scroll again when the tab appears.
   window.addEventListener("hashchange", function () { reopen(null); });
+  showView();
   reopen(null);
 
   // What identifies a control across a refresh: its key, or the driver a chat button belongs to.
@@ -170,7 +191,7 @@
       // The hour the reader scrolled the board to stays in view.
       node.scrollLeft = across;
       // The chat shown is chosen first, so a focused control inside it is visible when focus returns.
-      if (sel === "#messages") { reopen(keep); }
+      if (sel === "#messages") { showView(); reopen(keep); }
       restore(node);
       changed = true;
     });

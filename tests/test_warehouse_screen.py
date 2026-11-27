@@ -144,3 +144,49 @@ def test_the_detail_box_is_outside_what_the_refresh_replaces() -> None:
     page = _board_section(BOARD, [("FAC-JAI-01", "Jaipur")], "FAC-JAI-01", NOW)
     assert page.count('<dialog id="slot-detail"') == 1
     assert page.index('<dialog id="slot-detail"') > page.index("</table></div>")
+
+
+# ---- operations panel -----------------------------------------------------------------------------------------
+def _warehouse(tmp_path: Path, clock: FakeClock) -> str:
+    world = build_world(tmp_path, clock)
+    return world.client("wh_a").get("/warehouse").text
+
+
+def test_the_board_tab_holds_the_operations_panel(tmp_path: Path, clock: FakeClock) -> None:
+    page = _warehouse(tmp_path, clock)
+    board = page.split('data-panel="board"', 1)[1].split('data-panel="projects"', 1)[0]
+    assert '<aside id="messages" class="ops"' in board
+    assert board.index('<table class="board"') < board.index('<aside id="messages"')
+
+
+def test_tabs_are_four_and_there_is_no_messages_tab(tmp_path: Path, clock: FakeClock) -> None:
+    page = _warehouse(tmp_path, clock)
+    assert re.findall(r'data-tab="(\w+)"', page) == ["board", "projects", "shipments", "drivers"]
+    assert 'data-panel="messages"' not in page
+
+
+def test_each_view_has_its_content(tmp_path: Path, clock: FakeClock) -> None:
+    page = _warehouse(tmp_path, clock)
+    panel = page.split('<aside id="messages"', 1)[1].split("</aside>", 1)[0]
+    assert re.findall(r'data-view="(\w+)"', panel) == ["cases", "chats", "requests"]
+    views = {name: body for name, body in zip(re.findall(r'data-pane="(\w+)"', panel),
+                                              re.split(r'data-pane="\w+"', panel)[1:], strict=True)}
+    assert "ESC-T-FAC-JAI-01" in views["cases"] and "ESC-T-FAC-GGN-01" not in panel
+    assert "hello from DRV001" in views["chats"]
+    assert "PR-T-FAC-JAI-01" in views["requests"] and 'class="waiting"' in views["requests"]
+    # One open case in scope is counted on its view.
+    assert re.search(r'data-view="cases"[^>]*>Cases <span class="count">1</span>', panel)
+
+
+def test_bays_and_blocking_are_folded_below_the_board(tmp_path: Path, clock: FakeClock) -> None:
+    page = _warehouse(tmp_path, clock)
+    assert '<details data-key="bays"' in page and '<details data-key="blocking"' in page
+    assert page.index('<table class="board"') < page.index('<details data-key="bays"')
+    assert page.index('id="block-result"') < page.index('<details data-key="blocking"')
+
+
+def test_attention_cards_still_point_at_messages(tmp_path: Path, clock: FakeClock) -> None:
+    page = _warehouse(tmp_path, clock)
+    assert 'href="#messages"' in page
+    script = (Path(__file__).resolve().parents[1] / "src/setuhaul/auth/assets/tabs.js").read_text(encoding="utf-8")
+    assert '"messages"' in script

@@ -189,6 +189,23 @@ body.login { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1
   .wh .chat-list { border-right: 0; border-bottom: 1px solid var(--sh-line); }
   .wh .cases { grid-template-columns: 1fr; }
 }
+/* The board with the Operations panel beside it; one column when there is no room for both. */
+.wh .board-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; align-items: start; }
+@media (min-width: 75rem) {
+  .wh .board-layout { grid-template-columns: minmax(0, 1fr) 22rem; }
+  .wh .ops { position: sticky; top: 3rem; max-height: calc(100vh - 4rem); overflow-y: auto; }
+}
+.wh .board-main { min-width: 0; }
+.wh .board-main > details { margin-top: 0.8rem; }
+.wh .board-main > details > summary { cursor: pointer; font-weight: 600; margin-bottom: 0.6rem; }
+.wh .ops { min-width: 0; border: 1px solid var(--sh-line); border-radius: 6px; padding: 0.6rem 0.75rem; background: var(--sh-white); }
+.wh .ops h2 { margin: 0 0 0.4rem; font-size: 1rem; }
+.wh .ops .views { display: flex; gap: 0.25rem; }
+.wh .ops .views button { background: var(--sh-white); color: var(--sh-ink-2); border: 1px solid var(--sh-input-line); }
+.wh .ops .views button[aria-pressed=true] { background: var(--sh-navy); border-color: var(--sh-navy); color: var(--sh-white); }
+.wh .ops .cases { grid-template-columns: minmax(0, 1fr); }
+.wh .ops .chats { grid-template-columns: minmax(0, 1fr); grid-template-rows: 10rem 22rem; height: auto; }
+.wh .ops .chat-list { border-right: 0; border-bottom: 1px solid var(--sh-line); }
 /* Narrow screens: the header wraps and long dropdowns shrink instead of widening the page. */
 header, header .session { flex-wrap: wrap; }
 header .session { min-width: 0; overflow-wrap: anywhere; }

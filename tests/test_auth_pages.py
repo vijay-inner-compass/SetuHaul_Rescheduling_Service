@@ -105,7 +105,7 @@ def test_admin_page_forbidden_for_warehouse_and_redirects_anonymous(world: World
 def test_warehouse_page_has_board_and_no_audit_section(world: World) -> None:
     r = world.client("wh_a").get("/warehouse")
     assert r.status_code == 200
-    for heading in ("Dock board", "Messages", "Projects", "Drivers"):
+    for heading in ("Dock board", "Operations", "Projects", "Drivers"):
         assert heading in r.text
     assert "Audit log" not in r.text and "Invite" not in r.text
     # Board, open case with its summary, partner request and the project driver's chat, all for Jaipur.
@@ -116,19 +116,23 @@ def test_warehouse_page_has_board_and_no_audit_section(world: World) -> None:
     assert "created by an administrator" in r.text
 
 
+def _facilities(page: str) -> list[str]:
+    # The facility buttons above the board.
+    chooser = page.split('<nav class="facilities"', 1)[1].split("</nav>", 1)[0]
+    return re.findall(r'href="/warehouse\?facility=([^"#]+)#board"', chooser)
+
+
 def test_warehouse_page_only_lists_own_facility_in_selector_and_other_facility_board_is_404(world: World) -> None:
     c = world.client("wh_a")
     r = c.get("/warehouse")
-    options = re.findall(r'<option value="([^"]*)"', r.text.split('name="facility"', 1)[1].split("</select>", 1)[0])
-    assert options == [JAIPUR]
+    assert _facilities(r.text) == [JAIPUR]
     assert c.get("/warehouse", params={"facility": JAIPUR}).status_code == 200
     # Another facility, and one that does not exist, look the same.
     assert c.get("/warehouse", params={"facility": GURUGRAM}).status_code == 404
     assert c.get("/warehouse", params={"facility": "NOPE"}).status_code == 404
     # An admin sees every facility.
     admin = world.client("admin").get("/warehouse")
-    admin_options = re.findall(r'<option value="([^"]*)"', admin.text.split('name="facility"', 1)[1].split("</select>", 1)[0])
-    assert {JAIPUR, GURUGRAM} <= set(admin_options)
+    assert {JAIPUR, GURUGRAM} <= set(_facilities(admin.text))
     assert world.client("admin").get("/warehouse", params={"facility": GURUGRAM}).status_code == 200
 
 
