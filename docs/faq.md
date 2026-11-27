@@ -216,7 +216,8 @@ Over the rate limit, nothing is processed and the bot asks them to wait before s
 The update id is used as the message id, so it is processed once.
 
 **Does the system send messages on its own?**
-Yes: facility change approved or rejected, closer-truck offer, lapsed hold. A sender checks every 5 seconds.
+Yes: facility change approved or rejected, closer-truck offer, lapsed or released hold, partner-warehouse answers and case
+updates, in the driver's language where the wording is the system's. A sender checks every 5 seconds.
 
 **Do booking confirmations get pushed?**
 The driver gets them as the reply to their "Yes". Case claimed and resolved, messages written by Operations, and warehouse moves

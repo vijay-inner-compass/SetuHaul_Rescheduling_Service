@@ -63,6 +63,7 @@ from setuhaul.gps import gps_arrival_floor
 
 # Authorisation error.
 from setuhaul.identity import AuthError
+from setuhaul.language import say
 
 # Downstream notices for confirmed changes.
 from setuhaul.notifications import enqueue_downstream
@@ -71,11 +72,8 @@ from setuhaul.observability import log_failure
 # Stored menus and their comparison with live state.
 from setuhaul.option_history import OptionDiffItem, context_now, diff_option_set, get_option_set
 
-# The text queued to the driver when a hold lapses.
-HOLD_EXPIRED_MESSAGE = (
-    "Your hold on that slot has lapsed. No booking has changed, and your original appointment "
-    "still stands. I can search for fresh options if you would like."
-)
+# The English text queued to the driver when a hold lapses (each driver gets it in their own language).
+HOLD_EXPIRED_MESSAGE = say("hold_expired", "en")
 
 
 # How an operation ended, in terms an API or a monitor can act on.
@@ -150,6 +148,13 @@ def _fingerprint(**parts: str) -> str:
 
 
 # ---- expiry (shared by lazy expiry here and the sweep job) -------------------------------------
+def _language(conn: sqlite3.Connection, driver_id: str, thread_id: str) -> str:
+    """The language of this conversation, English until one is established."""
+    row = conn.execute("select json_extract(state_json, '$.language') from conversation_state where driver_id=? and thread_id=?",
+                       (driver_id, thread_id)).fetchone()
+    return str(row[0]) if row and row[0] else "en"
+
+
 def expire_hold_in_txn(conn: sqlite3.Connection, appointment_id: str, now: datetime) -> bool:
     """HELD -> CANCELLED, capacity released, history appended, driver notice queued.
 
@@ -186,7 +191,7 @@ def expire_hold_in_txn(conn: sqlite3.Connection, appointment_id: str, now: datet
     enqueue_notification(
         conn, f"HOLD_EXPIRED:{appointment_id}", "DRIVER", row["driver_id"], event_id,
         {"kind": "HOLD_EXPIRED", "thread_id": row["thread_id"], "appointment_id": appointment_id,
-         "text": HOLD_EXPIRED_MESSAGE},
+         "text": say("hold_expired", _language(conn, row["driver_id"], row["thread_id"]))},
         # Dated when the hold ran out, not when it was noticed: after downtime the sender skips it as old news.
         min(now, parse_operational_timestamp(row["expires_at"])),
     )

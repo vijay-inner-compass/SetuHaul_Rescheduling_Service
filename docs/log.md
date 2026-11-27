@@ -27,3 +27,7 @@ Started in grow mode: one page, [[refusal-messages]].
 ## [2026-11-27] add | [[warehouse-operations]], [[passes-and-gate]], [[round-the-clock-slots]], [[sign-in]]
 
 - The four pages proposed by the sync, approved by the user. Checked against `b5b462f`.
+
+## [2026-11-28] add | [[driver-notices]]
+
+- Written with the change that queues partner answers and no-load case updates. Checked against the work on top of `b6501b0`.

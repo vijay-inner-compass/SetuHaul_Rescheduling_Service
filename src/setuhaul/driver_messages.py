@@ -57,7 +57,8 @@ def undelivered(conn: sqlite3.Connection, user: User, limit: int = 200) -> dict[
     clause, params = facility_clause(user, "s.destination_facility_id")
     rows = conn.execute(
         "select o.outbox_id, o.recipient_ref, o.status, o.payload_json from notification_outbox o"
-        " join appointment_events e on e.event_id=o.event_id join shipments s on s.shipment_id=e.shipment_id"
+        " left join appointment_events e on e.event_id=o.event_id"
+        " left join shipments s on s.shipment_id=coalesce(e.shipment_id, o.shipment_id)"
         f" where o.recipient_type='DRIVER' and o.status in ('FAILED','PERMANENT_FAILURE') and {clause}"
         " order by o.outbox_id desc limit ?", (*params, limit)).fetchall()
     out: dict[str, list[dict[str, Any]]] = {}
@@ -76,8 +77,8 @@ def resend(conn: sqlite3.Connection, *, actor: User, outbox_id: int, clock: Cloc
     clause, params = facility_clause(actor, "s.destination_facility_id")
     with immediate(conn):
         row = conn.execute(
-            "select o.status, o.recipient_ref from notification_outbox o join appointment_events e on e.event_id=o.event_id"
-            f" join shipments s on s.shipment_id=e.shipment_id where o.outbox_id=? and o.recipient_type='DRIVER' and {clause}",
+            "select o.status, o.recipient_ref from notification_outbox o left join appointment_events e on e.event_id=o.event_id"
+            f" left join shipments s on s.shipment_id=coalesce(e.shipment_id, o.shipment_id) where o.outbox_id=? and o.recipient_type='DRIVER' and {clause}",
             (outbox_id, *params)).fetchone()
         if row is None or actor.status != "ACTIVE":
             raise AuthError("MESSAGE_NOT_FOUND")

@@ -37,7 +37,7 @@ from setuhaul.db import immediate
 from setuhaul.escalation import HandoffRequest, create_handoff
 
 # History rows are append-only.
-from setuhaul.events import append_appointment_event
+from setuhaul.events import add_driver_notice, append_appointment_event
 
 # Wording shared with the rest of the service.
 from setuhaul.language import say
@@ -162,16 +162,17 @@ def _driver_thread(conn: sqlite3.Connection, shipment_id: str) -> str | None:
 
 
 def _tell_driver(conn: sqlite3.Connection, req: sqlite3.Row, status: str, now: datetime) -> None:
-    """Post the new state into the driver's chat, as an OPERATIONS message. Skipped when the driver has no chat yet."""
-    thread = _driver_thread(conn, req["shipment_id"])
-    if thread is None:
-        return
+    """Post the new state into the driver's chat and queue it for their phone, in their language. Caller owns the
+    transaction, so the message and the change it reports are saved together or not at all."""
+    driver_id = conn.execute("select driver_id from shipments where shipment_id=?", (req["shipment_id"],)).fetchone()[0]
     fac = conn.execute("select facility_name from facilities where facility_id=?", (req["facility_id"],)).fetchone()
-    with chat_loads.recording(conn, thread, req["shipment_id"]):
-        conn.execute("insert into chat_messages (chat_message_id, thread_id, sender_type, message_text, message_ts) "
-                     "values (?,?, 'OPERATIONS', ?, ?)",
-                     ("MSG-" + uuid.uuid4().hex[:12].upper(), thread,
-                      _say_status(status, fac["facility_name"], req["proposed_start"], "en"), now.isoformat()))
+    text = _say_status(status, fac["facility_name"], req["proposed_start"], passes.driver_language(conn, driver_id))
+    thread = _driver_thread(conn, req["shipment_id"])
+    if thread is not None:
+        with chat_loads.recording(conn, thread, req["shipment_id"]):
+            conn.execute("insert into chat_messages (chat_message_id, thread_id, sender_type, message_text, message_ts) "
+                         "values (?,?, 'OPERATIONS', ?, ?)", ("MSG-" + uuid.uuid4().hex[:12].upper(), thread, text, now.isoformat()))
+    add_driver_notice(conn, driver_id, req["shipment_id"], text, now)
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -395,8 +396,10 @@ def _book(conn: sqlite3.Connection, clock: Clock, req: sqlite3.Row, message_id: 
             if live["status"] != "PENDING_PARTNER":
                 failed = ReplyOutcome(status="ESCALATED", reason="REQUEST_NOT_OPEN")
             elif datetime.fromisoformat(live["expires_at"]) <= now:
-                conn.execute("update partner_requests set status='EXPIRED', decided_at=? where request_ref=? and status='PENDING_PARTNER'",
+                cur = conn.execute("update partner_requests set status='EXPIRED', decided_at=? where request_ref=? and status='PENDING_PARTNER'",
                              (stamp, ref))
+                if cur.rowcount:
+                    _tell_driver(conn, req, "EXPIRED", now)
                 failed = ReplyOutcome(status="ESCALATED", reason="REQUEST_EXPIRED")
             else:
                 ship = conn.execute("select current_status from shipments where shipment_id=?", (req["shipment_id"],)).fetchone()
@@ -413,8 +416,10 @@ def _book(conn: sqlite3.Connection, clock: Clock, req: sqlite3.Row, message_id: 
                     reason = "NO_FREE_DOCK"
                 if reason is not None or slot_id is None:
                     # Nothing to book into, or the move is no longer possible: end the request, leave the original alone.
-                    conn.execute("update partner_requests set status='FAILED', reply_message_id=?, decided_at=? "
+                    cur = conn.execute("update partner_requests set status='FAILED', reply_message_id=?, decided_at=? "
                                  "where request_ref=? and status='PENDING_PARTNER'", (message_id, stamp, ref))
+                    if cur.rowcount:
+                        _tell_driver(conn, req, "FAILED", now)
                     failed = ReplyOutcome(status="ESCALATED", reason=reason)
                 else:
                     _record_inbound(conn, message_id, ref, from_addr, "BOOKED", now)
@@ -445,8 +450,10 @@ def _book(conn: sqlite3.Connection, clock: Clock, req: sqlite3.Row, message_id: 
     except sqlite3.IntegrityError:
         # A constraint stopped the booking (for example a concurrent writer took the slot): the transaction rolled back whole.
         with immediate(conn):
-            conn.execute("update partner_requests set status='FAILED', reply_message_id=?, decided_at=? "
+            cur = conn.execute("update partner_requests set status='FAILED', reply_message_id=?, decided_at=? "
                          "where request_ref=? and status='PENDING_PARTNER'", (message_id, stamp, ref))
+            if cur.rowcount:
+                _tell_driver(conn, req, "FAILED", now)
         return _escalate(conn, clock, req, message_id, from_addr, "SLOT_NO_LONGER_AVAILABLE")
     if failed is not None:
         return _escalate(conn, clock, req, message_id, from_addr, failed.reason or "BOOKING_FAILED")

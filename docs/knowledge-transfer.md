@@ -90,7 +90,7 @@ If you remember only these, you can predict how almost any new feature should be
 
 ```
 src/setuhaul/    the service (layers in section 6; auth/ holds sign-in, roles, Telegram and the web screens)
-migrations/      001-022, numbered SQL applied in order to working copies
+migrations/      001-023, numbered SQL applied in order to working copies
 tests/           about 1,970 tests; tests/traces/ = recorded conversations; tests/scenario_flow.py = the end-to-end scenario
 scripts/         evidence and demo scripts (audit, replay, scenario, show_phaseN, integrity proof, scale profile, run_demo)
 load/            Locust profile
@@ -139,6 +139,7 @@ Migrations (each file is commented line by line):
 | 020 | one-time account links | email and password sign-in |
 | 021 | which load each chat message is about | what a warehouse user may read |
 | 022 | crew number per warehouse | slots are created only where staff entered one |
+| 023 | driver notices without an appointment event | cases with no load and never-booked loads reach the phone too |
 
 ### 6.2 Identity, memory, limits: `identity.py`, `memory.py`, `rate_limit.py`, `observability.py`
 

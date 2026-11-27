@@ -350,9 +350,7 @@ def claim_case(conn: sqlite3.Connection, case_id: str, coordinator_id: str, cloc
 
 
 def _to_phone(conn: sqlite3.Connection, case: sqlite3.Row, text: str, now: datetime) -> None:
-    """Queue the update for the driver's phone, after the change is saved. A case naming no load stays in the chat."""
-    if case["shipment_id"] is None:
-        return
+    """Queue the update for the driver's phone, after the change is saved. A case may name no load."""
     try:
         queue_driver_notice(conn, case["driver_id"], case["shipment_id"], text, now)
     # The case is already saved: a busy database must not turn that into an error.

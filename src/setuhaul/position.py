@@ -121,9 +121,11 @@ def handle_new_position(conn: sqlite3.Connection, shipment_id: str, clock: Clock
     # A live hold the truck can no longer reach is released first; the driver is told which one and why.
     released = reassess_hold_after_position_change(conn, shipment_id, clock)
     if released is not None:
+        text = say("position_released", lang, start=released["start"], end=released["end"], dock=released["dock"])
         with chat_loads.recording(conn, thread_id, shipment_id):
-            memory.append(driver_id, thread_id, "AGENT", say(
-                "position_released", lang, start=released["start"], end=released["end"], dock=released["dock"]))
+            memory.append(driver_id, thread_id, "AGENT", text)
+        # The driver did not ask for this and has to know: the slot they were offered is no longer held.
+        queue_driver_notice(conn, driver_id, shipment_id, text, clock.now())
         return
     # Otherwise confirm the new position: distance, drive time and the earliest arrival (once per ping, for the primary load).
     if announce:

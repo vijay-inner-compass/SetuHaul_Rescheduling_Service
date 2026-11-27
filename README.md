@@ -153,7 +153,7 @@ src/setuhaul/   config, clock, db, identity, rate_limit, memory, eta, feasibilit
                 passes, gate, assign, release, dock_blocks, round_clock, driver_messages, chat_loads,
                 app_settings, model_usage,
                 auth/ (sign-in, roles, onboarding, projects, shipments, audit, Telegram, screens, wiki)
-migrations/     001-022, applied in filename order to working copies
+migrations/     001-023, applied in filename order to working copies
 tests/          about 1,970 tests, traces/ (sanitised regression baselines), scenario_flow.py (the scenario)
 scripts/        audit, replay, scenario, integrity proof, scale profile, live-model run, trace recording, set_admin_password
 load/           Locust profile
