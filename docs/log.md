@@ -12,3 +12,7 @@ Append-only. Newest entries at the bottom.
   and `.claude/scripts/docs-lint.py`
 
 Started in grow mode: one page, [[refusal-messages]].
+
+## [2026-11-27] add | [[model-calls]]
+
+- Written with the connection-test fix.
