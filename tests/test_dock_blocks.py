@@ -209,3 +209,34 @@ def test_a_failure_part_way_saves_nothing(tmp_path: Path, monkeypatch: pytest.Mo
 def test_unreachable_drivers_are_named(tmp_path: Path) -> None:
     world, _, _ = booked_world(tmp_path)
     assert apply(world, request(9, 10, dock=D1)).unreachable == ["ORD-261127-001"]
+
+
+def crews(world: World, number: int) -> None:
+    query(world, "update labour_windows set available_crews=? where window_start like ?", number, f"{DAY}%")
+
+
+def test_a_freed_booking_no_longer_takes_a_crew_when_the_next_one_is_placed(tmp_path: Path) -> None:
+    world, _, _ = booked_world(tmp_path, to_time="11:00")
+    # Placed first (higher priority), and nothing can take it, so it is only freed.
+    unplaceable = create(world, slot_at(world, 10, D1), order_number="ORD-261127-002", priority_code="HIGH")
+    create(world, slot_at(world, 9, D2), order_number="ORD-261127-003")
+    query(world, "update shipments set expected_unload_min=600 where shipment_id=?", unplaceable)
+    crews(world, 1)
+    items = {i.order_reference: i for i in preview(world, request(9, 11, dock=D1))}
+    assert items["ORD-261127-002"].action == "FREE"
+    moved = items["ORD-261127-001"]
+    assert (moved.action, moved.new_start) == ("MOVE", f"{DAY}T10:00:00+05:30")
+
+
+def test_a_hold_the_block_releases_no_longer_takes_a_crew(tmp_path: Path) -> None:
+    world, _, _ = booked_world(tmp_path, to_time="11:00")
+    create(world, slot_at(world, 9, D2), order_number="ORD-261127-003")
+    query(world, "insert into appointments(appointment_id, shipment_id, slot_id, appointment_status, booking_source, is_current,"
+                 " booked_at, updated_at) values ('APT-HELD-T','SHP1001',?,'HELD','DRIVER_CHAT',0,?,?)",
+          slot_at(world, 10, D1), world.clock.now().isoformat(), world.clock.now().isoformat())
+    query(world, "insert into appointment_hold_meta(appointment_id, driver_id, thread_id, option_set_id, request_fingerprint,"
+                 " expires_at, expires_epoch) values ('APT-HELD-T','DRV001','THR-T-NONE','OS-1','fp',?,?)",
+          world.clock.now().isoformat(), int(world.clock.now().timestamp()) + 600)
+    crews(world, 1)
+    [item] = preview(world, request(9, 11, dock=D1))
+    assert (item.action, item.new_start) == ("MOVE", f"{DAY}T10:00:00+05:30")
