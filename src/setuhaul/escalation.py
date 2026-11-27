@@ -18,6 +18,9 @@ import hashlib
 # json stores context and fallback lines.
 import json
 
+# logging records an update that could not be queued.
+import logging
+
 # os.fsync forces fallback lines onto disk.
 import os
 
@@ -26,6 +29,9 @@ import sqlite3
 
 # uuid makes case ids.
 import uuid
+
+# The type of the change a resolution makes.
+from collections.abc import Callable
 
 # datetime/timedelta for times and windows.
 from datetime import datetime, timedelta
@@ -48,6 +54,9 @@ from setuhaul.config import load_settings
 
 # immediate(): the write transaction; parse_operational_timestamp for stored times.
 from setuhaul.db import immediate, parse_operational_timestamp
+
+# The outbox that reaches the driver's phone.
+from setuhaul.events import queue_driver_notice
 
 # Authorisation error.
 from setuhaul.identity import AuthError
@@ -316,11 +325,25 @@ def claim_case(conn: sqlite3.Connection, case_id: str, coordinator_id: str, cloc
         _event(conn, case_id, "CLAIMED", "COORDINATOR", coordinator_id, "OPEN", "CLAIMED", None, now)
         # Tell the driver in their chat, in their language.
         _post_update(conn, c, say("case_claimed", _lang(c), case=case_id), now)
+    _to_phone(conn, c, say("case_claimed", _lang(c), case=case_id), now)
     return TransitionResult(status="CLAIMED", case_id=case_id, claimed_by=coordinator_id)
 
 
+def _to_phone(conn: sqlite3.Connection, case: sqlite3.Row, text: str, now: datetime) -> None:
+    """Queue the update for the driver's phone, after the change is saved. A case naming no load stays in the chat."""
+    if case["shipment_id"] is None:
+        return
+    try:
+        queue_driver_notice(conn, case["driver_id"], case["shipment_id"], text, now)
+    # The case is already saved: a busy database must not turn that into an error.
+    except sqlite3.Error:
+        conn.rollback()
+        logging.getLogger(__name__).warning("case update not queued for the phone", exc_info=True)
+
+
 def resolve_case(conn: sqlite3.Connection, case_id: str, coordinator_id: str, resolution_code: str, note: str,
-                 clock: Clock) -> TransitionResult:
+                 clock: Clock, apply: Callable[[sqlite3.Row], str] | None = None) -> TransitionResult:
+    """`apply` makes the change the resolution promises, in the same transaction, and returns what to tell the driver."""
     # An unknown resolution code is refused before anything is touched.
     if resolution_code not in RESOLUTION_CODES:
         return TransitionResult(status="INVALID_RESOLUTION", case_id=case_id)
@@ -338,12 +361,18 @@ def resolve_case(conn: sqlite3.Connection, case_id: str, coordinator_id: str, re
         # Only the coordinator who claimed it may resolve it.
         if c["claimed_by"] != coordinator_id:
             return TransitionResult(status="NOT_YOUR_CASE", case_id=case_id, claimed_by=c["claimed_by"])
+        done = apply(c) if apply is not None else ""
+        if done:
+            # The note is typed by hand and often has no full stop before the sentence added after it.
+            stop = "." if note.strip()[-1:].isalnum() else ""
+            note = f"{note.strip()}{stop} {done}".strip()
         conn.execute("update escalation_cases set status='RESOLVED', resolved_at=?, resolution_code=?, resolution_note=?, "
                      "updated_at=? where case_id=?", (now.isoformat(), resolution_code, note, now.isoformat(), case_id))
         _event(conn, case_id, "RESOLVED", "COORDINATOR", coordinator_id, "CLAIMED", "RESOLVED", f"{resolution_code}: {note}", now)
         # The driver sees the resolution note in the chat; the thread returns to normal.
         _post_update(conn, c, say("case_resolved", _lang(c), case=case_id, note=note), now)
         _set_thread(conn, c["thread_id"], "OPEN")
+    _to_phone(conn, c, say("case_resolved", _lang(c), case=case_id, note=note), now)
     return TransitionResult(status="RESOLVED", case_id=case_id)
 
 

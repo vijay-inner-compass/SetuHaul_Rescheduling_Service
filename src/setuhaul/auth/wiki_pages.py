@@ -78,11 +78,15 @@ _WAREHOUSE: tuple[Task, ...] = (
         "In the Operations panel beside the board, choose “Cases”. A case is a problem the assistant handed to a person.",
         "Click “Claim” so others know you are working on it.",
         "Choose an outcome, write the message the driver will receive, and click “Resolve”.",
+        "“Assigned a slot” asks which slot. Resolving then books it: the dock board changes and the driver is told dock and time.",
+        "Other outcomes only close the case; the booking stays as it is.",
         "A recently resolved case can be brought back with “Reopen”.",
     )),
     ("Answer requests and read chats", (
         "In Operations, “Requests” lists drivers asking to deliver elsewhere. Approve or Reject each one.",
-        "“Chats” shows messages about loads going to your facilities. A message not yet tied to a load is seen only by administrators. To write to a driver, resolve their case.",
+        "“Chats” shows messages about loads going to your facilities. A message not yet tied to a load is seen only by administrators.",
+        "To write to a driver, choose them in “Chats”, type under the conversation and click “Send”.",
+        "A message that could not reach the phone is listed there; once the service gives up, “Resend” queues it again.",
         "“Requests” also shows slot requests sent to partner warehouses by email and their answers.",
     )),
     ("Manage projects", (

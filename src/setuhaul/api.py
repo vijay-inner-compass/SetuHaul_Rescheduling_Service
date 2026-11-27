@@ -66,7 +66,7 @@ from redis import Redis
 from starlette.concurrency import run_in_threadpool
 
 # The Dock Access Pass check that runs before the conversation.
-from setuhaul import chat_loads, pass_check
+from setuhaul import assign, chat_loads, pass_check
 
 # Web sessions, the role guard and the facility scope of cases.
 from setuhaul.auth import refusals, same_origin, sessions
@@ -132,7 +132,7 @@ from setuhaul.jobs.expire_holds import MaintenanceRunner
 from setuhaul.jobs.send_driver_notifications import DriverNoticeRunner
 
 # The driver's language, for the fixed pass replies.
-from setuhaul.language import LANGS, detect_language
+from setuhaul.language import LANGS, detect_language, say
 
 # The shape of anything that can send an email.
 from setuhaul.mail_transport import MailSender
@@ -314,6 +314,8 @@ class ResolveIn(BaseModel):
 
     resolution_code: str
     note: str = Field(max_length=500)
+    # The slot to book, only with the ASSIGNED_SLOT outcome.
+    slot_id: str | None = None
 
 
 # Claims made from a web session are stored as this prefix plus the user's (unique) e-mail.
@@ -908,8 +910,36 @@ def create_app(deps: AppDeps) -> FastAPI:
     async def resolve_endpoint(request: Request, case_id: str, body: ResolveIn, actor: tuple[str, User | None] = Depends(case_actor)) -> JSONResponse:
         rid = request.state.request_id
         who, user = actor
-        return await run_in_threadpool(change_case, rid, case_id, user, lambda c: resolve_case(
-            c, case_id, who, body.resolution_code, body.note, deps.clock))
+        def refused(code: str, status: int = 422, message: str | None = None) -> JSONResponse:
+            return JSONResponse({"status": "REJECTED", "reason_code": code, "message": message or assign.MESSAGES[code],
+                                 "request_id": rid}, status_code=status)
+
+        # A slot is booked in a person's name, so only a web session can send one; its "assigned a slot" must name it.
+        if body.slot_id is not None and (user is None or body.resolution_code != "ASSIGNED_SLOT"):
+            return refused("SLOT_NOT_ALLOWED")
+        if user is not None and body.resolution_code == "ASSIGNED_SLOT" and body.slot_id is None:
+            return refused("SLOT_REQUIRED")
+
+        def work(c: sqlite3.Connection) -> TransitionResult:
+            apply = None
+            slot_id = body.slot_id
+            if user is not None and slot_id is not None:
+                def apply(case: sqlite3.Row) -> str:
+                    dock, start = assign.assign_in_txn(c, actor=user, shipment_id=case["shipment_id"], slot_id=slot_id,
+                                                       clock=deps.clock)
+                    language = str(json.loads(case["context_json"]).get("language") or "en")
+                    return say("booking_assigned", language, dock=dock, date=f"{start:%d %b %Y}", start=f"{start:%H:%M}")
+            return resolve_case(c, case_id, who, body.resolution_code, body.note, deps.clock, apply=apply)
+
+        def go() -> JSONResponse:
+            try:
+                return change_case(rid, case_id, user, work)
+            except AuthError as exc:
+                if exc.code not in assign.MESSAGES:
+                    raise
+                return refused(exc.code, assign.status_of(exc.code), assign.message_of(exc))
+
+        return await run_in_threadpool(go)
 
     # Reopen a recently resolved case.
     @app.post("/v1/coordinator/cases/{case_id}/reopen")

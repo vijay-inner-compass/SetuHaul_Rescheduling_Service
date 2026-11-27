@@ -1,4 +1,5 @@
-"""Warehouse routes for exceptions: blocking a dock, freeing one booked slot, and deleting or restoring a driver."""
+"""Warehouse routes for exceptions: blocking a dock, freeing one booked slot, deleting or restoring a driver,
+and writing to a driver or sending a failed message again."""
 
 # Lazy annotations.
 from __future__ import annotations
@@ -9,10 +10,10 @@ from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 
-from setuhaul import dock_blocks, release
+from setuhaul import dock_blocks, driver_messages, release
 from setuhaul.auth import driver_removal
 from setuhaul.auth.authz import require_role
 from setuhaul.auth.http import reject
@@ -21,7 +22,8 @@ from setuhaul.db import open_connection
 from setuhaul.identity import AuthError
 
 # The refusal is about what is stored now, not about what was typed.
-_CONFLICT = {"DRIVER_ON_SITE", "NOT_DELETED", "PLAN_CHANGED", "NOT_BOOKED", "SLOT_STARTED", "UNLOADING", "TRUCK_ON_SITE"}
+_CONFLICT = {"DRIVER_ON_SITE", "NOT_DELETED", "PLAN_CHANGED", "NOT_BOOKED", "SLOT_STARTED", "UNLOADING", "TRUCK_ON_SITE",
+             "NOT_FAILED", "NO_CHAT"}
 
 # What the person at the screen is told for each refusal.
 _MESSAGES = {
@@ -43,12 +45,28 @@ _MESSAGES = {
     "NAME_MISMATCH": "The name does not match the driver's name.",
     "NOT_DELETED": "That driver is not deleted. Reload the page.",
     "FORBIDDEN": "Only an administrator can restore a driver.",
+    "NO_CHAT": "This driver has no open chat to write to.",
+    "MESSAGE_NOT_FOUND": "That message is not one of yours.",
+    "NOT_FAILED": "That message is no longer failed. Reload the page.",
 }
 
 
 class Confirmed(dock_blocks.BlockRequest):
     # What the warning showed.
     expected: list[dock_blocks.Expected]
+
+
+class Message(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(max_length=500)
+
+    @field_validator("text")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("write the message first")
+        return value.strip()
 
 
 class Deletion(BaseModel):
@@ -91,6 +109,29 @@ def register_exception_routes(app: FastAPI, deps: Any) -> None:
 
     def ok(rid: str, status: int = 200, **fields: Any) -> Response:
         return JSONResponse({"status": "OK", **fields, "request_id": rid}, status_code=status)
+
+    @app.post("/v1/warehouse/drivers/{driver_id}/messages")
+    async def message(request: Request, driver_id: str, body: Message,
+                      user: Annotated[User, Depends(require_role("WAREHOUSE_AUTHORITY", "ADMIN"))]) -> Response:
+        rid = request.state.request_id
+
+        def write(conn: sqlite3.Connection) -> Response:
+            queued = driver_messages.send(conn, actor=user, driver_id=driver_id, text=body.text, clock=deps.clock,
+                                          redis=deps.redis)
+            return ok(rid, queued=queued, telegram=telegram_on())
+
+        return await run_in_threadpool(run, rid, write)
+
+    @app.post("/v1/warehouse/notices/{outbox_id}/resend")
+    async def resend(request: Request, outbox_id: int,
+                     user: Annotated[User, Depends(require_role("WAREHOUSE_AUTHORITY", "ADMIN"))]) -> Response:
+        rid = request.state.request_id
+
+        def write(conn: sqlite3.Connection) -> Response:
+            driver_messages.resend(conn, actor=user, outbox_id=outbox_id, clock=deps.clock)
+            return ok(rid)
+
+        return await run_in_threadpool(run, rid, write)
 
     @app.post("/v1/warehouse/appointments/{appointment_id}/free")
     async def free(request: Request, appointment_id: str,

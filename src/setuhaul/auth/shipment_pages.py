@@ -7,13 +7,13 @@ import sqlite3
 from datetime import datetime
 
 from setuhaul import passes
+from setuhaul.assign import open_slots
 from setuhaul.auth.authz import facility_clause
 from setuhaul.auth.onboarding import driver_eligible
 from setuhaul.auth.pages import _button, _segment, _table, esc
 from setuhaul.auth.shipments import list_shipments
 from setuhaul.auth.users import User
 from setuhaul.auth.warehouse_routes import drivers_in_scope
-from setuhaul.capacity import build_facility_state
 from setuhaul.db import IST, parse_operational_timestamp
 
 _PASS = {"ISSUED": "Sent", "VALIDATED": "At the gate", "ACTIVE": "Inside", "COMPLETED": "Unloaded", "CLOSED": "Closed",
@@ -55,16 +55,7 @@ def shipments_section(conn: sqlite3.Connection, user: User, now: datetime, facil
     # cannot crowd another off the list.
     slots = ""
     for facility_id in own:
-        free = conn.execute(
-            "select s.slot_id, d.dock_code, s.slot_start_ts from appointment_slots s join docks d using(dock_id)"
-            " where s.facility_id=? and s.slot_status='OPEN' and s.slot_start_ts>? and not exists (select 1 from appointments a"
-            " where a.slot_id=s.slot_id and a.appointment_status in ('PENDING_CONFIRMATION','CONFIRMED','IN_PROGRESS','HELD'))"
-            " order by s.slot_start_ts, d.dock_code limit 3000", (facility_id, now.astimezone(IST).isoformat())).fetchall()
-        # A dock event is not written on the slot, so slots under one are dropped here.
-        state = build_facility_state(conn, facility_id, now)
-        blocked = {i for i, s in state.slots.items() if any(
-            e.start < s.end and (e.end is None or e.end > s.start) for e in state.effective_events(s.dock_id))}
-        free = [r for r in free if r["slot_id"] not in blocked]
+        free = open_slots(conn, facility_id, now)
         slots += "".join(_option(r["slot_id"], f"{facility_id} {r['dock_code']} {_when(r['slot_start_ts'])}",
                                  facility=facility_id) for r in free)
         if not free:

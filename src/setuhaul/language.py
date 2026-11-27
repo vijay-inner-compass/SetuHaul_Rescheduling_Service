@@ -331,6 +331,12 @@ T: dict[str, dict[str, str]] = {
         "hi": "ऑपरेशंस टीम ने आपका केस {case} हल कर दिया है: {note}",
         "hinglish": "Operations team ne aapka case {case} hal kar diya hai: {note}",
     },
+    # Added to the resolution when Operations booked a slot with it.
+    "booking_assigned": {
+        "en": "Your slot is booked: dock {dock}, {date} at {start}.",
+        "hi": "आपका स्लॉट बुक हो गया है: डॉक {dock}, {date} को {start} बजे।",
+        "hinglish": "Aapka slot book ho gaya hai: dock {dock}, {date} ko {start} baje.",
+    },
     # Posted when the driver cancels their case.
     "case_cancelled": {
         "en": "Your case {case} has been cancelled at your request.",

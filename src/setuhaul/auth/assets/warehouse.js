@@ -11,6 +11,30 @@
   }
 })();
 
+// "Assigned a slot" books one, so its list is shown and required only for that outcome.
+(function () {
+  "use strict";
+  function sync(form) {
+    var outcome = form.querySelector("select[name=resolution_code]");
+    var slot = form.querySelector("select[name=slot_id]");
+    if (!outcome || !slot) { return; }
+    var on = outcome.value === "ASSIGNED_SLOT";
+    slot.parentNode.hidden = !on;
+    slot.disabled = !on;
+    slot.required = on;
+  }
+  function all() {
+    Array.prototype.forEach.call(document.querySelectorAll("form.case-resolve"), sync);
+  }
+  document.addEventListener("change", function (event) {
+    var form = event.target.closest("form.case-resolve");
+    if (form) { sync(form); }
+  });
+  // The live refresh draws new forms.
+  document.addEventListener("sh:refreshed", all);
+  all();
+})();
+
 // A board cell opens its detail, with "Free this slot" where that is allowed.
 (function () {
   "use strict";
@@ -52,7 +76,7 @@
     var node = document.querySelector(sel);
     if (node) { seen[sel] = node.cloneNode(true); }
   });
-  var chosen = null;
+  var chosen = window.sessionStorage.getItem("ops-driver");
 
   // Show one driver's conversation; `keep` is a remembered scroll position, null means the newest message.
   function open(driver, keep) {
@@ -104,7 +128,12 @@
 
   document.addEventListener("click", function (event) {
     var button = event.target.closest("button[data-driver]");
-    if (button) { chosen = button.getAttribute("data-driver"); open(chosen, null); }
+    if (button) {
+      chosen = button.getAttribute("data-driver");
+      // Kept across the reload that follows sending a message.
+      window.sessionStorage.setItem("ops-driver", chosen);
+      open(chosen, null);
+    }
   });
   // A thread opened while its tab was hidden has no height yet, so scroll again when the tab appears.
   window.addEventListener("hashchange", function () { reopen(null); });
@@ -195,7 +224,7 @@
       restore(node);
       changed = true;
     });
-    if (changed) { reopen(keep); checkDetail(); }
+    if (changed) { reopen(keep); checkDetail(); document.dispatchEvent(new Event("sh:refreshed")); }
   }
 
   // Say how fresh the live parts are. The state is written only when it changes, so it is announced once.

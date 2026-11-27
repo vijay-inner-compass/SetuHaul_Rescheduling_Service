@@ -63,9 +63,9 @@ def test_long_case_notes_are_folded(tmp_path: Path, clock: FakeClock) -> None:
         user = world.users["wh_a"]
         case = get_case(conn, world.cases[JAIPUR])
         assert case is not None
-        page = _case_cards(conn, user, [case], "No open cases.")
+        page = _case_cards(conn, user, [case], "No open cases.", clock.now())
         assert 'class="note-fold"' in page and case.case_id in page
-        assert "No open cases." in _case_cards(conn, user, [], "No open cases.")
+        assert "No open cases." in _case_cards(conn, user, [], "No open cases.", clock.now())
     finally:
         conn.close()
 
