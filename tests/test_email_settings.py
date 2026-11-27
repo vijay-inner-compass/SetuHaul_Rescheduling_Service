@@ -73,8 +73,8 @@ def test_password_is_encrypted_and_never_returned(world: World) -> None:
     assert "s3cret-pass-word" not in rows(world, "select name, value from app_settings")
     read = admin.get("/v1/admin/settings").text + admin.get("/admin").text
     assert "s3cret-pass-word" not in read
-    assert admin.get("/v1/admin/settings").json()["settings"]["SETUHAUL_SMTP_PASSWORD"] == {"source": "saved", "set": True,
-                                                                                          "last4": ""}
+    # Like the webhook secret: that one is set, and none of its characters.
+    assert admin.get("/v1/admin/settings").json()["settings"]["SETUHAUL_SMTP_PASSWORD"] == {"source": "saved", "set": True}
 
 
 def test_a_gmail_app_password_pasted_with_spaces_is_joined(world: World) -> None:
