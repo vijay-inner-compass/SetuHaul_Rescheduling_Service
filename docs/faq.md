@@ -18,7 +18,7 @@ Answers describe the code as of 2026-11-27. Each answer starts with the short re
 **Five things not to claim**
 
 1. That it has run in production, or with real drivers. It is a prototype.
-2. That a real AI model has been proven on the current flow. The recorded real-model runs predate the one-slot flow and are retired.
+2. That a real AI model has been proven on the current flow. There is one recorded run per language, made before the 2026-11-27 changes.
 3. That Hindi and Hinglish wording is approved. No native speaker has reviewed it.
 4. That it is compliant with any data-protection law. That has not been assessed.
 5. That the warehouse, customer and operations are emailed or texted on a booking. Their notices are queued; no sender is connected.
@@ -98,8 +98,10 @@ OpenAI and Anthropic adapters behind one gateway. Set `SETUHAUL_MODEL_PROVIDER`,
 or change them on **Admin > Configuration** (needs `SETUHAUL_SETTINGS_KEY`).
 
 **Has it run with a real model?**
-Yes, on the earlier numbered-menu design (2026-11-20, a handful of single-scenario runs). Those recordings were retired when the flow
-changed, so **the current flow has no recorded real-model evidence**.
+Yes. On 2026-11-26, OpenAI `gpt-6-luna` ran one four-message scenario each in English, Hindi and Hinglish on the one-slot flow. In the
+English run the model handed the first message to operations instead of asking for the drive time. That is a few single runs, not a
+success rate, and **nothing has been recorded since the 2026-11-27 changes**. Details:
+[evaluation-plan.md](verification/evaluation-plan.md)
 
 **What limits runaway cost or loops?**
 At most 6 model rounds and 4 tool runs per message, an 8-second call timeout with one retry, a 30-second deadline, 800 output
@@ -369,7 +371,7 @@ Pings arrive only over the signed channel.
 concurrency and scale scripts. Run them: [running-and-demonstrating.md](running-and-demonstrating.md).
 
 **What has never been tested?**
-Real drivers, real labour or customer data, real model on the current flow, real Google sign-in, real partner mailbox, production
+Real drivers, real labour or customer data, real model since the 2026-11-27 changes, real Google sign-in, real partner mailbox, production
 HTTPS, multiple servers, a real Redis under load, Linux for the latest code, and native-speaker review.
 
 ## 11. Hard questions
@@ -377,7 +379,7 @@ HTTPS, multiple servers, a real Redis under load, Linux for the latest code, and
 **"Is this production ready?"** No. It is a working prototype with the booking rules enforced and tested.
 
 **"What would it take?"** In order: data-protection decision and privacy notice; a labour and customer data source; real-model
-evaluation on the current flow; native-speaker review; HTTPS hosting, backups and monitoring; PostgreSQL if load needs it; real
+evaluation on the current flow, beyond single runs; native-speaker review; HTTPS hosting, backups and monitoring; PostgreSQL if load needs it; real
 senders for warehouse and customer notices; operations approval of the defaults.
 
 **"What is the business benefit, in numbers?"** Not measured. The data is 21 shipments on one day, which cannot support a claim about
@@ -388,7 +390,7 @@ time saved or resolution rate.
 **"What was the weakest thing you found?"** Say it plainly: examples include a signed channel that accepted empty-key signatures when no
 secret was set, and Telegram sends giving up within seconds. Both were found and fixed, with tests.
 
-**"What are you least sure about?"** Real-model behaviour on the current flow, and data protection.
+**"What are you least sure about?"** Real-model behaviour beyond a few single runs, and data protection.
 
 **If you do not know an answer:** "I will check the code and come back to you." The [decision register](decision-register.md) records
 why most choices were made.

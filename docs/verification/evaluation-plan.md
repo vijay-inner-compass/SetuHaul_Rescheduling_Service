@@ -1,5 +1,25 @@
 # Evaluation plan (Phase 10)
 
+## Live runs on the one-slot flow (recorded 2026-11-26, added to this page 2026-11-28)
+Provider `openai`, model `gpt-6-luna`. One four-message scenario per language: repair with no travel time, travel time, decline
+the held slot, confirm the next one. Committed in `250d283`.
+
+| Language | Trace (`tests/traces/`) | Replay checks | What happened |
+|---|---|---|---|
+| English | `live-53f1f2f2.json` | 17/17 | On the first message the model handed the case to operations (`OTHER_UNCERTAINTY`) instead of asking for the drive time. The later messages held, declined and confirmed. |
+| Hinglish | `live-ccbe3af8.json` | 17/17 | Asked for the drive time, then held, declined and confirmed. One model call timed out on the third message and the turn still completed (`DEPENDENCY`). |
+| Hindi | `live-d9762e12.json` | 17/17 | Asked for the drive time, then held, declined and confirmed. No failure class. |
+
+* The commit that added them also fixed a fault a real-model run showed: "nahi chalega" was read as agreement, so the refused slot
+  was booked (`tests/test_negated_agreement.py`).
+* **Limits:** one run per language, one model, a cooperative script. No rate, language-quality or adversarial claim follows. This page
+  records no human read of the whole traces and no native-speaker review.
+* **Since then:** the prompt, tools and conversation code changed on 2026-11-27 (Dock Access Pass and later work), and again up to
+  `8a5487e` (confirming needs a clear yes, cancelling takes two messages). No live run has been recorded after those changes.
+
+The sections below are the 2026-11-20 record of the earlier numbered-menu flow. Their recordings are in `tests/traces/retired/`,
+except `live-f9c78531.json`, a rejected request still replayed.
+
 ## Live run result (2026-11-20): one scenario completed with a real model
 Provider `openai`, model `gpt-6-luna`, `SETUHAUL_OPENAI_REASONING_EFFORT=none` (the model refuses function tools on Chat Completions otherwise).
 Scenario: repair with no travel time -> travel time -> take the first option -> confirm. Sanitised trace: `tests/traces/live-79b937bd.json`

@@ -170,7 +170,7 @@ Remember the console's Send calls the shared store function directly; the signed
 | Injection, outages, unbacked claims | `$env:PYTHONUTF8="1"; python scripts/show_phase8.py` | tool contract table; injection: `confirm_reschedule` gives `TOOL_NOT_ALLOWED`, an invented `driver_id` gives `INVALID_ARGUMENTS`, someone else's shipment gives `FOREIGN_SHIPMENT`, appointments unchanged, prompt-leak reply replaced by `I cannot share that.`; Hinglish and Hindi conversations; model timing out twice gives `I cannot check or change bookings right now, so I cannot promise anything...` and a case; model text "Great news, your 12:00 appointment is confirmed!" with nothing committed becomes `I have not confirmed or held anything yet.` |
 | Hand-off queue and CLI | `python scripts/show_phase9.py` | a real conversation hands off (SHP1014); the CLI queue lists the case; `asha` claims it, `ben` gets `ALREADY_CLAIMED (held by asha)` and cannot resolve it (`NOT_YOUR_CASE`); the driver sees the update |
 | Whole flow, scored | `python scripts/run_scenario.py` | 23 of 23 checks pass; offer, hold, expiry, confirmation, cancellation, three hand-offs (`NO_SLOT`, `CONTRADICTORY_DATA`, `INCOMPLETE_FEASIBILITY_DATA`), claim/resolve, outbox (one transient delivery failure retried), `check_invariants() -> []`. **It rewrites `docs/verification/scenario-run.md`**; run `git checkout docs/verification/scenario-run.md` afterwards if you do not want the change |
-| Replay recorded conversations | `python scripts/replay_traces.py` | `9/9 traces replayed clean; 109/109 evaluator checks passed` (scripted traces; the live-model recordings are retired) |
+| Replay recorded conversations | `python scripts/replay_traces.py` | `9/9 traces replayed clean; 109/109 evaluator checks passed` (scripted baselines and live recordings; the earlier menu-flow recordings are retired) |
 | Concurrency (about 8 min) | `python scripts/run_integrity_proof.py` | threads and processes racing for one slot, invariants after every step (*not re-run here*; see `docs/verification/concurrency-proof.md`) |
 | Scale | `python scripts/run_scale_profile.py` | generated 360-load fixture, spike, burst (*not re-run here*; `docs/verification/scale-test.md`) |
 | Snapshot quality | `python scripts/audit_data.py` | read-only JSON audit: row counts (106 slots, 20 appointments, ...), integrity and timestamp checks, one shipment trace |
@@ -441,11 +441,11 @@ The demo console and its start-up do not do this.
 * **Write to a driver:** **Chats**, choose the driver, type (500 characters) and **Send**. It goes into the chat and is queued
   for Telegram. A message the service gave up on can be queued again with **Resend**.
 
-## 8. Live model (*not run*)
+## 8. Live model (*not run for this page*)
 
 To use a real model, copy `.env.example` to `.env` (git-ignored) and set `SETUHAUL_MODEL_PROVIDER` (`openai` or `anthropic`), `SETUHAUL_MODEL_ID`, `SETUHAUL_MODEL_API_KEY`; then restart the demo and switch to **Live model**.
 `python scripts/run_live_model_scenario.py` runs one scripted scenario against the real model and refuses to run without these. Use synthetic data only; data protection for real driver messages is still an open question (Q9).
-Recorded live runs (2026-11-20) are in `tests/traces/live-*.json` and replay clean; they are English-only evidence for one model, not proof of quality at scale.
+Recorded live runs are in `tests/traces/live-*.json` and replay clean: English, Hindi and Hinglish on 2026-11-26, plus one rejected request from 2026-11-20. They are single runs of one model, not proof of quality at scale ([evaluation-plan.md](verification/evaluation-plan.md)).
 
 ## 9. Suggested 15-minute demonstration
 
