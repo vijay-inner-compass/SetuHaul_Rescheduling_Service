@@ -4,9 +4,14 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from setuhaul.auth.pages import _bay_card, _board_section, _case_cards, _chat_browser
+from setuhaul.clock import FakeClock
+from setuhaul.db import open_connection
+from setuhaul.escalation import get_case
+from tests.auth_helpers import JAIPUR, build_world
 
 NOW = datetime.fromisoformat("2026-08-04T10:15:00+05:30")
 
@@ -48,10 +53,20 @@ def test_long_chats_are_one_list_and_one_scrolling_conversation_each() -> None:
     assert long.strip() in page and "<script>" not in page and "09:36" in page
 
 
-def test_long_case_notes_are_folded() -> None:
-    page = _case_cards([{"id": "CAS1", "status": "OPEN", "reason": "NO_SLOT", "summary": "late " * 100, "load": "SHP1", "claimed": ""}])
-    assert "<details" in page and "CAS1" in page
-    assert "No open cases." in _case_cards([])
+def test_long_case_notes_are_folded(tmp_path: Path, clock: FakeClock) -> None:
+    world = build_world(tmp_path, clock)
+    conn = open_connection(path=world.path)
+    try:
+        conn.execute("update escalation_cases set summary=? where case_id=?", ("late " * 100, world.cases[JAIPUR]))
+        conn.commit()
+        user = world.users["wh_a"]
+        case = get_case(conn, world.cases[JAIPUR])
+        assert case is not None
+        page = _case_cards(conn, user, [case], "No open cases.")
+        assert 'class="note-fold"' in page and case.case_id in page
+        assert "No open cases." in _case_cards(conn, user, [], "No open cases.")
+    finally:
+        conn.close()
 
 
 def test_a_booking_that_starts_mid_hour_is_judged_by_its_real_times() -> None:

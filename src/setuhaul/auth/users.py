@@ -173,6 +173,50 @@ def disable(conn: sqlite3.Connection, *, actor: User, user_id: str, clock: Clock
         )
 
 
+def _fresh_admin(conn: sqlite3.Connection, actor: User) -> None:
+    # Called under the write lock: the actor is re-read, so a stale object cannot outlive a disable or role change.
+    fresh = _load(conn, "user_id = ?", actor.user_id)
+    if fresh is None or fresh.role != "ADMIN" or fresh.status != "ACTIVE":
+        raise AuthError("FORBIDDEN")
+
+
+def enable(conn: sqlite3.Connection, *, actor: User, user_id: str, clock: Clock) -> None:
+    """Undo a disable. Sessions that were ended stay ended: the user signs in again."""
+    with immediate(conn):
+        _fresh_admin(conn, actor)
+        if _load(conn, "user_id = ?", user_id) is None:
+            raise AuthError("UNKNOWN_USER")
+        conn.execute("update users set status='ACTIVE' where user_id=?", (user_id,))
+        audit.record(
+            conn, actor_user_id=actor.user_id, actor_email=actor.email, action="ENABLE", target_type="user",
+            target_id=user_id, outcome="OK", ip=None, detail=None, clock=clock,
+        )
+
+
+def set_facilities(conn: sqlite3.Connection, *, actor: User, user_id: str, facilities: tuple[str, ...], clock: Clock) -> None:
+    """Replace the facilities of a facility-bound user; it takes effect on their next request."""
+    wanted = tuple(sorted(set(facilities)))
+    with immediate(conn):
+        _fresh_admin(conn, actor)
+        target = _load(conn, "user_id = ?", user_id)
+        if target is None:
+            raise AuthError("UNKNOWN_USER")
+        if target.role not in FACILITY_BOUND:
+            raise AuthError("NOT_FACILITY_BOUND")
+        if not wanted:
+            raise AuthError("FACILITY_REQUIRED")
+        for fac in wanted:
+            if conn.execute("select 1 from facilities where facility_id=?", (fac,)).fetchone() is None:
+                raise AuthError("UNKNOWN_FACILITY", fac)
+        conn.execute("delete from user_facilities where user_id=?", (user_id,))
+        for fac in wanted:
+            conn.execute("insert into user_facilities(user_id, facility_id) values (?,?)", (user_id, fac))
+        audit.record(
+            conn, actor_user_id=actor.user_id, actor_email=actor.email, action="FACILITIES_CHANGED", target_type="user",
+            target_id=user_id, outcome="OK", ip=None, detail={"before": list(target.facilities), "after": list(wanted)}, clock=clock,
+        )
+
+
 def bootstrap_admin(conn: sqlite3.Connection, email: str, clock: Clock) -> User:
     addr = _normalise(email)
     with immediate(conn):

@@ -131,5 +131,5 @@ def shipments_section(conn: sqlite3.Connection, user: User, now: datetime, facil
         rows.append([esc(s["order_reference"]), esc(f"{s['driver_id']} - {s['driver_name']}"), esc(s["facility_id"]),
                      esc(_when(s["planned_start"])), esc(_STATES[s["state"]]), esc(pass_text), actions])
     table = _table(("Order", "Driver", "Destination", "Planned", "State", "Pass", ""), rows, "No shipments have been created here yet.")
-    return (f'<section id="shipments" data-panel="shipments"><h2>Shipments</h2><div class="scroll">{table}</div>'
+    return (f'<section id="shipments" data-panel="shipments"><h2>Shipments</h2><p class="note">This tab does not update by itself. Reload the page to see changes.</p>{table}'
             f"{availability}{new}</section>")

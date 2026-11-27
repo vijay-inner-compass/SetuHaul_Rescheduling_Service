@@ -22,7 +22,7 @@ from tests.auth_helpers import GURUGRAM, JAIPUR, World, build_world
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSET_DIR = ROOT / "src" / "setuhaul" / "auth" / "assets"
-ASSETS = ("app.css", "common.js", "tabs.js", "admin.js", "warehouse.js", "model.js", "settings.js")
+ASSETS = ("tokens.css", "app.css", "common.js", "tabs.js", "admin.js", "warehouse.js", "model.js", "settings.js")
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'; "
        "base-uri 'none'; form-action 'self'")
 XSS_NAME = "<script>alert(1)</script>"
@@ -152,7 +152,7 @@ def test_warehouse_can_revoke_telegram_binding_and_it_is_audited(world: World) -
     c = world.client("wh_a")
     page = c.get("/warehouse").text
     # A Revoke button for the bound driver they onboarded, carrying the API path the script calls.
-    assert f"/v1/warehouse/drivers/{did}/telegram/revoke" in page and "BOUND" in page
+    assert f"/v1/warehouse/drivers/{did}/telegram/revoke" in page and ">Linked<" in page
     assert c.post(f"/v1/warehouse/drivers/{did}/telegram/revoke", json={}).status_code == 200
     assert f"/v1/warehouse/drivers/{did}/telegram/revoke" not in c.get("/warehouse").text
     conn = open_connection(path=world.path, readonly=True)
@@ -216,7 +216,7 @@ def test_js_assets_do_not_use_innerhtml() -> None:
 
 def test_assets_whitelist_and_no_traversal(world: World) -> None:
     c = world.client()
-    types = {"app.css": "text/css", "common.js": "text/javascript", "admin.js": "text/javascript", "warehouse.js": "text/javascript",
+    types = {"tokens.css": "text/css", "app.css": "text/css", "common.js": "text/javascript", "admin.js": "text/javascript", "warehouse.js": "text/javascript",
              "tabs.js": "text/javascript", "model.js": "text/javascript",
              "settings.js": "text/javascript"}
     for name, ctype in types.items():

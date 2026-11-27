@@ -4,13 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SetuHaul Dock Scheduling | Demonstration console</title>
+<link rel="stylesheet" href="/app/assets/tokens.css">
 <style>
 :root{
-  --bg:#f3f5f8; --surface:#ffffff; --surface-2:#f8fafc; --line:#dde3ea; --line-strong:#c4ced9;
-  --ink:#0f1b2d; --ink-2:#44546a; --ink-3:#6b7a90;
-  --brand:#12355b; --brand-2:#1d4f8a; --brand-soft:#e8f0fa;
+  --bg:#f3f5f8; --surface:#ffffff; --surface-2:#f8fafc; --line:#dde3ea; --line-strong:#c4ced9; --input-line:var(--sh-input-line);
+  --ink:#0f1b2d; --ink-2:#44546a; --ink-3:var(--sh-muted);
+  --brand:var(--sh-navy); --brand-2:var(--sh-info); --brand-soft:#e8f0fa;
   --ok:#0f7b4b; --ok-soft:#e3f5ec; --warn:#a15c00; --warn-soft:#fff3dc; --bad:#b42318; --bad-soft:#fde8e6;
-  --info:#1d4f8a; --info-soft:#e8f0fa; --mute-soft:#eef1f5;
+  --info:var(--sh-info); --info-soft:#e8f0fa; --mute-soft:#eef1f5;
   --radius:8px; --shadow:0 1px 2px rgba(15,27,45,.06),0 2px 8px rgba(15,27,45,.05);
   --font:"Segoe UI",Inter,system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif;
 }
@@ -19,6 +20,7 @@ html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 var(--font);-webkit-font-smoothing:antialiased}
 button{font:inherit;color:inherit}
 :focus-visible{outline:2px solid var(--brand-2);outline-offset:2px}
+.appbar :focus-visible{outline-color:var(--sh-amber)}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 
 /* application bar */
@@ -67,7 +69,7 @@ main{display:grid;grid-template-columns:minmax(340px,400px) minmax(480px,1fr) mi
 .btn.primary:hover{background:var(--brand-2)}
 .btn.small{padding:4px 9px;font-size:12px}
 .btn:disabled{opacity:.5;cursor:not-allowed}
-select,input[type=text],textarea{font:inherit;border:1px solid var(--line-strong);border-radius:6px;padding:8px 10px;background:#fff;color:var(--ink);width:100%}
+select,input[type=text],textarea{font:inherit;border:1px solid var(--input-line);border-radius:6px;padding:8px 10px;background:#fff;color:var(--ink);width:100%}
 label.field{display:block;font-size:12px;color:var(--ink-2);margin:0 0 4px;font-weight:600}
 
 /* driver console */
@@ -100,7 +102,7 @@ label.field{display:block;font-size:12px;color:var(--ink-2);margin:0 0 4px;font-
 .sendrow{display:flex;gap:8px}
 /* truck position (GPS) panel */
 .gpsbox{border:1px solid var(--line);border-radius:6px;padding:9px 11px;margin-bottom:12px;background:var(--surface-2)}
-.gpsbox input[type=number]{font:inherit;border:1px solid var(--line-strong);border-radius:6px;padding:6px 8px;background:#fff;color:var(--ink);width:100%}
+.gpsbox input[type=number]{font:inherit;border:1px solid var(--input-line);border-radius:6px;padding:6px 8px;background:#fff;color:var(--ink);width:100%}
 .gpsbox input[type=range]{width:100%}
 .gpsgrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px}
 .gpsread{font-size:12.5px;margin-top:8px}
@@ -126,7 +128,7 @@ table.board{border-collapse:separate;border-spacing:0;width:100%;font-variant-nu
 .cell.BOOKED.partner{background:#efe3fa;color:#6b2fa0}
 .partner-pending{margin-top:8px;font-size:12.5px;color:var(--ink-2)}
 .mailbody{white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace;font-size:12px;background:#f6f8fb;border:1px solid var(--line);border-radius:6px;padding:8px;margin:6px 0}
-.cell.past{opacity:.45}
+.cell.past{filter:grayscale(1);color:var(--ink-3);font-style:italic}
 .cell.mine{outline:2px solid var(--brand-2);outline-offset:-2px;box-shadow:inset 0 0 0 2px #fff}
 
 /* operations */
@@ -475,9 +477,11 @@ $("#opsBody").addEventListener("click",async e=>{
     toast(r.ok?`Claimed by ${who}.`:`Already claimed by ${r.data.claimed_by||"someone else"}.`,r.ok?"ok":"bad");refreshOps();refreshDriver();}
   if(res){const id=res.dataset.resolve,by=res.dataset.by;
     modal("Resolve case",`<div><label class="field" for="rc">Outcome</label><select id="rc"><option value="ASSIGNED_SLOT">Assigned a slot</option><option value="ADVISED_DRIVER">Advised the driver</option><option value="CANCELLED_BY_OPERATIONS">Cancelled by operations</option><option value="NO_ACTION_NEEDED">No action needed</option><option value="OTHER">Other</option></select></div>
-      <div><label class="field" for="rn">Message to the driver</label><textarea id="rn" rows="3" maxlength="500">We have booked a suitable dock for you. Please follow the new time.</textarea></div>`,
-      [{label:"Cancel"},{label:"Resolve",primary:true,run:async()=>{const r=await api(`/demo/api/cases/${encodeURIComponent(id)}/resolve`,{coordinator:by,resolution_code:$("#rc").value,note:$("#rn").value});
-        toast(r.ok?"Case resolved. The driver was notified in the chat.":"Could not resolve.",r.ok?"ok":"bad");refreshOps();refreshDriver();}}]);}
+      <div><label class="field" for="rn">Message to the driver</label><textarea id="rn" rows="3" maxlength="500" required></textarea><div class="gpsmsg" id="rnError" role="alert"></div></div>`,
+      [{label:"Cancel"},{label:"Resolve",primary:true,run:()=>{const note=$("#rn").value.trim(),code=$("#rc").value;
+        if(!note){$("#rnError").textContent="Write the message the driver will receive.";$("#rn").focus();return false;}
+        api(`/demo/api/cases/${encodeURIComponent(id)}/resolve`,{coordinator:by,resolution_code:code,note}).then(r=>{
+        toast(r.ok?"Case resolved. Your message was added to the chat.":"Could not resolve.",r.ok?"ok":"bad");refreshOps();refreshDriver();});}}]);}
 });
 async function refreshCases(){const r=await api("/demo/api/cases");if(r.ok){renderCases(r.data);setClock(r.data.clock);}}
 async function refreshActivity(){

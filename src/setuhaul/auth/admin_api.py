@@ -28,7 +28,8 @@ MAX_AUDIT_LIMIT = 500
 # Rows returned when no (or a non-positive) limit is given.
 DEFAULT_AUDIT_LIMIT = 200
 # Refusal code -> HTTP status; anything unlisted is a 422 (bad input).
-_STATUS = {"FORBIDDEN": 403, "UNKNOWN_USER": 404, "ALREADY_INVITED": 409, "CANNOT_DISABLE_SELF": 409, "LAST_ADMIN": 409}
+_STATUS = {"FORBIDDEN": 403, "UNKNOWN_USER": 404, "ALREADY_INVITED": 409, "CANNOT_DISABLE_SELF": 409, "LAST_ADMIN": 409,
+           "NOT_FACILITY_BOUND": 409}
 
 
 # The body of POST /v1/admin/users; unknown fields are refused.
@@ -60,6 +61,13 @@ def parse_since(raw: str) -> str:
         return parsed.astimezone(IST).isoformat()
     except OverflowError:
         raise AuthError("INVALID_SINCE") from None
+
+
+# The body of POST /v1/admin/users/{user_id}/facilities.
+class UserFacilities(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    facilities: list[str] = Field(default_factory=list, max_length=50)
 
 
 def register_admin_api(app: FastAPI, deps: AppDeps) -> None:
@@ -118,6 +126,27 @@ def register_admin_api(app: FastAPI, deps: AppDeps) -> None:
                                  target_id=user_id, outcome="REFUSED", ip=None, detail={"reason": exc.code}, clock=deps.clock)
                     conn.commit()
                 raise
+            return JSONResponse({"status": "OK", "user_id": user_id, "request_id": rid})
+
+        return await run_in_threadpool(with_conn, rid, write)
+
+    @app.post("/v1/admin/users/{user_id}/enable")
+    async def enable_user(request: Request, user_id: str, user: Annotated[User, Depends(require_role("ADMIN"))]) -> Response:
+        rid = request.state.request_id
+
+        def write(conn: sqlite3.Connection) -> Response:
+            users.enable(conn, actor=user, user_id=user_id, clock=deps.clock)
+            return JSONResponse({"status": "OK", "user_id": user_id, "request_id": rid})
+
+        return await run_in_threadpool(with_conn, rid, write)
+
+    @app.post("/v1/admin/users/{user_id}/facilities")
+    async def user_facilities(request: Request, user_id: str, body: UserFacilities,
+                              user: Annotated[User, Depends(require_role("ADMIN"))]) -> Response:
+        rid = request.state.request_id
+
+        def write(conn: sqlite3.Connection) -> Response:
+            users.set_facilities(conn, actor=user, user_id=user_id, facilities=tuple(body.facilities), clock=deps.clock)
             return JSONResponse({"status": "OK", "user_id": user_id, "request_id": rid})
 
         return await run_in_threadpool(with_conn, rid, write)

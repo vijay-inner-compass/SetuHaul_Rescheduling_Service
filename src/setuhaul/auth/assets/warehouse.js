@@ -9,27 +9,13 @@
       facility.form.submit();
     });
   }
-
-  // The add-driver form: a vehicle belongs to one carrier, so choosing it sets the carrier too.
-  var vehicle = document.getElementById("vehicle");
-  var carrier = document.getElementById("carrier");
-  if (vehicle && carrier) {
-    var sync = function () {
-      var chosen = vehicle.options[vehicle.selectedIndex];
-      if (chosen && chosen.getAttribute("data-carrier")) {
-        carrier.value = chosen.getAttribute("data-carrier");
-      }
-    };
-    vehicle.addEventListener("change", sync);
-    sync();
-  }
 })();
 
 // Driver chats and live refresh.
 (function () {
   "use strict";
   // The parts that change on their own. Forms are left alone so nothing being typed is lost.
-  var LIVE = [".wh .attention", "#board .bays", "#board .scroll", "#board .blocks-list", "#messages"];
+  var LIVE = [".wh .attention", ".wh .messages-count", "#board .asof", "#board .bays", "#board .scroll", "#board .waiting", "#board .blocks-list", "#messages"];
   var EVERY_MS = 3000;
   var seen = {};
   // What the server last sent, taken before any script changes the page.
@@ -75,40 +61,139 @@
   window.addEventListener("hashchange", function () { reopen(null); });
   reopen(null);
 
+  // What identifies a control across a refresh: its key, or the driver a chat button belongs to.
+  function find(root, mark) {
+    return mark ? root.querySelector("[" + mark[0] + "='" + CSS.escape(mark[1]) + "']") : null;
+  }
+  function markOf(node) {
+    var name = node && node.getAttribute && (node.hasAttribute("data-key") ? "data-key" : node.hasAttribute("data-driver") ? "data-driver" : "");
+    return name ? [name, node.getAttribute(name)] : null;
+  }
+
+  // Remember what the user had in a section that is about to be replaced; returns how to put it back.
+  function remember(section) {
+    var active = section.contains(document.activeElement) ? document.activeElement : null;
+    var focus = markOf(active);
+    // A control that disappears (a Claim button, say) hands focus to its card.
+    var card = active && markOf(active.closest("[data-key^='case:']"));
+    var open = Array.prototype.map.call(section.querySelectorAll("details[open][data-key]"), markOf);
+    var typed = Array.prototype.filter.call(section.querySelectorAll("textarea[data-key], select[data-key]"), function (f) {
+      return f.value !== "";
+    }).map(function (f) { return [markOf(f), f.value]; });
+    var errors = Array.prototype.map.call(section.querySelectorAll("[data-key^='case:'] > .action-note"), function (e) {
+      return [markOf(e.parentNode), e];
+    });
+    var chats = section.querySelector(".chat-list");
+    var listTop = chats ? chats.scrollTop : 0;
+    return function (fresh) {
+      open.forEach(function (mark) { var d = find(fresh, mark); if (d) { d.open = true; } });
+      typed.forEach(function (pair) {
+        var f = find(fresh, pair[0]);
+        if (f) {
+          f.value = pair[1];
+          // Still unsent: leaving it behind should be asked about.
+          if (f.form) { f.form.setAttribute("data-dirty", "true"); }
+        }
+      });
+      errors.forEach(function (pair) {
+        var holder = find(fresh, pair[0]);
+        if (holder) { holder.appendChild(pair[1]); } else { window.SH.say(pair[1].textContent); }
+      });
+      var list = fresh.querySelector(".chat-list");
+      if (list) { list.scrollTop = listTop; }
+      var target = find(fresh, focus) || find(fresh, card);
+      if (target) { target.focus({ preventScroll: true }); }
+    };
+  }
+
+  // Replacing a box mid-sentence would break the caret and Hindi input composition, so that section waits.
+  function typing(section) {
+    var active = document.activeElement;
+    return !!active && active.tagName === "TEXTAREA" && section.contains(active);
+  }
+
   function apply(page) {
     var keep = position();
     var changed = false;
     LIVE.forEach(function (sel) {
       var fresh = page.querySelector(sel);
       var current = document.querySelector(sel);
-      if (!fresh || !current || (seen[sel] && fresh.isEqualNode(seen[sel]))) { return; }
+      if (!fresh || !current || (seen[sel] && fresh.isEqualNode(seen[sel])) || typing(current)) { return; }
       seen[sel] = fresh.cloneNode(true);
       var node = document.importNode(fresh, true);
       node.hidden = current.hidden;
+      var restore = remember(current);
+      var across = current.scrollLeft;
       current.replaceWith(node);
+      // The hour the reader scrolled the board to stays in view.
+      node.scrollLeft = across;
+      // The chat shown is chosen first, so a focused control inside it is visible when focus returns.
+      if (sel === "#messages") { reopen(keep); }
+      restore(node);
       changed = true;
     });
     if (changed) { reopen(keep); }
   }
 
+  // Say how fresh the live parts are. The state is written only when it changes, so it is announced once.
+  var STALE_MS = 6000;
+  var line = document.querySelector("[data-live]");
+  function freshness(state, stale) {
+    if (!line) { return; }
+    var node = line.querySelector("[data-live-state]");
+    if (node.textContent !== state) { node.textContent = state; }
+    line.classList.toggle("stale", stale);
+  }
+  function updated() {
+    failures = 0;
+    freshness("Live updates on.", false);
+    if (line) { line.querySelector("[data-live-time]").textContent = "Last updated " + new Date().toLocaleTimeString() + "."; }
+  }
+  function paused() {
+    freshness("Updates paused: the service is not answering. Retrying. What you see may be out of date.", true);
+  }
+
   var busy = false;
+  var asked = 0;
+  var failures = 0;
+  updated();
   var timer = window.setInterval(function () {
-    if (document.hidden || busy) { return; }
+    if (document.hidden) { return; }
+    if (busy) {
+      // A request that hangs is as stale as one that fails.
+      if (Date.now() - asked > STALE_MS) { paused(); }
+      return;
+    }
     busy = true;
-    fetch(window.location.pathname + window.location.search, { credentials: "same-origin", redirect: "manual" })
+    asked = Date.now();
+    // Ask for the facility this tab is showing, whatever another tab has chosen since.
+    var address = new URL(window.location.href);
+    var select = document.querySelector("#board select[name=facility]");
+    var shown = select && Array.prototype.filter.call(select.options, function (o) { return o.defaultSelected; })[0];
+    if (shown) { address.searchParams.set("facility", shown.value); }
+    fetch(address.pathname + address.search,
+      { credentials: "same-origin", redirect: "manual", headers: { "X-Live": "1" }, signal: AbortSignal.timeout(2 * STALE_MS) })
       .then(function (response) {
         // Signed out or refused: stop asking and say so.
-        if (!response.ok) {
+        if (response.type === "opaqueredirect" || response.status === 401 || response.status === 403) {
           window.clearInterval(timer);
-          window.SH.say("Live updates stopped. Reload the page and sign in again.");
+          freshness("Live updates stopped. Reload the page and sign in again.", true);
           return null;
         }
+        // Any other failure (a busy database, say) is tried again.
+        if (!response.ok) { throw new Error("unavailable"); }
         return response.text();
       })
       .then(function (text) {
-        if (text) { apply(new DOMParser().parseFromString(text, "text/html")); }
+        if (text) {
+          apply(new DOMParser().parseFromString(text, "text/html"));
+          updated();
+        }
       })
-      .catch(function () { /* A dropped request: the next tick tries again. */ })
+      .catch(function () {
+        failures += 1;
+        if (failures >= 2) { paused(); }
+      })
       .then(function () { busy = false; });
   }, EVERY_MS);
 })();
@@ -147,6 +232,9 @@
       if (driver && driver.selectedIndex >= 0) {
         limit(form.elements.vehicle_id, "carrier", driver.options[driver.selectedIndex].getAttribute("data-carrier"));
       }
+      if (form.elements.carrier_id) {
+        limit(form.elements.vehicle_id, "carrier", form.elements.carrier_id.value);
+      }
     };
     form.addEventListener("change", sync);
     sync();
@@ -177,7 +265,7 @@
     }).then(function (response) {
       return response.json().catch(function () { return null; }).then(function (data) {
         if (!response.ok) {
-          line.textContent = (data && (data.message || data.reason_code)) || "INVALID_REQUEST";
+          line.textContent = window.SH.reason(response.status, data).text;
           return;
         }
         var text = data.slots_created + " slots added.";

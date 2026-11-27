@@ -39,7 +39,7 @@
   }
 
   function refusal(result) {
-    return result.data.reason_code || "Request failed (" + result.status + ")";
+    return window.SH.reason(result.status, result.data).text;
   }
 
   function save(form, body) {
@@ -54,6 +54,9 @@
         return;
       }
       body.confirm = "SEND_TO_LANGSMITH";
+    }
+    if (!window.SH.keep(form)) {
+      return;
     }
     window.SH.say("Working...");
     post("/v1/admin/settings/" + section, body).then(function (result) {

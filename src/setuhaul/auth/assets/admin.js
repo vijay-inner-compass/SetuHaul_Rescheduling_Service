@@ -11,3 +11,20 @@
     form.appendChild(clear);
   }
 })();
+
+// An admin account is not tied to facilities, so the boxes are put away for that role.
+(function () {
+  "use strict";
+  var box = document.querySelector("fieldset[data-facilities]");
+  var role = box && box.form && box.form.elements.role;
+  if (!role) {
+    return;
+  }
+  function sync() {
+    var off = role.value === "ADMIN";
+    box.hidden = off;
+    Array.prototype.forEach.call(box.querySelectorAll("input"), function (input) { input.disabled = off; });
+  }
+  role.addEventListener("change", sync);
+  sync();
+})();

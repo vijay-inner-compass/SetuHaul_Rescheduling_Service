@@ -341,6 +341,12 @@ curl -X POST "https://api.telegram.org/bot<BOT_TOKEN>/setWebhook" -d "url=<base>
 6. To cut access: **Disable** a user (their sessions end at once); **Suspend** an approved onboarded driver (admin screen, **Onboarded drivers**;
    **Re-approve** undoes it while the licence is valid); or **Revoke Telegram** for a driver. A revoke is sticky: sharing the number again,
    from that or any other account, is refused until someone allowed to clicks **Allow re-link** (audited), after which the driver can link again.
+7. To work a hand-off case: `/warehouse` > **Messages** > **Open cases** > **Claim**, then choose an outcome, write the message the driver will
+   receive and **Resolve**. Only the claimant can resolve. **Recently resolved** offers **Reopen** inside the reopen window (24 hours by default).
+   A case that names no load is visible to admins only.
+8. Cases that name no load belong to admins: the admin screen counts them under **Cases with no load**; work them on `/warehouse` > **Messages**.
+9. Admins can **Re-enable** a disabled user and **Change facilities** for warehouse and security users; both are audited. A re-enabled
+   user signs in again.
 
 Rules enforced by the server:
 

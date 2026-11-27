@@ -1,0 +1,36 @@
+/* The colours every SetuHaul screen draws with. Named by job, so a change here reaches all of them. */
+:root {
+  --sh-navy: #17324d;
+  --sh-navy-dark: #0f2438;
+  --sh-white: #ffffff;
+  --sh-amber: #f2b705;
+  --sh-ink: #1b1f24;
+  --sh-ink-2: #3d4a58;
+  --sh-muted: #5b6570;
+  --sh-bg: #f6f7f9;
+  --sh-surface-alt: #eef1f4;
+  --sh-line: #dde1e6;
+  --sh-input-line: #6f7d8c;
+  --sh-on-navy: #cfe3f7;
+  --sh-danger: #9a1b1b;
+  --sh-danger-soft: #fdf1f1;
+  --sh-danger-line: #e9b9b9;
+  --sh-ok: #1c6b41;
+  --sh-ok-line: #2e8b57;
+  --sh-free: #eef8f0;
+  --sh-warn: #5c3500;
+  --sh-warn-line: #a15c00;
+  --sh-warn-soft: #fff4d6;
+  --sh-held-a: #fdeeb5;
+  --sh-held-b: #fbe595;
+  --sh-held-mark: #d99a00;
+  --sh-info-soft: #dbe8fa;
+  --sh-info: #1d4f8a;
+  --sh-blocked-a: #e6e8eb;
+  --sh-blocked-b: #d6d9de;
+  --sh-door: #244766;
+  --sh-door-line: #5b7d9d;
+  --sh-door-slat: #4a6d8e;
+  --sh-door-open: #0c1c2c;
+  --sh-seam: #8ba0b5;
+}
