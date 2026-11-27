@@ -4,10 +4,10 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 from setuhaul.mail_transport import MailSender, OutgoingMail, SmtpSender
-from setuhaul.mailcfg import load_smtp_settings
+from setuhaul.mailcfg import MailSettings, load_smtp_settings
 
 # Subject and opening line by kind of link; the lifetime matches links.LIFETIME.
 _WORDS = {
@@ -16,7 +16,8 @@ _WORDS = {
 }
 
 
-def account_sender_from_env(env: Mapping[str, str]) -> tuple[MailSender | None, tuple[str, ...]]:
+def account_sender_from_env(env: Mapping[str, str], factory: Callable[[MailSettings], MailSender] = SmtpSender
+                            ) -> tuple[MailSender | None, tuple[str, ...]]:
     """The sender for password links, or None with the names (never values) of what is missing.
 
     Separate from the partner-mail mode: turning this on sends no partner requests and reads no inbox.
@@ -32,7 +33,7 @@ def account_sender_from_env(env: Mapping[str, str]) -> tuple[MailSender | None, 
     except ValueError:
         # The only numbers this reads that sending uses are the SMTP ones.
         return None, ("SETUHAUL_SMTP_PORT",)
-    return SmtpSender(settings), ()
+    return factory(settings), ()
 
 
 def link_mail(to_addr: str, purpose: str, url: str, google_url: str | None = None) -> OutgoingMail:

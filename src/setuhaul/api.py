@@ -69,6 +69,7 @@ from setuhaul import pass_check
 
 # Web sessions, the role guard and the facility scope of cases.
 from setuhaul.auth import same_origin, sessions
+from setuhaul.auth.account_mail import account_sender_from_env
 from setuhaul.auth.authz import AuthzError, require_role
 from setuhaul.auth.google import GoogleVerifier
 from setuhaul.auth.onboarding import driver_eligible
@@ -171,6 +172,13 @@ SIGNATURE_WINDOW_SECONDS = 300
 GPS_MAX_FUTURE_SECONDS = 300
 
 
+@dataclass(frozen=True)
+class PasswordMail:
+    # None: password links cannot be sent; `missing` then names the settings to fill in (never their values).
+    sender: MailSender | None
+    missing: tuple[str, ...]
+
+
 @dataclass
 # Everything the app needs, passed in explicitly so tests and the demo can substitute parts.
 class AppDeps:
@@ -223,10 +231,31 @@ class AppDeps:
     # Tell Telegram this service's webhook address at start-up (needs settings and public_url).
     auto_register_webhook: bool = False
 
+    def password_mail(self) -> PasswordMail:
+        """The sender for password links in force now: the screen's saved mailbox over the environment's."""
+        # A sender given outright (tests) is used as it is.
+        if self.password_sender is not None:
+            return PasswordMail(self.password_sender, ())
+        if self.settings is None:
+            return PasswordMail(None, ("SETUHAUL_PASSWORD_LOGIN",))
+        try:
+            conn = open_connection(path=self.db_path, readonly=True)
+            try:
+                env = self.settings.effective(conn).env
+            finally:
+                conn.close()
+        except (sqlite3.Error, FileNotFoundError):
+            # The sign-in page must still draw: the environment alone is used.
+            env = self.settings.base_env
+        sender, missing = account_sender_from_env(env, self.settings.mail)
+        if env.get("SETUHAUL_PASSWORD_LOGIN") != "1":
+            missing = ("SETUHAUL_PASSWORD_LOGIN",)
+        return PasswordMail(sender, missing)
+
     @property
     def password_login_on(self) -> bool:
         # Links are built from the public URL, so without it there is nothing to send.
-        return self.password_sender is not None and bool(self.public_url)
+        return bool(self.public_url) and self.password_mail().sender is not None
 
 
 # The inbound webhook body. Unknown fields are rejected (extra='forbid').
@@ -951,7 +980,6 @@ def telegram_from_env() -> tuple[bytes, TelegramClient | None]:
 
 def create_app_from_env() -> FastAPI:
     """``uvicorn --factory setuhaul.api:create_app_from_env``. Secrets come from the environment only."""
-    from setuhaul.auth.account_mail import account_sender_from_env
 
     # Central settings.
     s = load_settings()
@@ -1014,15 +1042,14 @@ def create_app_from_env() -> FastAPI:
             boot.close()
     # Telegram: the webhook secret and, when both are usable, the client that sends replies.
     tg_secret, tg_client = telegram_from_env()
-    # Email and password sign-in, off unless switched on and complete.
-    password_sender, unset = account_sender_from_env(os.environ)
+    # Email and password sign-in: the mailbox may also be saved from the screen, so this only warns about .env.
+    _, unset = account_sender_from_env(os.environ)
     if unset:
         import logging
 
         logging.getLogger(__name__).warning("Password sign-in disabled: set %s", ", ".join(unset))
     # Assemble the dependencies and build the app.
     return create_app(AppDeps(
-        password_sender=password_sender,
         telegram_secret=tg_secret, telegram=tg_client,
         settings=SettingsSource(os.environ, stub=os.environ.get("SETUHAUL_USE_STUB_MODEL") == "1"),
         google=google, session_secret=os.environ.get("SETUHAUL_SESSION_SECRET", "").encode(),

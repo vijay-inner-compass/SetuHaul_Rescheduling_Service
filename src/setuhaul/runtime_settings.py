@@ -8,6 +8,8 @@ from collections.abc import Callable, Mapping
 import httpx
 
 from setuhaul import app_settings
+from setuhaul.mail_transport import MailSender, SmtpSender
+from setuhaul.mailcfg import MailSettings
 from setuhaul.auth.telegram import RealTelegramClient, TelegramClient
 from setuhaul.model_gateway import (
     PROVIDERS,
@@ -30,13 +32,16 @@ class SettingsSource:
     """Hands out the settings in force. Only the real service has one; tests and the demo run without."""
 
     def __init__(self, base_env: Mapping[str, str], stub: bool = False, transport: httpx.BaseTransport | None = None,
-                 telegram_factory: Callable[[str], TelegramClient] | None = None) -> None:
+                 telegram_factory: Callable[[str], TelegramClient] | None = None,
+                 mail: Callable[[MailSettings], MailSender] = SmtpSender) -> None:
         # A copy of the environment as the service started.
         self.base_env = dict(base_env)
         self.stub = stub
         # A stand-in network for tests.
         self._transport = transport
         self._telegram_factory = telegram_factory or _real_telegram
+        # Builds the sender for password links from the mailbox in force; a stand-in in tests.
+        self.mail = mail
         # The client for the token last in force, so one is not built for every message.
         self._bot: tuple[str, TelegramClient] | None = None
 

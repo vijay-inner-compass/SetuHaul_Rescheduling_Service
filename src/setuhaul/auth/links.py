@@ -79,7 +79,7 @@ def may_send(redis: Redis, user_id: str, *, forgot: bool) -> bool:
 
 def send(deps: AppDeps, user_id: str, purpose: Purpose, *, forgot: bool = False) -> Sent:
     """Email a new link to a user, within the limits. Blocking: callers run it off the event loop."""
-    sender = deps.password_sender
+    sender = deps.password_mail().sender
     conn = open_connection(path=deps.db_path)
     try:
         user = users.find_by_id(conn, user_id)
