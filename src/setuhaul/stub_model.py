@@ -95,6 +95,15 @@ class StubGateway:
         shipment = (facts.get("active_shipment_ids") or [None])[0]
         # The shipment a cancel or release is about: the thread's selected one, else the first active one.
         target = facts.get("selected_shipment_id") or shipment
+        # The answer to "cancel?": a yes goes back to the cancel tool; a no changes nothing.
+        awaiting = facts.get("cancellation_awaiting_yes")
+        if awaiting:
+            yes = re.match(r"(yes|haan|ok)\b|हाँ", low.strip())
+            if yes:
+                return ModelResponse(tool_calls=(ToolCall(id="s1", name="cancel_appointment", arguments={
+                    "shipment_id": awaiting, "driver_quote": yes.group(0)}),))
+            if re.match(r"(no|nahi)\b", low.strip()):
+                return ModelResponse(text="Okay, your appointment stays as it is.")
         # "change facility to <city>": ask the destination.
         if "facility" in low and "change" in low and shipment:
             city = "FAC-GGN-01" if "gurugram" in low else "FAC-PARTNER-01" if "partner" in low else "FAC-JAI-01"

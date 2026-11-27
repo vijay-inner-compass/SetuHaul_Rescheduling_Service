@@ -181,3 +181,17 @@ def test_denials_are_not_mistaken_for_claims(text: str) -> None:
 def test_a_denial_does_not_hide_a_real_claim_in_the_same_reply() -> None:
     assert claims_confirmed("Nothing was held earlier. Your appointment is now confirmed.")
     assert claims_held("I have not changed anything else. I am holding the 12:00 slot for you.")
+
+
+# "No problem" and a negation in an earlier clause deny nothing about the booking that follows.
+@pytest.mark.parametrize("text", [
+    "No problem, your booking is confirmed.", "Not to worry - your slot is confirmed for 12:00.",
+    "No problem your appointment is now confirmed.", "No delay at all; your slot is booked.", "No worries: it is confirmed.",
+])
+def test_a_reassurance_before_a_claim_does_not_hide_it(text: str) -> None:
+    assert claims_confirmed(text)
+
+
+@pytest.mark.parametrize("text", ["No worries, I am holding it for you.", "Not a problem — I have held it for you."])
+def test_a_reassurance_before_a_hold_claim_does_not_hide_it(text: str) -> None:
+    assert claims_held(text)

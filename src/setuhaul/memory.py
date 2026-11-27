@@ -89,6 +89,17 @@ class ConversationEvent(BaseModel):
     at: datetime
 
 
+class PendingCancel(BaseModel):
+    """The system has asked "cancel this appointment?" and waits for the driver's next message."""
+
+    model_config = ConfigDict(frozen=True)
+
+    shipment_id: str
+    appointment_id: str
+    asked_message_id: str  # the yes must come in a later message than this one
+    asked_at: datetime
+
+
 class ConversationState(BaseModel):
     """Structured state. Never trimmed by the turn caps."""
 
@@ -101,6 +112,8 @@ class ConversationState(BaseModel):
     offered_slot_ids: tuple[str, ...] = ()
     # The live hold, if any.
     hold: HoldRef | None = None
+    # A cancellation the driver has been asked to say yes to.
+    pending_cancel: PendingCancel | None = None
     # Events the driver has not been told about yet.
     pending_events: list[ConversationEvent] = Field(default_factory=list)
     language: str | None = None  # en | hi | hinglish, once established

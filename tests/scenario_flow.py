@@ -189,8 +189,10 @@ def run_scenario(workdir: Path | None = None) -> Bundle:
 
     # 6. cancellation
     b.say("\n-- 6. Cancellation --")
-    rc = talk("DRV001", "THR011", "09:44:00", "please cancel my 12:00 appointment for SHP1017", [
+    talk("DRV001", "THR011", "09:44:00", "please cancel my 12:00 appointment for SHP1017", [
         tc("cancel_appointment", shipment_id="SHP1017", driver_quote="cancel my 12:00 appointment"), say_text("done")])
+    rc = talk("DRV001", "THR011", "09:44:20", "yes", [
+        tc("cancel_appointment", shipment_id="SHP1017", driver_quote="yes"), say_text("done")])
     b.check("cancellation outside the cutoff is committed and worded from the row", rc.text == "Your appointment has been cancelled. Reference APT1017." and
             sql("select appointment_status from appointments where appointment_id='APT1017'") == [("CANCELLED",)])
 

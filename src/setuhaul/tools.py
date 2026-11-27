@@ -47,8 +47,10 @@ from setuhaul.booking import (
 
 # Release, cancel and return-to-original operations.
 from setuhaul.cancellation import (
+    CancellationResult,
     cancel_confirmed_appointment,
     cancel_pending_change,
+    preview_cancellation,
     request_original_slot_again,
 )
 
@@ -79,7 +81,7 @@ from setuhaul.identity import AuthError, TrustedDriverContext, authorize_shipmen
 
 # Conversation state and the hold reference.
 from setuhaul.mailcfg import load_mail_settings
-from setuhaul.memory import ConversationMemoryStore, HoldRef
+from setuhaul.memory import ConversationMemoryStore, HoldRef, PendingCancel
 
 # Tool call, tool result and schema helper types.
 from setuhaul.model_gateway import ToolCall, ToolResult, tool_schema
@@ -134,7 +136,7 @@ class ReportArgs(_Args):
     kind: Literal["late_by", "repair", "explicit_eta"]
     minutes: int | None = Field(None, description="Minutes late (late_by) or repair duration (repair).")
     travel_minutes: int | None = Field(None, description="Drive time after the repair, in minutes.")
-    eta_time: str | None = Field(None, description="Driver's stated arrival time today, 24h HH:MM, IST.")
+    eta_time: str | None = Field(None, description="Driver's stated arrival time, 24h HH:MM, IST.")
     baseline: Literal["planned", "current"] = "planned"
 
 
@@ -188,10 +190,10 @@ class ShipmentQuoteArgs(_Args):
     driver_quote: str = Field(min_length=1)
 
 
-# Arguments for request_partner_slot: which load, which start time (HH:MM, today, IST), and the driver's own words.
+# Arguments for request_partner_slot: which load, which start time (HH:MM, IST), and the driver's own words.
 class PartnerSlotArgs(_Args):
     shipment_id: str
-    start_time: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$", description="Wanted start, HH:MM today (IST).")
+    start_time: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$", description="Wanted start, HH:MM (IST), the next time it comes round.")
     driver_quote: str = Field(min_length=1, description="The driver's own words, copied from their current message.")
 
 
@@ -218,6 +220,11 @@ class TurnState:
     confirmed_appointment_id: str | None = None
     # Set when a cancellation committed this turn.
     cancelled_appointment_id: str | None = None
+    # The appointment the system is now asking the driver to say yes to cancelling.
+    cancel_question: dict[str, str] | None = None
+    # A confirmation or cancellation was asked for but the driver's words did not agree: the system says nothing changed.
+    confirm_refused: bool = False
+    cancel_refused: bool = False
     # True if a hold was released this turn.
     released: bool = False
     # True if the model read a confirmed appointment this turn (so it may describe it).
@@ -287,14 +294,27 @@ def _quote_present(ctx: ToolContext, quote: str) -> bool:
     return bool(q) and q in msg and (len(q) >= 2 or q == msg)
 
 
-# Turn a 24-hour 'HH:MM' into today's date at that time, in IST.
-def _today_at(ctx: ToolContext, hhmm: str) -> datetime:
-    # Split the text into hour and minute.
+# How long ago a stated arrival time may be and still mean "now". Anything longer ago means tomorrow.
+_JUST_GONE = timedelta(hours=1)
+
+
+def _on_day_of(moment: datetime, hhmm: str) -> datetime:
     h, m = hhmm.split(":")
-    # Today's date comes from the injected clock.
-    now = ctx.clock.now().astimezone(IST)
-    # Same date, requested time, no seconds.
-    return now.replace(hour=int(h), minute=int(m), second=0, microsecond=0)
+    return moment.astimezone(IST).replace(hour=int(h), minute=int(m), second=0, microsecond=0)
+
+
+# A driver's 'HH:MM' for when they arrive (or want to start). At 23:30, "01:00" is tomorrow: read as today it was long past,
+# and a slot before the truck could get there was offered.
+def arrival_time(now: datetime, hhmm: str) -> datetime:
+    at = _on_day_of(now, hhmm)
+    return at + timedelta(days=1) if at < now - _JUST_GONE else at
+
+
+# A limit on the slot ("not before", "not after") belongs to the occurrence nearest the arrival, which may be the day before
+# or after: "not after 02:00" for a 22:00 arrival means tonight.
+def time_near(arrival: datetime, hhmm: str) -> datetime:
+    at = _on_day_of(arrival, hhmm)
+    return min((at + timedelta(days=n) for n in (-1, 0, 1)), key=lambda t: abs(t - arrival))
 
 
 # Format a datetime as 'HH:MM' in IST.
@@ -326,7 +346,7 @@ def _report(ctx: ToolContext, r: ReportArgs) -> DelayReport:
     if r.eta_time is None:
         raise ValueError("eta_time is required for explicit_eta")
     # Build the report for the stated arrival time.
-    return DelayReport.explicit(_today_at(ctx, r.eta_time))
+    return DelayReport.explicit(arrival_time(ctx.clock.now(), r.eta_time))
 
 
 # Work out the ETA for a shipment from the planned ETA, the latest update, gate evidence and the driver's report.
@@ -473,8 +493,8 @@ def _search_slot_options(ctx: ToolContext, a: SearchArgs) -> dict[str, Any]:
         return _eta_payload(eta)
     # The driver's acceptable window, if given.
     constraints = DriverConstraints(
-        earliest_acceptable=_today_at(ctx, a.earliest_time) if a.earliest_time else None,
-        latest_acceptable=_today_at(ctx, a.latest_time) if a.latest_time else None)
+        earliest_acceptable=time_near(eta.eta, a.earliest_time) if a.earliest_time else None,
+        latest_acceptable=time_near(eta.eta, a.latest_time) if a.latest_time else None)
     # One reading of now.
     now = ctx.clock.now()
     # The truck cannot arrive sooner than its latest GPS position allows, whatever was reported: slots it cannot reach are not offered.
@@ -649,6 +669,41 @@ def sounds_like_agreement(text: str) -> bool:
     return _AGREE.search(_NEGATED.sub(" ", text)) is not None
 
 
+# Confirming and cancelling change a real booking, so they need more than "carries an agreeing word": a clear yes with nothing
+# that holds back. When in doubt the answer is no, and the driver is asked again.
+_ALSO_YES = r"yep|yup|go\s+ahead|book\s+it|sahi|जी"
+_CANCEL_WORDS = r"cancel\w*|radd|रद्द|कैंसल|कैंसिल"
+_NO_TROUBLE = re.compile(r"(?<!\w)(?:no\s+(?:problem|issue|worries)|not\s+a\s+problem)(?!\w)", re.IGNORECASE)
+# A refusal, a "wait", a "but", or a question.
+_HOLDS_BACK = (r"no|not|never|dont|\w+n['’]t|nahi|nahin|mat|नहीं|मत|wait|ruk\w*|but|lekin|magar|लेकिन|"
+               r"what|when|which|why|how|kya|kab|kyun|kitna|क्या|कब|क्यों")
+
+
+def _words(pattern: str) -> re.Pattern[str]:
+    return re.compile(rf"(?<!\w)(?:{pattern})(?!\w)", re.IGNORECASE)
+
+
+_YES = re.compile(rf"{_AGREE.pattern}|(?<!\w)(?:{_ALSO_YES})(?!\w)", re.IGNORECASE)
+_NOT_CONFIRM = _words(rf"{_HOLDS_BACK}|{_CANCEL_WORDS}")
+_CANCEL_YES = re.compile(rf"{_YES.pattern}|(?<!\w)(?:{_CANCEL_WORDS})(?!\w)", re.IGNORECASE)
+_NOT_CANCEL = _words(rf"{_HOLDS_BACK}|keep|rakho|rakhna|रखो|रखें")
+
+
+def _clear_yes(text: str, yes: re.Pattern[str], holds_back: re.Pattern[str]) -> bool:
+    said = _NO_TROUBLE.sub(" ok ", text)
+    if "?" in said or holds_back.search(said):
+        return False
+    return yes.search(said) is not None
+
+
+def agrees_to_confirm(text: str) -> bool:
+    return _clear_yes(text, _YES, _NOT_CONFIRM)
+
+
+def agrees_to_cancel(text: str) -> bool:
+    return _clear_yes(text, _CANCEL_YES, _NOT_CANCEL)
+
+
 # WRITE tool: the driver says no to the held slot. Release it and hold the next one they have not been offered.
 def _decline_held_slot(ctx: ToolContext, a: QuoteArgs) -> dict[str, Any]:
     if sounds_like_agreement(ctx.message_text):
@@ -696,6 +751,10 @@ def _confirm_reschedule(ctx: ToolContext, a: ConfirmArgs) -> dict[str, Any]:
     view = get_hold(ctx.conn, a.hold_appointment_id, ctx.clock)
     if view is None or view.driver_id != ctx.driver_id or view.thread_id != ctx.thread_id:
         raise AuthError("FOREIGN_HOLD")
+    # The model asked to confirm; the driver's own words must say so.
+    if not agrees_to_confirm(ctx.message_text):
+        ctx.turn.confirm_refused = True
+        return {"status": "NEEDS_YES", "note": "The driver has not clearly said yes. Nothing was confirmed."}
     # Atomically end the original and promote the hold.
     r = confirm_reschedule(ctx.conn, ConfirmCommand(
         driver_id=ctx.driver_id, thread_id=ctx.thread_id, message_id=ctx.message_id, shipment_id=view.shipment_id,
@@ -731,18 +790,56 @@ def _release_pending_change(ctx: ToolContext, a: ShipmentQuoteArgs) -> dict[str,
     return {"status": out.status, "note": "The original appointment is unchanged."}
 
 
-# WRITE tool: cancel a confirmed appointment, subject to the cut-off and customer-commitment rules.
-def _cancel_appointment(ctx: ToolContext, a: ShipmentQuoteArgs) -> dict[str, Any]:
-    r = cancel_confirmed_appointment(ctx.conn, ctx.driver_id, ctx.thread_id, ctx.message_id, a.shipment_id, ctx.clock)
+# How long the driver has to answer "cancel?" (it must also be their very next message).
+CANCEL_QUESTION_LIFE = timedelta(minutes=10)
+
+
+# The cancel question still waiting for an answer, or None.
+def _pending_cancel(ctx: ToolContext) -> PendingCancel | None:
+    pending: PendingCancel | None = _state(ctx).pending_cancel
+    if pending is None or ctx.clock.now() - pending.asked_at > CANCEL_QUESTION_LIFE:
+        return None
+    return pending
+
+
+# Report what the rules or the database answered, and hand off when a person must decide.
+def _cancel_outcome(ctx: ToolContext, shipment_id: str, r: CancellationResult) -> dict[str, Any]:
     _check_system(r.status, r.outcome)
     if r.status == "CANCELLED":
         ctx.turn.cancelled_appointment_id = r.appointment_id
         ctx.turn.committed.append("cancel_appointment")
     # The rules say a person must decide: hand off with the reason.
     if r.status == "ESCALATE":
-        _handoff(ctx, r.escalation_code or "POLICY_CONFLICT", a.shipment_id, "Cancellation needs a person.",
+        _handoff(ctx, r.escalation_code or "POLICY_CONFLICT", shipment_id, "Cancellation needs a person.",
                  appointment_id=r.appointment_id)
     return {"status": r.status, "escalation": r.escalation_code, "note": "Nothing was cancelled unless status is CANCELLED."}
+
+
+# WRITE tool: cancel a confirmed appointment, subject to the cut-off and customer-commitment rules. Two messages: the first
+# only has the system ask; a clear yes in the next one cancels. A model calling this on the wrong message changes nothing.
+def _cancel_appointment(ctx: ToolContext, a: ShipmentQuoteArgs) -> dict[str, Any]:
+    appt, refusal = preview_cancellation(ctx.conn, ctx.driver_id, a.shipment_id, ctx.clock)
+    if refusal is not None:
+        return _cancel_outcome(ctx, a.shipment_id, refusal)
+    assert appt is not None
+    pending = _pending_cancel(ctx)
+    asked = pending if pending is not None and pending.appointment_id == appt["appointment_id"] else None
+    state = _state(ctx)
+    if asked is None:
+        question = PendingCancel(shipment_id=a.shipment_id, appointment_id=appt["appointment_id"],
+                                 asked_message_id=ctx.message_id, asked_at=ctx.clock.now())
+        ctx.memory.save_structured_state(ctx.driver_id, ctx.thread_id, state.model_copy(update={"pending_cancel": question}))
+        ctx.turn.cancel_question = _slot_facts(ctx.conn, appt["slot_id"])
+    if asked is None or asked.asked_message_id == ctx.message_id:
+        return {"status": "NEEDS_YES", "note": "The system is asking the driver to reply Yes. Nothing was cancelled."}
+    if not agrees_to_cancel(ctx.message_text):
+        ctx.turn.cancel_refused = True
+        return {"status": "NOT_AGREED", "note": "The driver did not say yes. Nothing was cancelled."}
+    r = cancel_confirmed_appointment(ctx.conn, ctx.driver_id, ctx.thread_id, ctx.message_id, a.shipment_id, ctx.clock)
+    if r.status == "CANCELLED":
+        ctx.memory.save_structured_state(ctx.driver_id, ctx.thread_id,
+                                         _state(ctx).model_copy(update={"pending_cancel": None, "hold": None}))
+    return _cancel_outcome(ctx, a.shipment_id, r)
 
 
 # WRITE tool: ask to move this load to another facility. Only a request; the destination warehouse decides.
@@ -775,7 +872,7 @@ def _request_partner_slot(ctx: ToolContext, a: PartnerSlotArgs) -> dict[str, Any
         ttl = load_mail_settings().request_ttl_min
     except ValueError:  # a half-configured live mailbox must not break the chat
         ttl = 120
-    start = _today_at(ctx, a.start_time)
+    start = arrival_time(ctx.clock.now(), a.start_time)
     r = request_slot(ctx.conn, ctx.clock, shipment_id=a.shipment_id, proposed_start=start,
                      proposed_end=start + timedelta(hours=1), ttl_min=ttl)
     if r.status in ("REQUESTED", "ALREADY_PENDING"):
@@ -805,6 +902,9 @@ def _has_hold(ctx: ToolContext) -> bool:
 
 # Availability rule: confirm is offered only for a hold created in an EARLIER message.
 def _can_confirm(ctx: ToolContext) -> bool:
+    # While "cancel?" is waiting, a yes or no answers that question, not a held slot.
+    if _pending_cancel(ctx) is not None:
+        return False
     hold = _state(ctx).hold
     return hold is not None and hold.created_message_id != ctx.message_id
 
@@ -861,7 +961,7 @@ REGISTRY: dict[str, ToolSpec] = {t.name: t for t in [
         use="ONLY when a hold already exists from an earlier message and the driver's current message confirms it.",
         dont="in the same message that created the hold.",
         args="hold_appointment_id, driver_quote (their exact words from this message).",
-        returns="CONFIRMED (the system words the confirmation) or why not.",
+        returns="CONFIRMED (the system words the confirmation), NEEDS_YES if the driver has not clearly agreed, or why not.",
         fails="APPROVAL_NOT_PRESENT, ONE_WRITE_PER_MESSAGE, FOREIGN_HOLD."),
         ConfirmArgs, _confirm_reschedule, write=True, available=_can_confirm),
     ToolSpec("decline_held_slot", _JOB.format(
@@ -881,15 +981,16 @@ REGISTRY: dict[str, ToolSpec] = {t.name: t for t in [
         fails="APPROVAL_NOT_PRESENT, FOREIGN_SHIPMENT."),
         ShipmentQuoteArgs, _release_pending_change, write=True, available=_has_hold),
     ToolSpec("cancel_appointment", _JOB.format(
-        use="ONLY when the driver clearly asks to cancel their confirmed appointment.",
+        use="when the driver asks to cancel their confirmed appointment (the system then asks them to reply Yes), and again "
+            "when they answer Yes.",
         dont="to undo a hold (use release_pending_change).", args="shipment_id, driver_quote.",
-        returns="CANCELLED, or ESCALATE (cutoff or customer commitment: operations decides).",
+        returns="NEEDS_YES (the system words the question), CANCELLED, or ESCALATE (cutoff or customer commitment: operations decides).",
         fails="APPROVAL_NOT_PRESENT, FOREIGN_SHIPMENT."), ShipmentQuoteArgs, _cancel_appointment, write=True),
     ToolSpec("request_partner_slot", _JOB.format(
         use="ONLY when the driver asks for a slot at a partner warehouse (a facility we do not control) for a load bound there. "
             "It emails the warehouse; nothing is booked until they approve by reply.",
         dont="for our own facilities (use search_slot_options), or to say anything is booked.",
-        args="shipment_id, start_time (HH:MM today IST), driver_quote (their exact words from this message).",
+        args="shipment_id, start_time (HH:MM IST), driver_quote (their exact words from this message).",
         returns="REQUESTED or ALREADY_PENDING (the system words the state), or NOT_PARTNER_FACILITY / NO_PARTNER_CONTACT / SHIPMENT_NOT_RESCHEDULABLE.",
         fails="APPROVAL_NOT_PRESENT, FOREIGN_SHIPMENT, ONE_WRITE_PER_MESSAGE."),
         PartnerSlotArgs, _request_partner_slot, write=True, available=_has_partner_shipment),

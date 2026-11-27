@@ -240,6 +240,8 @@ def _facts(ctx: ConversationContext, services: ConversationServices, clock: Cloc
         "selected_shipment_id": state.selected_shipment_id,
         "active_shipment_ids": list(state.active_shipment_ids),
         "latest_option_set_id": state.latest_option_set_id,
+        # "Cancel?" was asked and this message is the answer to it.
+        "cancellation_awaiting_yes": None if state.pending_cancel is None else state.pending_cancel.shipment_id,
         # The facilities a driver can ask to move to (ids and names only).
         "other_facilities": {r["facility_id"]: r["facility_name"] for r in services.conn.execute(
             "select facility_id, facility_name from facilities where active_flag=1 order by facility_id")},
@@ -406,6 +408,19 @@ def _finalize(
         partner_text = render_partner_status(conn, turn.partner_shipment_id, lang)
         if partner_text:
             parts.append(partner_text)
+
+    # The system's question or "nothing changed" line, when a confirmation or cancellation was held back.
+    if turn.cancel_question:
+        parts.append(say("cancel_ask", lang, **{k: v for k, v in turn.cancel_question.items() if k != "facility"}))
+    elif turn.cancel_refused and not parts:
+        parts.append(say("cancel_not_done", lang))
+    elif turn.confirm_refused and not parts:
+        parts.append(say("confirm_needs_yes", lang))
+
+    # "Cancel?" waits for one message only: anything older than this turn's question lapses now.
+    waiting = services.memory.load(driver_id, thread_id).state
+    if waiting.pending_cancel is not None and waiting.pending_cancel.asked_message_id != tctx.message_id:
+        services.memory.save_structured_state(driver_id, thread_id, waiting.model_copy(update={"pending_cancel": None}))
 
     # Re-read state, as tools may have changed it.
     mem_state = services.memory.load(driver_id, thread_id).state

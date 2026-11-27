@@ -133,6 +133,46 @@ def _res(status: CancelStatus, **kw: object) -> CancellationResult:
     return CancellationResult(status=status, outcome=outcome, **kw)  # type: ignore[arg-type]
 
 
+# The rules for cancelling by chat: the current appointment, and why it may not be cancelled (None: it may).
+def _judge(conn: sqlite3.Connection, shipment_id: str, now: datetime) -> tuple[sqlite3.Row | None, CancellationResult | None]:
+    # The shipment's current live appointment.
+    appt = conn.execute(
+        f"select a.appointment_id, a.appointment_status, a.slot_id, s.slot_start_ts from appointments a "
+        f"join appointment_slots s using(slot_id) where a.shipment_id=? and a.is_current=1 "
+        f"and a.appointment_status in {_ACTIVE}", (shipment_id,),
+    ).fetchone()
+    # The truck is through the gate: cancelling here would free a dock it is using.
+    if appt is not None and passes.on_site(conn, shipment_id):
+        return appt, _res("NOT_CANCELLABLE", appointment_id=appt["appointment_id"])
+    # Nothing to cancel.
+    if appt is None:
+        return None, _res("NOT_FOUND")
+    # Unloading has started: it cannot be cancelled by chat.
+    if appt["appointment_status"] == "IN_PROGRESS":
+        return appt, _res("NOT_CANCELLABLE", appointment_id=appt["appointment_id"])
+    # Too close to the start time (provisional 120 minutes): a human must decide.
+    cutoff = timedelta(minutes=load_settings().cancel_cutoff_minutes)
+    if parse_operational_timestamp(appt["slot_start_ts"]) - now < cutoff:
+        return appt, _res("ESCALATE", appointment_id=appt["appointment_id"], escalation_code="CANCELLATION_CUTOFF")
+    # The customer's commitment decides whether cancelling harms them.
+    commitment = load_consignee(conn, shipment_id)
+    # Unknown commitment: do not assume it is harmless.
+    if commitment is None:
+        return appt, _res("ESCALATE", appointment_id=appt["appointment_id"], escalation_code="CUSTOMER_COMMITMENT_UNKNOWN")
+    # A penalty or exceptional delivery: a human decides.
+    if commitment.penalty_applies or commitment.exceptional:
+        return appt, _res("ESCALATE", appointment_id=appt["appointment_id"], escalation_code="CUSTOMER_COMMITMENT")
+    return appt, None
+
+
+# Look before asking the driver "cancel?": the appointment that would be cancelled, or the rules' refusal. Writes nothing.
+def preview_cancellation(
+    conn: sqlite3.Connection, driver_id: str, shipment_id: str, clock: Clock
+) -> tuple[sqlite3.Row | None, CancellationResult | None]:
+    _require_shipment(conn, driver_id, shipment_id)
+    return _judge(conn, shipment_id, clock.now())
+
+
 def cancel_confirmed_appointment(
     conn: sqlite3.Connection, driver_id: str, thread_id: str, message_id: str, shipment_id: str, clock: Clock
 ) -> CancellationResult:
@@ -161,35 +201,11 @@ def cancel_confirmed_appointment(
                     (driver_id, thread_id, message_id, ACTION_CANCEL, fp, result.model_dump_json(), now.isoformat()))
                 return result
 
-            # The shipment's current live appointment.
-            appt = conn.execute(
-                f"select a.appointment_id, a.appointment_status, s.slot_start_ts from appointments a "
-                f"join appointment_slots s using(slot_id) where a.shipment_id=? and a.is_current=1 "
-                f"and a.appointment_status in {_ACTIVE}", (shipment_id,),
-            ).fetchone()
-            # The truck is through the gate: cancelling here would free a dock it is using.
-            if appt is not None and passes.on_site(conn, shipment_id):
-                return store(_res("NOT_CANCELLABLE", appointment_id=appt["appointment_id"]))
-            # Nothing to cancel.
-            if appt is None:
-                return store(_res("NOT_FOUND"))
-            # Unloading has started: it cannot be cancelled by chat.
-            if appt["appointment_status"] == "IN_PROGRESS":
-                return store(_res("NOT_CANCELLABLE", appointment_id=appt["appointment_id"]))
-            # Too close to the start time (provisional 120 minutes): a human must decide.
-            cutoff = timedelta(minutes=load_settings().cancel_cutoff_minutes)
-            if parse_operational_timestamp(appt["slot_start_ts"]) - now < cutoff:
-                return store(_res("ESCALATE", appointment_id=appt["appointment_id"], escalation_code="CANCELLATION_CUTOFF"))
-            # The customer's commitment decides whether cancelling harms them.
-            commitment = load_consignee(conn, shipment_id)
-            # Unknown commitment: do not assume it is harmless.
-            if commitment is None:
-                return store(_res("ESCALATE", appointment_id=appt["appointment_id"],
-                                  escalation_code="CUSTOMER_COMMITMENT_UNKNOWN"))
-            # A penalty or exceptional delivery: a human decides.
-            if commitment.penalty_applies or commitment.exceptional:
-                return store(_res("ESCALATE", appointment_id=appt["appointment_id"], escalation_code="CUSTOMER_COMMITMENT"))
-
+            # The rules decide first; a refusal is stored like any other answer.
+            appt, refusal = _judge(conn, shipment_id, now)
+            if refusal is not None:
+                return store(refusal)
+            assert appt is not None
             # Safe to cancel automatically.
             stamp = now.isoformat()
             # A pending hold for the same shipment would be orphaned by this cancellation, so release it too.

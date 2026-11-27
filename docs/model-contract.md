@@ -36,6 +36,9 @@ Rules enforced in code, not by the prompt:
 3. Write checkpoint: `driver_quote` must appear (case/space-insensitive) in the driver's **current** message
    (`APPROVAL_NOT_PRESENT` otherwise); at most one committed write per message (`ONE_WRITE_PER_MESSAGE`);
    only the latest option set can be held (`NOT_LATEST_OPTION_SET`).
+   `confirm_reschedule` also needs a clear yes in that message (no refusal, "wait", "but" or question), else `NEEDS_YES`.
+   `cancel_appointment` takes two messages: the first only has the system ask "Reply Yes to cancel"; a clear yes in the next
+   message, within 10 minutes, cancels. While it waits, a held slot cannot be confirmed or declined.
 4. The model never supplies an ETA: `compute_eta` / `search_slot_options` derive it from a delay report (planned ETA baseline).
 5. Text from loads, notes or other parties is returned only under `untrusted_text`.
 6. A shipment created on the warehouse screen is invisible to every tool until the driver has sent its Dock Access Pass; pass

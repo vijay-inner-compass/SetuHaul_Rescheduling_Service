@@ -58,7 +58,8 @@ Not from a list. They can say No to move on. A time window they state is respect
 slot for them by resolving a case with **Assigned a slot**.
 
 **Can the driver cancel or keep the original?**
-"Keep my original slot" releases the hold and the original stands. Cancelling a confirmed booking is automatic only if the slot is
+"Keep my original slot" releases the hold and the original stands. A confirmed booking is cancelled only after the system has
+asked and the driver replied Yes in the next message. It is automatic only if the slot is
 at least 120 minutes away and the customer commitment is known and penalty-free; otherwise a person decides.
 
 **What does it not do?**

@@ -174,8 +174,9 @@ def test_never_mind_releases_the_hold_and_the_original_stands(chat: Chat) -> Non
 def test_cancel_confirmed_appointment_is_worded_from_the_cancelled_row(db: sqlite3.Connection, clock: FakeClock, tmp_path: Path) -> None:
     seed_everything_known(db)
     chat = Chat(db, clock, tmp_path, driver="DRV001", thread="THR011")
-    r = chat.say("please cancel my 12:00 appointment for SHP1017", [
+    chat.say("please cancel my 12:00 appointment for SHP1017", [
         tc("cancel_appointment", shipment_id="SHP1017", driver_quote="cancel my 12:00 appointment"), say_text("done")])
+    r = chat.say("yes", [tc("cancel_appointment", shipment_id="SHP1017", driver_quote="yes"), say_text("done")])
     assert r.text == "Your appointment has been cancelled. Reference APT1017."
     assert chat.rows("select appointment_status from appointments where appointment_id='APT1017'") == [("CANCELLED",)]
 
