@@ -6,8 +6,8 @@ identity, ETA derivation, feasibility, holds, expiry, confirmation, cancellation
 SQLite is the system of record for the prototype.
 
 > **Status:** a working prototype, verified on Windows. Drivers use Telegram; warehouse staff and admins use signed-in web screens.
-> It has **not** been used with real drivers, has no recorded real-model run of the current flow, and its Hindi/Hinglish wording has
-> not been reviewed by a native speaker. Start with `docs/client-readout.md`; before a demonstration read `docs/faq.md`.
+> It has **not** been used with real drivers, has only one recorded real-model run per language of the one-slot flow (2026-11-26, before
+> later changes), and its Hindi/Hinglish wording has not been reviewed by a native speaker. Start with `docs/client-readout.md`; before a demonstration read `docs/faq.md`.
 
 ## Library versions
 Python 3.12. Exact pins from `pyproject.toml`; the full resolved set is in `docs/requirements-lock.txt`.
