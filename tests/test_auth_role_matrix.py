@@ -34,7 +34,7 @@ PUBLIC = {
 # Machine channels: each has its own signature or secret check and must refuse an unauthenticated call.
 EXEMPT_OWN_AUTH = {
     ("POST", "/v1/driver/messages"), ("POST", "/v1/gps/pings"), ("POST", "/v1/driver/location"),
-    ("GET", "/v1/driver/status"), ("POST", "/v1/telegram/webhook"),
+    ("GET", "/v1/driver/status"), ("POST", "/v1/driver/status"), ("POST", "/v1/telegram/webhook"),
     # The local demo driver account: its own cookie, loopback only, never in the production app.
     ("GET", "/demo/driver"), ("GET", "/demo/driver/api/state"), ("POST", "/demo/driver/api/message"),
 }

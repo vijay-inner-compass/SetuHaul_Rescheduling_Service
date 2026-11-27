@@ -137,7 +137,12 @@ def register_telegram_routes(app: FastAPI, deps: AppDeps, pipeline: Pipeline) ->
     async def telegram_webhook(request: Request) -> JSONResponse:
         rid = request.state.request_id
         # Without a configured secret the route never accepts anything.
-        from setuhaul.api import telegram_in_force
+        from setuhaul.api import (
+            MAX_TELEGRAM_BODY_BYTES,
+            PayloadTooLarge,
+            read_body_capped,
+            telegram_in_force,
+        )
 
         # Read once, so one request cannot mix an old secret with a new bot.
         try:
@@ -151,7 +156,11 @@ def register_telegram_routes(app: FastAPI, deps: AppDeps, pipeline: Pipeline) ->
         if not hmac.compare_digest(given, secret):
             return JSONResponse({"status": "REJECTED", "reason_code": "INVALID_SECRET", "request_id": rid}, status_code=401)
         try:
-            update = json.loads(await request.body())
+            raw = await read_body_capped(request, MAX_TELEGRAM_BODY_BYTES)
+        except PayloadTooLarge:
+            return JSONResponse({"status": "REJECTED", "reason_code": "PAYLOAD_TOO_LARGE", "request_id": rid}, status_code=413)
+        try:
+            update = json.loads(raw)
         except ValueError:
             return JSONResponse({"status": "REJECTED", "reason_code": "INVALID_REQUEST", "request_id": rid}, status_code=400)
         update_id = _int(update.get("update_id")) if isinstance(update, dict) else None

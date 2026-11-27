@@ -18,6 +18,9 @@ from setuhaul.identity import AuthError
 MIN_LENGTH = 12
 MAX_LENGTH = 1024
 MAX_FAILURES = 5
+# Distributed-attack safety net when per-IP lockouts are active: 4+ distinct IPs cannot guess indefinitely,
+# while a single stranger IP (locked at 5 tries on their own IP) cannot lock an admin out from another IP.
+GLOBAL_MAX_FAILURES = 20
 LOCK_FOR = timedelta(minutes=15)
 # scrypt cost: 2**14 is the interactive-login standard (about 16 MiB, tens of milliseconds).
 _N, _R, _P = 2**14, 8, 1
@@ -69,6 +72,7 @@ def store_password(conn: sqlite3.Connection, user_id: str, stored: str, salt_hex
         "salt=excluded.salt, failed_attempts=0, locked_until=NULL",
         (user_id, stored, salt_hex),
     )
+    conn.execute("delete from auth_ip_lockouts where user_id=?", (user_id,))
 
 
 def set_password(conn: sqlite3.Connection, user_id: str, password: str, clock: Clock | None = None) -> None:
@@ -90,6 +94,15 @@ def _audit(conn: sqlite3.Connection, email: str, user: users.User | None, outcom
                  detail={"reason": reason} if reason else None, clock=clock)
 
 
+def _ip_locked(conn: sqlite3.Connection, user_id: str, ip: str | None, now: datetime) -> bool:
+    if not ip:
+        return False
+    row = conn.execute(
+        "select locked_until from auth_ip_lockouts where user_id=? and ip=?", (user_id, ip)
+    ).fetchone()
+    return row is not None and _is_locked(row["locked_until"], now)
+
+
 def _is_locked(locked_until: str | None, now: datetime) -> bool:
     return bool(locked_until) and datetime.fromisoformat(str(locked_until)) > now
 
@@ -104,7 +117,8 @@ def verify(conn: sqlite3.Connection, email: str, password: str, clock: Clock, ip
             "select password_hash, locked_until from admin_credentials where user_id=?", (user.user_id,)
         ).fetchone()
     # Early exit: a locked account refuses even the right password.
-    if cred is not None and _is_locked(cred["locked_until"], clock.now()):
+    now_check = clock.now()
+    if cred is not None and user is not None and (_is_locked(cred["locked_until"], now_check) or _ip_locked(conn, user.user_id, ip, now_check)):
         # The same dummy scrypt as the unknown-address path, so locked and unknown take comparable time.
         _hash("x" * 12, _DUMMY_SALT)
         _audit(conn, email, user, "LOCKED", None, ip, clock, admin_only)
@@ -126,12 +140,14 @@ def verify(conn: sqlite3.Connection, email: str, password: str, clock: Clock, ip
                 "select password_hash, locked_until from admin_credentials where user_id=?", (user.user_id,)
             ).fetchone()
         now = clock.now()
-        if fresh is not None and _is_locked(fresh["locked_until"], now):
+        if fresh is not None and user is not None and (_is_locked(fresh["locked_until"], now) or _ip_locked(conn, user.user_id, ip, now)):
             # A lock landed while this attempt was hashing: refuse, even if the password was right.
             outcome, reason = "LOCKED", None
         elif ok and user is not None and fresh is not None and cred is not None and fresh["password_hash"] == cred["password_hash"]:
             conn.execute("update admin_credentials set failed_attempts=0, locked_until=NULL where user_id=?",
                          (user.user_id,))
+            if ip:
+                conn.execute("delete from auth_ip_lockouts where user_id=? and ip=?", (user.user_id, ip))
             outcome, reason = "OK", None
         else:
             if fresh is not None and user is not None:
@@ -141,8 +157,17 @@ def verify(conn: sqlite3.Connection, email: str, password: str, clock: Clock, ip
                     "failed_attempts = case when locked_until is not null then 1 else failed_attempts + 1 end, "
                     "locked_until = case when (case when locked_until is not null then 1 else failed_attempts + 1 end) >= ? "
                     "then ? else NULL end where user_id=?",
-                    (MAX_FAILURES, (now + LOCK_FOR).isoformat(), user.user_id),
+                    (GLOBAL_MAX_FAILURES if ip else MAX_FAILURES, (now + LOCK_FOR).isoformat(), user.user_id),
                 )
+                if ip:
+                    conn.execute(
+                        "insert into auth_ip_lockouts(user_id, ip, failed_attempts, locked_until) values (?,?,1,NULL) "
+                        "on conflict(user_id, ip) do update set "
+                        "failed_attempts = case when locked_until is not null then 1 else failed_attempts + 1 end, "
+                        "locked_until = case when (case when locked_until is not null then 1 else failed_attempts + 1 end) >= ? "
+                        "then ? else NULL end",
+                        (user.user_id, ip, MAX_FAILURES, (now + LOCK_FOR).isoformat()),
+                    )
             outcome, reason = "REFUSED", "BAD_CREDENTIALS"
         _audit(conn, email, user, outcome, reason, ip, clock, admin_only)
     if outcome == "LOCKED":

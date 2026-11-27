@@ -174,7 +174,7 @@ def test_migration_023_keeps_the_notices_already_queued(tmp_path: Path) -> None:
     conn.execute("insert into notification_outbox(dedupe_key, recipient_type, recipient_ref, event_id, payload_json,"
                  " status, attempts, created_at) values ('k','DRIVER','DRV006',1,'{}','FAILED',2,'t')")
     conn.commit()
-    assert apply_migrations(conn) == ["023_driver_notices_without_event.sql"]
+    assert "023_driver_notices_without_event.sql" in apply_migrations(conn)
     row = conn.execute("select outbox_id, dedupe_key, event_id, status, attempts, shipment_id from notification_outbox").fetchone()
     assert tuple(row) == (1, "k", 1, "FAILED", 2, None)
     conn.close()

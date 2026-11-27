@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from fastapi import Request
 
 from setuhaul.auth import audit, sessions
+from setuhaul.auth.client_ip import client_ip
 from setuhaul.auth.users import FACILITY_BOUND, Role, User
 from setuhaul.db import open_connection
 
@@ -68,7 +69,7 @@ def require_role(*roles: Role) -> Callable[[Request], User]:
                 # Audit the refusal: the target and who asked, never the token or any request content.
                 audit.record(conn, actor_user_id=user.user_id, actor_email=user.email, action="ACCESS_DENIED",
                              target_type="path", target_id=target, outcome="FORBIDDEN",
-                             ip=request.client.host if request.client else None, detail=detail, clock=deps.clock)
+                             ip=client_ip(request, deps.trusted_proxies), detail=detail, clock=deps.clock)
                 conn.commit()
                 raise AuthzError(403, "FORBIDDEN")
             return user

@@ -25,7 +25,7 @@ USER app
 EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
   CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=4)"]
-CMD ["sh", "-c", "python deploy/start.pyc && exec uvicorn --factory setuhaul.api:create_app_from_env --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "python deploy/start.pyc && exec uvicorn --factory setuhaul.api:create_app_from_env --host 0.0.0.0 --port 8000 --proxy-headers"]
 
 # ForgeCI refuses an image without the revision label; /version reports GIT_COMMIT.
 ARG GIT_COMMIT=unknown

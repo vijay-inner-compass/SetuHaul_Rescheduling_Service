@@ -178,6 +178,9 @@ docker exec -it setuhaul-app-1 python scripts/set_admin_password.pyc you@example
 - Dock Access Pass: migration `017` rebuilds `users`; to go back, deploy the previous image and restore the pre-deploy backup
   (see `dock-access-pass.md`).
 - Migration `023` rebuilds the driver notice table; to go back, deploy the previous image and restore the pre-deploy backup.
+- Behind Caddy on Docker's `edge` network, set `SETUHAUL_TRUSTED_PROXIES=127.0.0.1,172.16.0.0/12` (or Caddy's exact bridge IP) and `FORWARDED_ALLOW_IPS` to the same range so sign-in rate limits and audit logs see each caller's real IP rather than Caddy's container IP.
+- Data retention purges (`SETUHAUL_RETENTION_ENABLED=1`) are off by default; preview affected rows on a copy before enabling.
+- See [[backup-and-restore]] for consistent SQLite + `SETUHAUL_SETTINGS_KEY` backup and restore steps.
 - Partner email in live mode (`SETUHAUL_PARTNER_EMAIL_MODE=live` with SMTP and IMAP settings) is run automatically by the service's own background `PartnerMailRunner` thread; no external scheduler is needed.
 - Downstream notices for `WAREHOUSE_PLANNER`, `CONSIGNEE` and `OPERATIONS` stay `PENDING` in `notification_outbox`; no outbound transport is connected for them yet (only `DRIVER` notices are sent via Telegram).
 - Never run `docker compose down -v` or prune volumes: that deletes the database.

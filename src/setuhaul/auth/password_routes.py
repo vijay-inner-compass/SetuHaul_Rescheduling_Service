@@ -16,11 +16,13 @@ from starlette.concurrency import run_in_threadpool
 
 from setuhaul.auth import audit, links, local_admin, sessions, users
 from setuhaul.auth.authz import require_role
+from setuhaul.auth.client_ip import client_ip
 from setuhaul.auth.http import reject as _reject
 from setuhaul.auth.routes import _is_secure
 from setuhaul.auth.users import User
 from setuhaul.db import open_connection
 from setuhaul.identity import AuthError
+from setuhaul.rate_limit import check_auth_rate_limit
 
 if TYPE_CHECKING:
     from setuhaul.api import AppDeps
@@ -86,7 +88,13 @@ def register_password_routes(app: FastAPI, deps: AppDeps) -> None:
         rid = request.state.request_id
         if not deps.password_login_on:
             return _reject(rid, 404, "NOT_FOUND")
-        ip = request.client.host if request.client else None
+        ip = client_ip(request, deps.trusted_proxies)
+        rl = await run_in_threadpool(
+            check_auth_rate_limit, deps.redis, ip, request.url.path, deps.clock,
+            limit=deps.auth_rate_limit, window_seconds=deps.auth_rate_window_s, fallback=deps.auth_rl_fallback,
+        )
+        if not rl.allowed:
+            return _reject(rid, 429, rl.reason_code or "RATE_LIMITED", retry_after_seconds=rl.retry_after_seconds)
         fields = await read_strings(request, "email", "password")
         # Refused before any hashing work, and with nothing that says why.
         if fields is None or len(fields[0]) > MAX_EMAIL or len(fields[1]) > local_admin.MAX_LENGTH:
@@ -122,7 +130,13 @@ def register_password_routes(app: FastAPI, deps: AppDeps) -> None:
         rid = request.state.request_id
         if not deps.password_login_on:
             return _reject(rid, 404, "NOT_FOUND")
-        ip = request.client.host if request.client else None
+        ip = client_ip(request, deps.trusted_proxies)
+        rl = await run_in_threadpool(
+            check_auth_rate_limit, deps.redis, ip, request.url.path, deps.clock,
+            limit=deps.auth_rate_limit, window_seconds=deps.auth_rate_window_s, fallback=deps.auth_rl_fallback,
+        )
+        if not rl.allowed:
+            return _reject(rid, 429, rl.reason_code or "RATE_LIMITED", retry_after_seconds=rl.retry_after_seconds)
         fields = await read_strings(request, "token", "password")
         if fields is None:
             return _reject(rid, 422, "INVALID_REQUEST")
@@ -143,7 +157,13 @@ def register_password_routes(app: FastAPI, deps: AppDeps) -> None:
         rid = request.state.request_id
         if not deps.password_login_on:
             return _reject(rid, 404, "NOT_FOUND")
-        ip = request.client.host if request.client else None
+        ip = client_ip(request, deps.trusted_proxies)
+        rl = await run_in_threadpool(
+            check_auth_rate_limit, deps.redis, ip, request.url.path, deps.clock,
+            limit=deps.auth_rate_limit, window_seconds=deps.auth_rate_window_s, fallback=deps.auth_rl_fallback,
+        )
+        if not rl.allowed:
+            return _reject(rid, 429, rl.reason_code or "RATE_LIMITED", retry_after_seconds=rl.retry_after_seconds)
         fields = await read_strings(request, "email")
         if fields is None:
             return _reject(rid, 422, "INVALID_REQUEST")

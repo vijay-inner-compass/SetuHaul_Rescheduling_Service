@@ -21,6 +21,7 @@ import logging
 
 # os reads environment configuration.
 import os
+import re
 
 # sqlite3 for connections and database errors.
 import sqlite3
@@ -72,6 +73,9 @@ from setuhaul import assign, chat_loads, pass_check
 from setuhaul.auth import refusals, same_origin, sessions
 from setuhaul.auth.account_mail import account_sender_from_env
 from setuhaul.auth.authz import AuthzError, require_role
+
+# Per-driver rate limiting.
+from setuhaul.auth.client_ip import TrustedProxies, parse_trusted_proxies
 from setuhaul.auth.google import GoogleVerifier
 from setuhaul.auth.onboarding import driver_eligible
 
@@ -158,9 +162,13 @@ from setuhaul.observability import InMemoryExporter, configure_logging
 # Per-driver rate limiting.
 # A new truck position: confirmation, hold release and earlier-slot offers.
 from setuhaul.position import handle_driver_position, handle_new_position
-
-# Per-driver rate limiting.
-from setuhaul.rate_limit import RateLimits, check_rate_limit
+from setuhaul.rate_limit import (
+    AUTH_RATE_LIMIT,
+    AUTH_RATE_WINDOW_SECONDS,
+    AuthRateLimitFallback,
+    RateLimits,
+    check_rate_limit,
+)
 from setuhaul.runtime_settings import MIN_TELEGRAM_SECRET_LEN, SettingsSource
 
 # The validated ping shape.
@@ -172,7 +180,38 @@ STALE_PROCESSING_SECONDS = 60
 # A signed status request older than this (5 minutes) is rejected, so a captured request cannot be replayed later.
 SIGNATURE_WINDOW_SECONDS = 300
 # A GPS ping may be stamped at most this far (5 minutes) ahead of the server clock; allows small device clock drift only.
+# A GPS ping may be stamped at most this far (5 minutes) ahead of the server clock; allows small device clock drift only.
 GPS_MAX_FUTURE_SECONDS = 300
+# Request body byte caps, enforced before buffering or HMAC verification (F12).
+MAX_MESSAGE_BODY_BYTES = 64 * 1024
+MAX_PING_BODY_BYTES = 16 * 1024
+MAX_STATUS_BODY_BYTES = 16 * 1024
+MAX_TELEGRAM_BODY_BYTES = 256 * 1024
+# Caller-supplied X-Request-ID is accepted only if it matches this bounded safe charset.
+_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+
+class PayloadTooLarge(Exception):
+    """Raised when a request body exceeds the route's byte limit before buffering completes."""
+
+
+async def read_body_capped(request: Request, max_bytes: int) -> bytes:
+    """Read request bytes up to ``max_bytes``; refuses oversized bodies early via Content-Length and streaming."""
+    cl = request.headers.get("content-length")
+    if cl is not None:
+        try:
+            if int(cl) > max_bytes:
+                raise PayloadTooLarge
+        except ValueError:
+            pass
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > max_bytes:
+            raise PayloadTooLarge
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 @dataclass(frozen=True)
@@ -243,7 +282,16 @@ class AppDeps:
     # Require Authentication-Results (DMARC/DKIM) on partner replies: true in live mode, false in simulated tests.
     partner_mail_require_auth: bool = False
     # Receiving server name checked in Authentication-Results when partner_mail_require_auth is true.
+    # Receiving server name checked in Authentication-Results when partner_mail_require_auth is true.
     partner_mail_auth_serv_id: str = "mx.google.com"
+    # Proxy networks/hosts whose X-Forwarded-For header is trusted (V5; empty = trust no forwarded headers).
+    trusted_proxies: TrustedProxies = field(default_factory=TrustedProxies)
+    # Sign-in throttling limits (D3: 10 attempts per address per 15 minutes).
+    auth_rate_limit: int = AUTH_RATE_LIMIT
+    auth_rate_window_s: int = AUTH_RATE_WINDOW_SECONDS
+    auth_rl_fallback: AuthRateLimitFallback = field(default_factory=AuthRateLimitFallback)
+    # Data retention purges (F13): OFF by default; enable only after reviewing preview_retention on a copy.
+    retention_enabled: bool = False
 
     def password_mail(self) -> PasswordMail:
         """The sender for password links in force now: the screen's saved mailbox over the environment's."""
@@ -305,6 +353,13 @@ class MessageIn(BaseModel):
     message_id: str = Field(min_length=1, max_length=128)
     # The driver's message, 1 to 2000 characters.
     text: str = Field(min_length=1, max_length=2000)
+
+
+class DriverStatusIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    phone: str = Field(min_length=5, max_length=32)
+    ts: int
 
 
 # A telematics ping body: GpsPing's validated fields (range, aware time, extra='forbid') plus the shipment id.
@@ -391,7 +446,8 @@ def create_app(deps: AppDeps) -> FastAPI:
             # The runner opens its own connection (SQLite connections cannot cross threads).
             runner = MaintenanceRunner(None, deps.clock, deps.maintenance_interval_s,
                                        conn_factory=lambda: open_connection(path=deps.db_path),
-                                       fallback_path=deps.fallback_path)
+                                       fallback_path=deps.fallback_path,
+                                       retention_enabled=deps.retention_enabled)
             # Start it off the event loop.
             await run_in_threadpool(runner.start)
         # Messages written outside a driver's turn reach their phone only through this sender.
@@ -455,7 +511,8 @@ def create_app(deps: AppDeps) -> FastAPI:
     # Give every request an id (from the caller's x-request-id header or a new one) and echo it in the response.
     async def request_id(request: Request, call_next):  # type: ignore[no-untyped-def]
         # Store the id for handlers.
-        request.state.request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
+        raw_rid = request.headers.get("x-request-id", "")
+        request.state.request_id = raw_rid if _REQUEST_ID_RE.fullmatch(raw_rid) else uuid.uuid4().hex
         # Run the handler.
         response = await call_next(request)
         # Echo the id so callers can quote it.
@@ -669,7 +726,10 @@ def create_app(deps: AppDeps) -> FastAPI:
         # This request's id.
         rid = request.state.request_id
         # The raw bytes: the signature is checked over these BEFORE any parsing.
-        raw = await request.body()
+        try:
+            raw = await read_body_capped(request, MAX_MESSAGE_BODY_BYTES)
+        except PayloadTooLarge:
+            return _reject(rid, 413, "PAYLOAD_TOO_LARGE")
         try:
             # Verify the HMAC signature.
             verify_channel_request(raw, request.headers.get("x-signature", ""), deps.webhook_secret)
@@ -693,7 +753,10 @@ def create_app(deps: AppDeps) -> FastAPI:
         # This request's id.
         rid = request.state.request_id
         # The raw bytes: the signature is checked over these BEFORE any parsing.
-        raw = await request.body()
+        try:
+            raw = await read_body_capped(request, MAX_PING_BODY_BYTES)
+        except PayloadTooLarge:
+            return _reject(rid, 413, "PAYLOAD_TOO_LARGE")
         try:
             # Verify the HMAC signature.
             verify_channel_request(raw, request.headers.get("x-signature", ""), deps.webhook_secret)
@@ -810,6 +873,27 @@ def create_app(deps: AppDeps) -> FastAPI:
             conn.close()
 
     # Signed status endpoint.
+    # Signed status endpoint (POST form keeps the driver's phone number out of URLs and proxy access logs).
+    @app.post("/v1/driver/status")
+    async def driver_status_post(request: Request) -> JSONResponse:
+        rid = request.state.request_id
+        try:
+            raw = await read_body_capped(request, MAX_STATUS_BODY_BYTES)
+        except PayloadTooLarge:
+            return _reject(rid, 413, "PAYLOAD_TOO_LARGE")
+        try:
+            verify_channel_request(raw, request.headers.get("x-signature", ""), deps.webhook_secret)
+        except AuthError as exc:
+            return _reject(rid, 401, exc.code)
+        try:
+            payload = DriverStatusIn.model_validate(json.loads(raw))
+        except (ValueError, ValidationError):
+            return _reject(rid, 422, "INVALID_REQUEST")
+        if abs(int(deps.clock.now().timestamp()) - payload.ts) > SIGNATURE_WINDOW_SECONDS:
+            return _reject(rid, 401, "STALE_REQUEST")
+        return await run_in_threadpool(driver_status, payload.phone, rid)
+
+    # Signed status endpoint (GET transition form; prefer POST /v1/driver/status so phone numbers stay out of query strings).
     @app.get("/v1/driver/status")
     async def driver_status_endpoint(request: Request, phone: str, ts: int) -> JSONResponse:
         rid = request.state.request_id
@@ -821,7 +905,9 @@ def create_app(deps: AppDeps) -> FastAPI:
             verify_channel_request(f"{phone}|{ts}".encode(), request.headers.get("x-signature", ""), deps.webhook_secret)
         except AuthError as exc:
             return _reject(rid, 401, exc.code)
-        return await run_in_threadpool(driver_status, phone, rid)
+        resp = await run_in_threadpool(driver_status, phone, rid)
+        resp.headers["Deprecation"] = "true"
+        return resp
 
     # ---- coordinator ------------------------------------------------------------------------------------
     # Identify a coordinator from a bearer token.
@@ -1164,6 +1250,8 @@ def create_app_from_env() -> FastAPI:
         gateway_factory=factory, run_driver_notices=tg_client is not None,
         partner_mail=p_mail, run_partner_mail=p_mail is not None,
         partner_mail_require_auth=p_require_auth, partner_mail_auth_serv_id=p_serv_id,
+        trusted_proxies=parse_trusted_proxies(os.environ.get("SETUHAUL_TRUSTED_PROXIES", "")),
+        retention_enabled=os.environ.get("SETUHAUL_RETENTION_ENABLED") == "1",
         run_maintenance=os.environ.get("SETUHAUL_RUN_MAINTENANCE") == "1" or tg_client is not None, clock=clock))
 
 

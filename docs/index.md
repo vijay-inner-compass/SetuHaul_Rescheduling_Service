@@ -43,6 +43,8 @@ None yet.
 
 ## operations
 
+- [[backup-and-restore]] -- consistent SQLite + `SETUHAUL_SETTINGS_KEY` backup and restore procedure
+
 None yet.
 
 ## history

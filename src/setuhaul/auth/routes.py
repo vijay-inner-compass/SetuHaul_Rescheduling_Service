@@ -21,10 +21,12 @@ from starlette.concurrency import run_in_threadpool
 
 from setuhaul.auth import audit, local_admin, sessions, users
 from setuhaul.auth.authz import AuthzError
+from setuhaul.auth.client_ip import client_ip
 from setuhaul.auth.http import reject as _reject
 from setuhaul.auth.signin_notice import page_or_json
 from setuhaul.db import open_connection
 from setuhaul.identity import AuthError
+from setuhaul.rate_limit import check_auth_rate_limit
 
 if TYPE_CHECKING:
     from setuhaul.api import AppDeps
@@ -147,7 +149,7 @@ def register_auth_routes(app: FastAPI, deps: AppDeps) -> None:
     def refuse(request: Request, rid: str, status: int, code: str, email: str | None = None) -> Response:
         def write(conn: sqlite3.Connection) -> Response:
             audit.record(conn, actor_user_id=None, actor_email=email, action="LOGIN", target_type=None, target_id=None,
-                         outcome="LOGIN_REFUSED", ip=request.client.host if request.client else None,
+                         outcome="LOGIN_REFUSED", ip=client_ip(request, deps.trusted_proxies),
                          detail={"reason": code}, clock=deps.clock)
             conn.commit()
             return _reject(rid, status, code)
@@ -221,7 +223,7 @@ def register_auth_routes(app: FastAPI, deps: AppDeps) -> None:
                 return refuse_in(conn, 403, "DISABLED")
             token = sessions.create(conn, user, "GOOGLE", deps.clock)
             audit.record(conn, actor_user_id=user.user_id, actor_email=user.email, action="LOGIN", target_type=None,
-                         target_id=None, outcome="LOGIN_OK", ip=request.client.host if request.client else None,
+                         target_id=None, outcome="LOGIN_OK", ip=client_ip(request, deps.trusted_proxies),
                          detail=None, clock=deps.clock)
             conn.commit()
             resp = RedirectResponse("/", status_code=302)
@@ -232,7 +234,7 @@ def register_auth_routes(app: FastAPI, deps: AppDeps) -> None:
         # Audit and answer a refusal on the connection already open.
         def refuse_in(conn: sqlite3.Connection, status: int, reason: str) -> Response:
             audit.record(conn, actor_user_id=None, actor_email=ident.email, action="LOGIN", target_type=None,
-                         target_id=None, outcome="LOGIN_REFUSED", ip=request.client.host if request.client else None,
+                         target_id=None, outcome="LOGIN_REFUSED", ip=client_ip(request, deps.trusted_proxies),
                          detail={"reason": reason}, clock=deps.clock)
             conn.commit()
             resp = _reject(rid, status, reason)
@@ -247,7 +249,13 @@ def register_auth_routes(app: FastAPI, deps: AppDeps) -> None:
         # The feature is invisible unless switched on.
         if not deps.local_admin_enabled:
             return _reject(rid, 404, "NOT_FOUND")
-        ip = request.client.host if request.client else None
+        ip = client_ip(request, deps.trusted_proxies)
+        rl = await run_in_threadpool(
+            check_auth_rate_limit, deps.redis, ip, "local_admin", deps.clock,
+            limit=deps.auth_rate_limit, window_seconds=deps.auth_rate_window_s, fallback=deps.auth_rl_fallback,
+        )
+        if not rl.allowed:
+            return _reject(rid, 429, rl.reason_code or "RATE_LIMITED", retry_after_seconds=rl.retry_after_seconds)
 
         def refuse_bad_request(conn: sqlite3.Connection) -> Response:
             # Audited like every other attempt, but with none of the submitted values (not even the email).
@@ -294,7 +302,7 @@ def register_auth_routes(app: FastAPI, deps: AppDeps) -> None:
                 if user is not None:
                     audit.record(conn, actor_user_id=user.user_id, actor_email=user.email, action="LOGOUT",
                                  target_type=None, target_id=None, outcome="OK",
-                                 ip=request.client.host if request.client else None, detail=None, clock=deps.clock)
+                                 ip=client_ip(request, deps.trusted_proxies), detail=None, clock=deps.clock)
                     conn.commit()
             resp = JSONResponse({"status": "OK", "request_id": rid})
             resp.delete_cookie(sessions.COOKIE_NAME, path="/")

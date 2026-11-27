@@ -248,14 +248,16 @@ web approval, pushed message and confirm all worked. Not tried with a real model
 | Driver name, phone, home city, licence number | `drivers` | identity, onboarding | no |
 | Licence expiry, approval status | `driver_profiles` | eligibility | no |
 | Telegram user id and chat id | `telegram_identities` | linking and sending | only a revoked row, on re-link |
-| Full chat text | `chat_messages`, cases, Redis cache | conversation, hand-off | database: no. Cache: 24 hours |
-| GPS positions | `gps_pings` | arrival check | no |
+| Full chat text | `chat_messages`, cases, Redis cache | conversation, hand-off | database: 90 days (when `SETUHAUL_RETENTION_ENABLED=1`; open cases and live holds kept). Cache: 24 hours |
+| GPS positions | `gps_pings` | arrival check | 30 days (when `SETUHAUL_RETENTION_ENABLED=1`) |
 | Web user email and sessions | `users`, `auth_sessions` | sign-in | sessions expire; rows stay |
-| Actor email, IP address, action | `audit_log` | accountability | never (append-only) |
+| Actor email, IP address, action | `audit_log` | accountability | rows kept (append-only); IP scrubbed after 90 days (when `SETUHAUL_RETENTION_ENABLED=1`) |
+| Inbound message records | `inbound_messages` | duplicate detection | 30 days for `DONE` rows (when `SETUHAUL_RETENTION_ENABLED=1`) |
+| Model call records | `model_calls`, `model_turns` | cost/latency governance | 90 days (when `SETUHAUL_RETENTION_ENABLED=1`) |
 | Sender address of partner mail | partner tables | matching replies | no |
 | Booking history | `appointment_events` | audit | never (immutable) |
 
-Only slot-option records are purged (after 30 days).
+Slot-option records are purged after 30 days. The five additional retention purges above (`src/setuhaul/retention.py`) are **off by default** (`SETUHAUL_RETENTION_ENABLED=1` enables them) and run daily in bounded batches without breaking foreign keys, open cases, live holds, or immutable appointment history. Run `preview_retention` on a copy first to inspect exact row counts before switching them on.
 
 **What is sent to the AI provider?**
 The recent conversation (up to 20 turns or 12,000 characters), load facts such as order reference, weight, times and facility, and
@@ -285,7 +287,7 @@ In transit to Telegram, Google, mail and model providers, yes (TLS). **At rest, 
 plain SQLite file, so disk encryption and file permissions are the owner's job. The local server speaks HTTP; production needs HTTPS in front.
 
 **Can a driver ask for their data, or to be forgotten?**
-**Not built.** There is no export or erase tool, and the history and audit tables forbid changes by design, so an erasure policy
+A per-driver erasure procedure is available (`erase_driver_data` in `src/setuhaul/retention.py`). Once the driver has no open escalation cases, live holds, or active bookings, it deletes their `chat_messages`, `gps_pings`, `inbound_messages`, `telegram_identities`, `channel_identities`, `driver_sessions`, and `conversation_state`, and scrubs name, phone, licence number, and home city on `drivers` (setting status to `INACTIVE`). **What cannot be erased and why:** `appointment_events` (immutable operational history enforced by database triggers), `audit_log` (append-only accountability trail; IPs are scrubbed after 90 days), `shipments`/`appointments` (retained for warehouse reconciliation with PII scrubbed from `drivers`), and closed `escalation_cases`/`escalation_events` (operational audit). A self-service export tool is not built yet.
 would need a decision (for example pseudonymising).
 
 **Do drivers consent?**

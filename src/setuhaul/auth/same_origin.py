@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 from fastapi import Request
 
 from setuhaul.auth import audit, sessions
+from setuhaul.auth.client_ip import client_ip
 from setuhaul.db import open_connection
 
 if TYPE_CHECKING:
@@ -72,7 +73,7 @@ def record_refusal(deps: AppDeps, request: Request) -> None:
         user = sessions.resolve(conn, request.cookies.get(sessions.COOKIE_NAME, ""), deps.clock)
         audit.record(conn, actor_user_id=user.user_id if user else None, actor_email=user.email if user else None,
                      action="CROSS_SITE_REQUEST", target_type="path", target_id=path, outcome="FORBIDDEN",
-                     ip=request.client.host if request.client else None, detail={"method": request.method}, clock=deps.clock)
+                     ip=client_ip(request, deps.trusted_proxies), detail={"method": request.method}, clock=deps.clock)
         conn.commit()
     except sqlite3.Error:
         return

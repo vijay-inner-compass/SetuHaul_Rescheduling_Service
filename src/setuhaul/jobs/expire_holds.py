@@ -23,12 +23,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 # timedelta for the purge interval.
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TypeVar
 
 # The transactional expiry of one hold (releases the slot, writes history, queues the notice).
-from setuhaul import facility_change, gate, round_clock
+from setuhaul import facility_change, gate, retention, round_clock
 from setuhaul.booking import expire_hold_in_txn
 
 # The injectable clock.
@@ -100,6 +100,8 @@ class MaintenanceRunner:
         interval_seconds: float | None = None,
         conn_factory: Callable[[], sqlite3.Connection] | None = None,
         fallback_path: Path | None = None,
+        retention_enabled: bool = False,
+        retention_policy: retention.RetentionPolicy | None = None,
     ) -> None:
         # A connection for run_once() (None when the runner is only used to start a background thread).
         self._conn = conn
@@ -107,6 +109,8 @@ class MaintenanceRunner:
         self._factory = conn_factory
         # Where hand-offs are written when the database is down; loaded back by the sweep.
         self._fallback = fallback_path
+        self._retention_enabled = retention_enabled
+        self._retention_policy = retention_policy or retention.RetentionPolicy()
         self._clock = clock
         # Seconds between sweeps: the argument, or the configured default (30 s).
         self._interval = interval_seconds or load_settings().expiry_sweep_seconds
@@ -124,6 +128,27 @@ class MaintenanceRunner:
         # A clear failure if run_once() is used on a runner built without a connection.
         assert self._conn is not None, "this runner was built without a connection; use start() with a conn_factory"
         return self._conn
+
+    def _job_due(self, job_name: str) -> bool:
+        row = self._db().execute("select last_run_epoch from maintenance_runs where job_name=?", (job_name,)).fetchone()
+        return row is None or int(self._clock.now().timestamp()) - row["last_run_epoch"] >= PURGE_EVERY.total_seconds()
+
+    def _mark_job(self, job_name: str, now: datetime) -> None:
+        with immediate(self._db()):
+            self._db().execute(
+                "insert into maintenance_runs (job_name, last_run_at, last_run_epoch) values (?,?,?) "
+                "on conflict(job_name) do update set last_run_at=excluded.last_run_at, "
+                "last_run_epoch=excluded.last_run_epoch",
+                (job_name, now.isoformat(), int(now.timestamp())),
+            )
+
+    def _run_daily_retention(self, job_name: str, fn: Callable[[], int]) -> int:
+        if not self._job_due(job_name):
+            return 0
+        now = self._clock.now()
+        affected = fn()
+        self._mark_job(job_name, now)
+        return affected
 
     def _purge_due(self) -> bool:
         # When did the purge last run?
@@ -171,6 +196,19 @@ class MaintenanceRunner:
         # Creates only what is missing, so a new day appears at the end of the range soon after midnight.
         self._step("slot top-up", lambda: round_clock.top_up(db, clock), 0)
         purged = self._step("option purge", self._purge, 0)
+        if self._retention_enabled:
+            p = self._retention_policy
+            now = clock.now()
+            self._step("retention: chat messages", lambda: self._run_daily_retention(
+                "purge_chat_messages", lambda: retention.purge_chat_messages(db, now - timedelta(days=p.chat_days), p.batch_size)), 0)
+            self._step("retention: gps pings", lambda: self._run_daily_retention(
+                "purge_gps_pings", lambda: retention.purge_gps_pings(db, now - timedelta(days=p.gps_days), p.batch_size)), 0)
+            self._step("retention: audit log ips", lambda: self._run_daily_retention(
+                "purge_audit_log_ips", lambda: retention.purge_audit_log_ips(db, now - timedelta(days=p.audit_ip_days), p.batch_size)), 0)
+            self._step("retention: inbound messages", lambda: self._run_daily_retention(
+                "purge_inbound_messages", lambda: retention.purge_inbound_messages(db, now - timedelta(days=p.inbound_days), p.batch_size)), 0)
+            self._step("retention: model calls", lambda: self._run_daily_retention(
+                "purge_model_calls", lambda: retention.purge_model_calls(db, now - timedelta(days=p.model_calls_days), p.batch_size)), 0)
         return MaintenanceResult(expired=expired, purged_option_sets=purged)
 
     def run_safely(self) -> None:
@@ -189,7 +227,10 @@ class MaintenanceRunner:
         if self._factory is None:
             raise RuntimeError("start() needs conn_factory so the background thread owns its connection")
         # A throwaway runner for the first sweep, which happens immediately at startup.
-        boot = MaintenanceRunner(self._factory(), self._clock, self._interval, fallback_path=self._fallback)  # opened and closed on this thread
+        boot = MaintenanceRunner(
+            self._factory(), self._clock, self._interval, fallback_path=self._fallback,
+            retention_enabled=self._retention_enabled, retention_policy=self._retention_policy,
+        )  # opened and closed on this thread
         try:
             boot.run_safely()  # sweep at startup, as the plan requires
         finally:
@@ -198,7 +239,10 @@ class MaintenanceRunner:
 
         def loop() -> None:
             # The loop opens its own connection inside its own thread.
-            worker = MaintenanceRunner(factory(), self._clock, self._interval, fallback_path=fallback)
+            worker = MaintenanceRunner(
+                factory(), self._clock, self._interval, fallback_path=fallback,
+                retention_enabled=self._retention_enabled, retention_policy=self._retention_policy,
+            )
             try:
                 # Event.wait(timeout) sleeps for the interval but wakes at once if stop() is called; it returns True then.
                 while not self._stop.wait(self._interval):

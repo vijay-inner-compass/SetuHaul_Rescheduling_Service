@@ -10,6 +10,7 @@ from __future__ import annotations
 
 # The Redis client type (real Redis in production, fakeredis in tests and the demo).
 import logging
+import threading
 
 # dataclass for small immutable value objects.
 from dataclasses import dataclass
@@ -98,3 +99,59 @@ def check_rate_limit(
     except RedisError:
         logging.getLogger(__name__).warning("rate limit not checked: Redis unreachable")
         return RateLimitResult(True)
+
+
+# Default sign-in throttle (D3): 10 attempts per address per 15 minutes.
+AUTH_RATE_LIMIT = 10
+AUTH_RATE_WINDOW_SECONDS = 900
+_FALLBACK_MAX_KEYS = 10_000
+
+
+class AuthRateLimitFallback:
+    """In-process per-address counter used only when Redis is unreachable, so sign-in bursts are still throttled
+    without locking break-glass admins out during a Redis outage."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._counts: dict[str, int] = {}
+
+    def check(self, key: str, limit: int, retry_after: int) -> RateLimitResult:
+        with self._lock:
+            if len(self._counts) >= _FALLBACK_MAX_KEYS and key not in self._counts:
+                self._counts.clear()
+            count = self._counts.get(key, 0) + 1
+            if count > limit:
+                return RateLimitResult(False, "RATE_LIMITED", retry_after)
+            self._counts[key] = count
+            return RateLimitResult(True)
+
+
+def check_auth_rate_limit(
+    redis: Redis,
+    ip: str | None,
+    bucket: str,
+    clock: Clock,
+    *,
+    limit: int = AUTH_RATE_LIMIT,
+    window_seconds: int = AUTH_RATE_WINDOW_SECONDS,
+    fallback: AuthRateLimitFallback | None = None,
+) -> RateLimitResult:
+    """Per-address fixed-window rate limit for sign-in routes. Falls back to an in-process counter if Redis is down."""
+    addr = ip or "unknown"
+    epoch = int(clock.now().timestamp())
+    window = epoch // window_seconds
+    retry_after = max(1, window_seconds - (epoch % window_seconds))
+    key = f"setuhaul:auth_rl:{bucket}:{addr}:{window}"
+    try:
+        pipe = redis.pipeline()
+        pipe.incr(key)
+        pipe.expire(key, window_seconds * 2)
+        count, _ = pipe.execute()
+        if int(count) > limit:
+            return RateLimitResult(False, "RATE_LIMITED", retry_after)
+        return RateLimitResult(True)
+    except RedisError:
+        logging.getLogger(__name__).warning("auth rate limit using in-process fallback: Redis unreachable")
+        if fallback is None:
+            return RateLimitResult(False, "RATE_LIMITED", retry_after)
+        return fallback.check(key, limit, retry_after)

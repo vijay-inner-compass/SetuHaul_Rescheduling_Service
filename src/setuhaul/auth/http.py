@@ -10,4 +10,5 @@ from fastapi.responses import JSONResponse
 
 def reject(rid: str, status: int, code: str, **extra: Any) -> JSONResponse:
     # Same shape as the rest of the API.
-    return JSONResponse({"status": "REJECTED", "reason_code": code, "request_id": rid, **extra}, status_code=status)
+    headers = {"Retry-After": str(extra["retry_after_seconds"])} if "retry_after_seconds" in extra else None
+    return JSONResponse({"status": "REJECTED", "reason_code": code, "request_id": rid, **extra}, status_code=status, headers=headers)
