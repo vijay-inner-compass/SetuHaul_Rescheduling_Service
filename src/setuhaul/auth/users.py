@@ -49,7 +49,7 @@ def _normalise(email: str) -> str:
 def _load(conn: sqlite3.Connection, where: str, param: str) -> User | None:
     # One user row, matched by the caller's (fixed, internal) condition.
     row = conn.execute(
-        f"select user_id, email, role, status, display_name from users where deleted_at is null and ({where})", (param,)
+        f"select user_id, email, role, status, display_name from users where email not like 'deleted+%@deleted.invalid' and ({where})", (param,)
     ).fetchone()
     if row is None:
         return None
@@ -197,6 +197,7 @@ _HISTORY_REFS: tuple[tuple[str, str], ...] = (
     ("dock_blocks", "ended_by"),
     ("driver_deletions", "deleted_by"),
     ("driver_deletions", "restored_by"),
+    ("user_deletions", "deleted_by"),
 )
 
 
@@ -216,7 +217,7 @@ def delete(conn: sqlite3.Connection, *, actor: User, user_id: str, clock: Clock)
             raise AuthError("UNKNOWN_USER")
         if target.role == "ADMIN" and target.status == "ACTIVE":
             others = conn.execute(
-                "select count(*) from users where role='ADMIN' and status='ACTIVE' and deleted_at is null and user_id<>?",
+                "select count(*) from users where role='ADMIN' and status='ACTIVE' and email not like 'deleted+%@deleted.invalid' and user_id<>?",
                 (user_id,),
             ).fetchone()[0]
             if others == 0:
@@ -239,8 +240,12 @@ def delete(conn: sqlite3.Connection, *, actor: User, user_id: str, clock: Clock)
         else:
             # Soft-delete and free the original email so the address can be re-invited later while keeping FKs valid.
             conn.execute(
-                "update users set status='DISABLED', deleted_at=?, email=? where user_id=?",
-                (now, f"deleted+{user_id.lower()}@deleted.invalid", user_id),
+                "update users set status='DISABLED', email=? where user_id=?",
+                (f"deleted+{user_id.lower()}@deleted.invalid", user_id),
+            )
+            conn.execute(
+                "insert into user_deletions(user_id, deleted_by, deleted_at, original_email) values (?,?,?,?)",
+                (user_id, actor.user_id, now, target.email),
             )
             hard_deleted = False
         audit.record(

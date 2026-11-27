@@ -109,7 +109,7 @@ def register_admin_api(app: FastAPI, deps: AppDeps) -> None:
         def read(conn: sqlite3.Connection) -> Response:
             out = []
             # Every user, oldest first; each one re-read through the users module so the shape is the same everywhere.
-            for row in conn.execute("select user_id, last_login_at from users where deleted_at is null order by created_at, user_id").fetchall():
+            for row in conn.execute("select user_id, last_login_at from users where email not like 'deleted+%@deleted.invalid' order by created_at, user_id").fetchall():
                 found = users.find_by_id(conn, row["user_id"])
                 if found is not None:
                     out.append(_user_json(found, row["last_login_at"]))

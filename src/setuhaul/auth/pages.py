@@ -249,7 +249,7 @@ def _users_section(conn: sqlite3.Connection, me: User, passwords: bool = False, 
                   for r in conn.execute("select facility_id, facility_name from facilities order by facility_id")]
     rows = []
     # Every user, oldest first, each re-read through the users module like the JSON API does.
-    for row in conn.execute("select user_id, last_login_at from users where deleted_at is null order by created_at, user_id").fetchall():
+    for row in conn.execute("select user_id, last_login_at from users where email not like 'deleted+%@deleted.invalid' order by created_at, user_id").fetchall():
         found = users.find_by_id(conn, row["user_id"])
         if found is None:
             continue

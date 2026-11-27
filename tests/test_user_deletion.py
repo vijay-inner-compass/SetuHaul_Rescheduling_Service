@@ -126,6 +126,8 @@ def test_delete_warehouse_supervisor_with_operational_history_preserves_fks_and_
     try:
         assert conn.execute("pragma foreign_key_check").fetchall() == []
         assert conn.execute("select count(*) from projects where contract_ref='CNT-DEL-01'").fetchone()[0] == 1
+        del_row = conn.execute("select original_email from user_deletions where user_id=?", (sup.user_id,)).fetchone()
+        assert del_row is not None and del_row["original_email"] == "sup@x.com"
     finally:
         conn.close()
 
