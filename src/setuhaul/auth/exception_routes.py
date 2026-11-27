@@ -1,4 +1,4 @@
-"""Warehouse routes for exceptions: blocking a dock, reopening it, and freeing one booked slot."""
+"""Warehouse routes for exceptions: blocking a dock, freeing one booked slot, and deleting or restoring a driver."""
 
 # Lazy annotations.
 from __future__ import annotations
@@ -9,9 +9,11 @@ from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, ConfigDict
 from starlette.concurrency import run_in_threadpool
 
 from setuhaul import dock_blocks, release
+from setuhaul.auth import driver_removal
 from setuhaul.auth.authz import require_role
 from setuhaul.auth.http import reject
 from setuhaul.auth.users import User
@@ -19,7 +21,7 @@ from setuhaul.db import open_connection
 from setuhaul.identity import AuthError
 
 # The refusal is about what is stored now, not about what was typed.
-_CONFLICT = {"PLAN_CHANGED", "NOT_BOOKED", "SLOT_STARTED", "UNLOADING", "TRUCK_ON_SITE"}
+_CONFLICT = {"DRIVER_ON_SITE", "NOT_DELETED", "PLAN_CHANGED", "NOT_BOOKED", "SLOT_STARTED", "UNLOADING", "TRUCK_ON_SITE"}
 
 # What the person at the screen is told for each refusal.
 _MESSAGES = {
@@ -34,7 +36,13 @@ _MESSAGES = {
     "SLOT_STARTED": "That slot has already started.",
     "UNLOADING": "Unloading has started, so the slot cannot be freed.",
     "TRUCK_ON_SITE": "The truck is already inside, so the slot cannot be freed.",
-    "PLAN_CHANGED": "Bookings or free slots have changed. Check the new list and confirm again.",
+    "PLAN_CHANGED": "Things have changed since the warning. Check the new list and confirm again.",
+    "DRIVER_NOT_FOUND": "That driver is not one you can delete.",
+    "OTHER_FACILITY_SHIPMENTS": "This driver has shipments at another warehouse. Ask an administrator to delete them.",
+    "DRIVER_ON_SITE": "One of this driver's trucks is at a dock or inside the gate. Finish that visit first.",
+    "NAME_MISMATCH": "The name does not match the driver's name.",
+    "NOT_DELETED": "That driver is not deleted. Reload the page.",
+    "FORBIDDEN": "Only an administrator can restore a driver.",
 }
 
 
@@ -43,7 +51,17 @@ class Confirmed(dock_blocks.BlockRequest):
     expected: list[dock_blocks.Expected]
 
 
+class Deletion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirm_name: str
+    # The shipments the warning listed.
+    expected: list[str]
+
+
 def _status(code: str) -> int:
+    if code == "FORBIDDEN":
+        return 403
     if code.endswith("_NOT_FOUND"):
         return 404
     return 409 if code in _CONFLICT else 422
@@ -118,5 +136,37 @@ def register_exception_routes(app: FastAPI, deps: Any) -> None:
         def write(conn: sqlite3.Connection) -> Response:
             dock_blocks.reopen(conn, actor=user, dock_event_id=dock_event_id, clock=deps.clock)
             return ok(rid, dock_event_id=dock_event_id)
+
+        return await run_in_threadpool(run, rid, write)
+
+    @app.get("/v1/warehouse/drivers/{driver_id}/deletion")
+    async def deletion(request: Request, driver_id: str,
+                       user: Annotated[User, Depends(require_role("WAREHOUSE_AUTHORITY", "ADMIN"))]) -> Response:
+        rid = request.state.request_id
+
+        def read(conn: sqlite3.Connection) -> Response:
+            return ok(rid, **driver_removal.preview(conn, actor=user, driver_id=driver_id).model_dump())
+
+        return await run_in_threadpool(run, rid, read, True)
+
+    @app.post("/v1/warehouse/drivers/{driver_id}/delete")
+    async def delete(request: Request, driver_id: str, body: Deletion,
+                     user: Annotated[User, Depends(require_role("WAREHOUSE_AUTHORITY", "ADMIN"))]) -> Response:
+        rid = request.state.request_id
+
+        def write(conn: sqlite3.Connection) -> Response:
+            done = driver_removal.delete(conn, actor=user, driver_id=driver_id, confirm_name=body.confirm_name,
+                                         expected=body.expected, clock=deps.clock)
+            return ok(rid, **done.model_dump())
+
+        return await run_in_threadpool(run, rid, write)
+
+    @app.post("/v1/drivers/{driver_id}/restore")
+    async def restore(request: Request, driver_id: str, user: Annotated[User, Depends(require_role("ADMIN"))]) -> Response:
+        rid = request.state.request_id
+
+        def write(conn: sqlite3.Connection) -> Response:
+            driver_removal.restore(conn, actor=user, driver_id=driver_id, clock=deps.clock)
+            return ok(rid, driver_id=driver_id)
 
         return await run_in_threadpool(run, rid, write)

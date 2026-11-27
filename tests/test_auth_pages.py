@@ -81,7 +81,7 @@ def test_admin_page_shows_pending_driver_and_audit_rows(world: World) -> None:
 
 def test_admin_page_has_one_panel_per_tab(world: World) -> None:
     text = world.client("admin").get("/admin").text
-    keys = ["users", "pending", "decided", "audit", "model", "config"]
+    keys = ["users", "pending", "decided", "deleted", "audit", "model", "config"]
     assert re.findall(r'data-tab="(\w+)"', text) == keys
     assert re.findall(r'<section id="\w+" data-panel="(\w+)"', text) == keys
     assert text.index("/app/assets/tabs.js") < text.index("/app/assets/admin.js")

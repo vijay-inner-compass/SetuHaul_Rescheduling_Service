@@ -21,7 +21,13 @@ from setuhaul.auth.authz import facility_ids
 from setuhaul.auth.shipments import _facility, _ist
 from setuhaul.auth.users import User
 from setuhaul.booking import _expire_due_for, release_hold_in_txn
-from setuhaul.capacity import BLOCKING_EVENT_TYPES, DockEvent, FacilityState, Occupant, build_facility_state
+from setuhaul.capacity import (
+    BLOCKING_EVENT_TYPES,
+    DockEvent,
+    FacilityState,
+    Occupant,
+    build_facility_state,
+)
 from setuhaul.clock import Clock
 from setuhaul.db import IST, immediate, parse_operational_timestamp
 from setuhaul.events import append_appointment_event

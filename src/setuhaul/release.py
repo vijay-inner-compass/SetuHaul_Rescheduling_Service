@@ -12,9 +12,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
-from setuhaul import passes
 from setuhaul.auth import audit
 from setuhaul.auth.authz import facility_ids
+from setuhaul.auth.telegram import bound_chat
 from setuhaul.auth.users import User
 from setuhaul.booking import release_hold_in_txn
 from setuhaul.clock import Clock
@@ -125,6 +125,6 @@ def tell_driver(conn: sqlite3.Connection, clock: Clock, telegram_on: bool, found
 
     Call after the transaction that changed the booking.
     """
-    _tell(conn, clock, None, found.driver_id, _thread_of(conn, found.driver_id), found.shipment_id, key, **fields)
+    _tell(conn, clock, None, found.driver_id, _thread_of(conn, found.driver_id), found.shipment_id, key, happened_at=None, **fields)
     conn.commit()
-    return telegram_on and passes.bound_chat(conn, found.driver_id) is not None
+    return telegram_on and bound_chat(conn, found.driver_id) is not None

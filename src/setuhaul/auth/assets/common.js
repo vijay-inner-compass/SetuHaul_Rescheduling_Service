@@ -17,6 +17,12 @@
     if (data && data.reason_code === "BAD_CREDENTIALS") {
       return "The email or password is not correct. Repeated failures lock the password for a while.";
     }
+    if (data && data.reason_code === "DRIVER_DELETED_RESTORE") {
+      return "This phone or licence belongs to a deleted driver. An administrator can restore them from the Admin screen.";
+    }
+    if (data && data.reason_code === "DRIVER_DELETED") {
+      return "That driver is deleted. Restore them first.";
+    }
     if (data && typeof data.message === "string") {
       return data.message;
     }

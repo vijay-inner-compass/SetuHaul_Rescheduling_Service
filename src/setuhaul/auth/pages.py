@@ -455,10 +455,14 @@ def _configuration_section(conn: sqlite3.Connection, deps: AppDeps) -> str:
 def render_admin(conn: sqlite3.Connection, me: User, query: dict[str, str], deps: AppDeps) -> str:
     # The admin screen: users, pending drivers, decided onboarded drivers (suspend / re-approve), audit log.
     nav = '<a href="/admin">Admin</a> <a href="/warehouse">Warehouse</a>'
-    tabs = _tabs((("users", "Users"), ("pending", "Pending drivers"), ("decided", "Onboarded drivers"), ("audit", "Audit log"), ("model", "Model"),
+    tabs = _tabs((("users", "Users"), ("pending", "Pending drivers"), ("decided", "Onboarded drivers"), ("deleted", "Deleted drivers"), ("audit", "Audit log"), ("model", "Model"),
                   ("config", "Configuration")))
     # The "wh" class gives the same tab styling as the warehouse screen.
+    # Imported here: that module uses this one's page helpers.
+    from setuhaul.auth.exception_pages import deleted_section
+
     body = ('<div class="wh">' + tabs + _users_section(conn, me) + _pending_section(conn) + _decided_section(conn)
+            + deleted_section(conn)
             + _audit_section(conn, query) + _model_section(conn, deps)
             + _configuration_section(conn, deps) + "</div>")
     return _layout("Admin", body, ("common.js", "tabs.js", "admin.js", "model.js", "settings.js"), me, nav)
@@ -671,6 +675,9 @@ def _drivers_section(conn: sqlite3.Connection, user: User, today: date) -> str:
             elif d["telegram_status"] == "REVOKED":
                 action = _button("Allow re-link", f"{base}/allow-relink",
                                  confirm=f"Let {d['driver_name']} link a Telegram account again?")
+        # Deleting follows the same rule: an admin, or the authority who added the driver.
+        if telegram.may_manage_binding(conn, user, d["driver_id"]):
+            action += f'<button type="button" data-delete-driver="{esc(d["driver_id"])}">Delete</button>'
         rows.append([esc(d["driver_id"]), esc(d["driver_name"]), esc(d["phone"]), esc(d["approval_status"]),
                      "Yes" if d["licence_valid"] else "No", esc(d["telegram_status"]), action])
     carriers = [(r["carrier_id"], f"{r['carrier_id']} - {r['carrier_name']}")
@@ -688,7 +695,7 @@ def _drivers_section(conn: sqlite3.Connection, user: User, today: date) -> str:
            f'<label>Vehicle <select name="vehicle_id" id="vehicle">{vehicle_options}</select></label>'
            '<button type="submit">Add driver</button></form>')
     table = _table(("Driver", "Name", "Phone", "Approval", "Licence valid", "Telegram", ""), rows, "No drivers yet.")
-    return f'<section id="drivers" data-panel="drivers"><h2>Drivers</h2><div class="scroll">{table}</div>{add}</section>'
+    return f'<section id="drivers" data-panel="drivers"><h2>Drivers</h2><div class="scroll">{table}</div><div id="driver-removal" role="region" aria-live="polite"></div>{add}</section>'
 
 
 def render_warehouse(conn: sqlite3.Connection, user: User, now: Any, facility: str | None) -> HTMLResponse:

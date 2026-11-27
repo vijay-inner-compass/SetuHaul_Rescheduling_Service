@@ -1,4 +1,4 @@
-"""Screen parts for warehouse exceptions: the block-a-dock form and the blocks in force."""
+"""Screen parts for warehouse exceptions: blocking a dock, the blocks in force, and deleted drivers."""
 
 # Lazy annotations.
 from __future__ import annotations
@@ -7,6 +7,7 @@ import sqlite3
 from datetime import datetime
 
 from setuhaul import dock_blocks
+from setuhaul.auth import driver_removal
 from setuhaul.auth.authz import facility_ids
 from setuhaul.auth.pages import _button, _options, _segment, _table, esc
 from setuhaul.auth.users import User
@@ -44,3 +45,16 @@ def blocks_section(conn: sqlite3.Connection, user: User, facility: str, now: dat
     table = _table(("Dock", "From", "To", "Reason", ""), rows, "No dock is blocked.")
     return (f'<h3>Block a dock</h3><p id="block-result" class="note" role="status"></p>{form}'
             f'<h3>Current and upcoming blocks</h3><div class="blocks-list">{table}</div>')
+
+
+def deleted_section(conn: sqlite3.Connection) -> str:
+    """The admin tab listing deleted drivers, each with Restore."""
+    rows = []
+    for d in driver_removal.deleted(conn):
+        restore = _button("Restore", f"/v1/drivers/{_segment(d['driver_id'])}/restore",
+                          confirm=f"Restore {d['driver_name']}? Their cancelled shipments do not come back.")
+        rows.append([esc(d["driver_id"]), esc(d["driver_name"]), esc(d["carrier_id"]), esc(_when(d["deleted_at"])),
+                     esc(d["deleted_by"]), restore])
+    table = _table(("Driver", "Name", "Carrier", "Deleted", "By", ""), rows, "No drivers are deleted.")
+    return ('<section id="deleted" data-panel="deleted"><h2>Deleted drivers</h2><p class="note">A restored driver must be allowed '
+            f'to re-link Telegram and be allocated to projects again.</p><div class="scroll">{table}</div></section>')

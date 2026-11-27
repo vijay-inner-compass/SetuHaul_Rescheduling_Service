@@ -97,3 +97,89 @@
     });
   });
 })();
+
+// Deleting a driver: show what it would cancel, ask for the name, then confirm exactly that list.
+(function () {
+  "use strict";
+  var box = document.getElementById("driver-removal");
+  if (!box) {
+    return;
+  }
+  function add(parent, tag, text) {
+    var node = document.createElement(tag);
+    node.textContent = text;
+    parent.appendChild(node);
+    return node;
+  }
+  function read(response) {
+    return response.json().catch(function () { return null; }).then(function (data) {
+      return { ok: response.ok, data: data || {} };
+    });
+  }
+  function why(data) {
+    return data.message || data.reason_code || "INVALID_REQUEST";
+  }
+
+  function show(driver, note) {
+    var base = "/v1/warehouse/drivers/" + encodeURIComponent(driver);
+    box.textContent = "Checking...";
+    fetch(base + "/deletion", { credentials: "same-origin" }).then(read).then(function (answer) {
+      box.textContent = "";
+      if (!answer.ok) {
+        add(box, "p", why(answer.data));
+        return;
+      }
+      var plan = answer.data;
+      add(box, "h3", "Delete " + plan.driver_name + " (" + plan.driver_id + ")?");
+      if (note) { add(box, "p", note); }
+      add(box, "p", plan.shipments.length
+        ? "This cancels " + plan.shipments.length + " unfinished shipment(s) and frees their dock slots:"
+        : "This driver has no unfinished shipments.");
+      if (plan.shipments.length) {
+        var list = add(box, "ul", "");
+        plan.shipments.forEach(function (s) {
+          var where = s.dock_code ? s.dock_code + " " + s.start.slice(8, 10) + "/" + s.start.slice(5, 7) + " " + s.start.slice(11, 16)
+            : "no slot booked";
+          add(list, "li", s.order_reference + ": " + where + (s.blocked_by ? " (truck on site: finish this visit first)" : ""));
+        });
+      }
+      var label = add(box, "label", "Type the driver's name to confirm ");
+      var name = add(label, "input", "");
+      name.autocomplete = "off";
+      var go = add(box, "button", "Delete driver");
+      go.type = "button";
+      var stop = add(box, "button", "Cancel");
+      stop.type = "button";
+      stop.addEventListener("click", function () { box.textContent = ""; });
+      var line = add(box, "p", "");
+      line.setAttribute("role", "alert");
+      go.addEventListener("click", function () {
+        go.disabled = true;
+        fetch(base + "/delete", {
+          method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ confirm_name: name.value, expected: plan.shipments.map(function (s) { return s.shipment_id; }) })
+        }).then(read).then(function (done) {
+          if (done.ok) {
+            window.location.reload();
+          } else if (done.data.reason_code === "PLAN_CHANGED") {
+            show(driver, why(done.data));
+          } else {
+            go.disabled = false;
+            line.textContent = why(done.data);
+          }
+        }).catch(function () {
+          go.disabled = false;
+          line.textContent = "Network error";
+        });
+      });
+      name.focus();
+    }).catch(function () {
+      box.textContent = "Network error";
+    });
+  }
+
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest("button[data-delete-driver]");
+    if (button) { show(button.getAttribute("data-delete-driver"), ""); }
+  });
+})();

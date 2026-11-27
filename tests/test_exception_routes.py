@@ -119,3 +119,50 @@ def test_free_route_frees_and_then_answers_409(tmp_path: Path) -> None:
     again = client.post(free_url(appt), json={})
     assert again.status_code == 409 and again.json()["reason_code"] == "NOT_BOOKED" and again.json()["message"]
     assert query(world, "select count(*) from notification_outbox where recipient_type='DRIVER'")[0][0] == 1
+
+
+# ---- deleting and restoring a driver --------------------------------------------------------------------
+def driver_world(tmp_path: Path) -> tuple[World, str, dict[str, Any]]:
+    world, shipment_id, _ = booked_world(tmp_path)
+    # Only the load made here is left open, so the warning is short.
+    query(world, "update shipments set current_status='COMPLETED' where driver_id='DRV001' and shipment_id<>?", shipment_id)
+    name = query(world, "select driver_name from drivers where driver_id='DRV001'")[0][0]
+    return world, shipment_id, {"confirm_name": name, "expected": [shipment_id]}
+
+
+def test_delete_over_http_after_reading_the_warning(tmp_path: Path) -> None:
+    world, shipment_id, confirm = driver_world(tmp_path)
+    client = world.client("admin")
+    seen = client.get("/v1/warehouse/drivers/DRV001/deletion")
+    assert seen.status_code == 200 and [s["shipment_id"] for s in seen.json()["shipments"]] == [shipment_id]
+    wrong = client.post("/v1/warehouse/drivers/DRV001/delete", json=confirm | {"confirm_name": "x"})
+    assert wrong.status_code == 422 and wrong.json()["message"]
+    assert client.post("/v1/warehouse/drivers/DRV001/delete", json=confirm).status_code == 200
+    assert query(world, "select current_status from shipments where shipment_id=?", shipment_id)[0][0] == "CANCELLED"
+
+
+def test_restore_is_admin_only(tmp_path: Path) -> None:
+    world, _, confirm = driver_world(tmp_path)
+    admin = world.client("admin")
+    admin.post("/v1/warehouse/drivers/DRV001/delete", json=confirm)
+    assert world.client("wh_a").post("/v1/drivers/DRV001/restore", json={}).status_code == 403
+    assert admin.post("/v1/drivers/DRV001/restore", json={}).status_code == 200
+    again = admin.post("/v1/drivers/DRV001/restore", json={})
+    assert again.status_code == 409 and again.json()["reason_code"] == "NOT_DELETED"
+
+
+def test_delete_button_only_where_allowed(tmp_path: Path) -> None:
+    world, _, _ = driver_world(tmp_path)
+    admin_page = world.client("admin").get(PAGE).text
+    assert 'data-delete-driver="DRV001"' in admin_page and 'id="driver-removal"' in admin_page
+    # A supplied driver was added by nobody, so a warehouse authority is offered nothing.
+    assert 'data-delete-driver="DRV001"' not in world.client("wh_a").get(PAGE).text
+
+
+def test_admin_page_lists_deleted_drivers(tmp_path: Path) -> None:
+    world, _, confirm = driver_world(tmp_path)
+    admin = world.client("admin")
+    assert "/v1/drivers/DRV001/restore" not in admin.get("/admin").text
+    admin.post("/v1/warehouse/drivers/DRV001/delete", json=confirm)
+    page = admin.get("/admin").text
+    assert 'data-tab="deleted"' in page and "/v1/drivers/DRV001/restore" in page

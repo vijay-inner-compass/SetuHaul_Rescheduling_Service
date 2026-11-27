@@ -96,7 +96,7 @@ model, guarantees one holder per slot (`python scripts/show_phase5.py`).
 
 #### Example: release a held slot on the dock board
 
-The board has no release button: a click on a free cell books it. A hold is released from the driver's side.
+The demo console's board has no release button: a click on a free cell books it. A hold is released from the driver's side.
 
 Press **Reset demo** (**Supplied schedule**), open `http://127.0.0.1:8800/demo/driver-login` (Manoj Sharma) and keep the
 console's **Dock board** on SetuHaul Jaipur beside it.
@@ -120,6 +120,22 @@ No native speaker has reviewed the wording.
 
 Start with `python scripts/run_demo.py --fresh`, or **Reset demo** and choose **Empty dock board**. All supplied appointments are
 removed, so a first booking has no "original ended" step. The hard rules still apply: Pradeep Jat still goes to a person.
+
+### Warehouse exceptions (signed-in warehouse screen, not the demo console)
+
+On `/warehouse`, for your own facilities (an admin: all):
+
+* **Block a dock** (Dock board tab): choose dock, type, from, optional to, and a reason, then **Check bookings**. The warning lists
+  each affected booking and where it would move. **Block and move** applies exactly that list; if things changed meanwhile you are
+  shown the new list. A booking that fits nowhere is freed and its shipment waits for a slot. Trucks already inside are left alone.
+* **Reopen** ends one block early. Bookings already moved stay where they are.
+* **Free a slot:** the **x** on a booked, not yet started slot under "Today by hour". The shipment stays and needs a new slot.
+* **Delete a driver** (Drivers tab): lists the unfinished shipments that will be cancelled and asks for the driver's name. Admins
+  may delete anyone; warehouse staff only drivers they added. Nothing is erased.
+* **Restore** (admin): Admin screen, **Deleted drivers**. Cancelled shipments and project allocations do not come back, and
+  Telegram must be allowed to re-link.
+
+If a driver cannot be reached on Telegram after a slot is freed or moved, the screen says so: phone them.
 
 ## 3. Showing the edge cases and failures
 
