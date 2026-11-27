@@ -61,6 +61,26 @@ class AvailabilityResult(BaseModel):
     slots_skipped: int = 0
 
 
+class BadDates(AuthError):
+    """INVALID_DATES; `message` says which date rule was broken."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__("INVALID_DATES")
+        self.message = message
+
+
+def _check_dates(first: date, last: date, today: date) -> None:
+    shown = "{:%d %b %Y}".format
+    if first < today:
+        raise BadDates(f"The first date ({shown(first)}) is before today ({shown(today)}). Nothing was changed.")
+    if last < first:
+        raise BadDates(f"The last date ({shown(last)}) is before the first date ({shown(first)}). Nothing was changed.")
+    days = (last - first).days + 1
+    if days > MAX_DAYS:
+        raise BadDates(f"The dates cover {days} days ({shown(first)} to {shown(last)}). Open at most {MAX_DAYS} days at a time."
+                       " Nothing was changed.")
+
+
 class DoesNotFit(AuthError):
     """The booking rules refuse the planned slot; `reasons` are their codes."""
 
@@ -115,8 +135,7 @@ def open_availability(conn: sqlite3.Connection, *, actor: User, data: Availabili
         facility = _facility(conn, actor, data.facility_id)
         now = clock.now()
         days = (data.last_date - data.first_date).days + 1
-        if data.first_date < now.astimezone(IST).date() or not 1 <= days <= MAX_DAYS:
-            raise AuthError("INVALID_DATES")
+        _check_dates(data.first_date, data.last_date, now.astimezone(IST).date())
         opens, closes = time.fromisoformat(facility["open_time"]), time.fromisoformat(facility["close_time"])
         if not opens <= data.from_time < data.to_time <= closes:
             raise AuthError("INVALID_TIMES")

@@ -102,8 +102,17 @@
     }
   }
 
-  // The words for a refused call. A code with no sentence yet is still named, so it can be reported.
-  function reason(status, data) {
+  // What the screen calls a field; failing that, its name made readable.
+  function labelOf(form, name) {
+    var field = form.querySelector("[name='" + CSS.escape(name) + "']");
+    var label = field && field.labels && field.labels[0];
+    var words = label && label.firstChild && label.firstChild.nodeType === 3 ? label.firstChild.textContent.trim() : "";
+    return words || (name.charAt(0).toUpperCase() + name.slice(1)).replace(/_/g, " ");
+  }
+
+  // The words for a refused call. A code with no sentence yet is still named, so it can be reported. Given the form,
+  // fields at fault are named as the screen names them.
+  function reason(status, data, form) {
     var code = data && typeof data.reason_code === "string" ? data.reason_code : status === 422 ? "INVALID_REQUEST" : "";
     // A sentence from the server says the most (which dock rule failed, say); then ours; then at least the code.
     var text = data && typeof data.message === "string" ? data.message :
@@ -113,7 +122,14 @@
     if (code === "ALREADY_CLAIMED" && data.claimed_by) {
       text = "Already claimed by " + String(data.claimed_by).replace(/^web:/, "") + ".";
     }
-    return { text: text, signIn: !!SIGN_IN[code], field: FIELDS[code] || "" };
+    var field = FIELDS[code] || "";
+    var problems = data && Array.isArray(data.problems) ? data.problems : [];
+    if (form && problems.length) {
+      text = problems.map(function (p) { return labelOf(form, p.field) + ": " + p.problem + "."; }).join(" ") +
+        " Nothing was changed.";
+      field = problems[0].field;
+    }
+    return { text: text, signIn: !!SIGN_IN[code], field: field };
   }
 
   // Put the refusal next to what was pressed. The sign-in page keeps its own status line.
@@ -226,7 +242,7 @@
           return;
         }
         release();
-        explain(source, reason(response.status, data));
+        explain(source, reason(response.status, data, source.tagName === "FORM" ? source : null));
       });
     }).catch(function () {
       release();

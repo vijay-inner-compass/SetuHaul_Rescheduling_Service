@@ -29,7 +29,6 @@ _MESSAGES = {
     "FACILITY_NOT_FOUND": "That facility is not one of yours.",
     "PARTNER_FACILITY": "Partner warehouses are booked by email, not here.",
     "DOCK_NOT_FOUND": "Choose at least one dock of that facility.",
-    "INVALID_DATES": "Dates must start today or later and cover at most 14 days.",
     "INVALID_TIMES": "The times must be in order and inside the facility's opening hours.",
     "BAD_ORDER_NUMBER": "The order number is ORD followed by at least six digits.",
     "DUPLICATE_ORDER_NUMBER": "That order number is already in use.",
@@ -60,6 +59,8 @@ _WHY = {
 
 
 def _message(exc: AuthError) -> str | None:
+    if isinstance(exc, shipments.BadDates):
+        return exc.message
     text = _MESSAGES.get(exc.code)
     if text is None or not isinstance(exc, shipments.DoesNotFit):
         return text
