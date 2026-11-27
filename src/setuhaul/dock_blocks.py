@@ -222,6 +222,11 @@ def _plan(conn: sqlite3.Connection, data: BlockRequest, starts: datetime, ends: 
     state = build_facility_state(conn, data.facility_id, now)
     # Judge new slots as if the block already existed.
     state.events.append(DockEvent(data.dock_id, data.event_type, starts, ends, data.reason))
+    # Holds on the blocked slots are released by the block, so they take no crew from the moves.
+    for appointment_id in _caught(conn, data, starts, ends, now, ("HELD",)):
+        held = booking(conn, appointment_id)
+        if held is not None:
+            state.occupancy.pop(held.slot_id, None)
     found = [b for b in (booking(conn, a) for a in _caught(conn, data, starts, ends, now,
                                                            ("CONFIRMED", "PENDING_CONFIRMATION", "IN_PROGRESS"))) if b]
     priority = {b.appointment_id: _PRIORITY.get(conn.execute(
@@ -237,6 +242,8 @@ def _plan(conn: sqlite3.Connection, data: BlockRequest, starts: datetime, ends: 
             continue
         chosen = _new_slot(conn, b, state, now)
         if chosen is None:
+            # Freed by the block, so it no longer takes a crew from those placed after it.
+            state.occupancy.pop(b.slot_id, None)
             items.append(PlanItem(action="FREE", **base))
             continue
         slot_id, penalty_breach = chosen

@@ -87,6 +87,9 @@ def _cancel_shipment(conn: sqlite3.Connection, actor: User, shipment_id: str, cl
     for table, waiting in (("partner_requests", "PENDING_PARTNER"), ("facility_change_requests", "PENDING")):
         conn.execute(f"update {table} set status='EXPIRED', decided_at=? where shipment_id=? and status=?",
                      (stamp, shipment_id, waiting))
+    # An approved move that is not booked yet would otherwise be "undone" later by the sweep, messaging the deleted driver.
+    conn.execute("update facility_change_requests set status='REJECTED', reason='DRIVER_DELETED', follow_up=NULL"
+                 " where shipment_id=? and status='APPROVED' and coalesce(follow_up,'')<>'BOOKED'", (shipment_id,))
 
 
 def delete(conn: sqlite3.Connection, *, actor: User, driver_id: str, confirm_name: str, expected: list[str],

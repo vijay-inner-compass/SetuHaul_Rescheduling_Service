@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from setuhaul import facility_change
 from setuhaul.api import resolve_eligible_driver
 from setuhaul.auth import driver_removal, onboarding
 from setuhaul.auth.warehouse_routes import drivers_in_scope
@@ -139,3 +140,27 @@ def test_restore_brings_the_driver_back_but_not_the_shipments(tmp_path: Path) ->
     assert visible(world) and eligible(world)
     assert query(world, "select current_status from shipments where shipment_id=?", shipment_id)[0][0] == "CANCELLED"
     assert code_of(run, world, driver_removal.restore, actor=world.users["admin"], driver_id=DRIVER) == "NOT_DELETED"
+
+
+def test_an_approved_move_still_waiting_is_closed_with_the_driver(tmp_path: Path) -> None:
+    world, shipment_id, _ = make(tmp_path)
+    stamp = world.clock.now().isoformat()
+    query(world, "insert into facility_change_requests(request_id, shipment_id, driver_id, from_facility_id, to_facility_id, status,"
+                 " follow_up, created_at, decided_at, expires_at) values ('FCR-T',?,?,'FAC-GGN-01','FAC-JAI-01','APPROVED',"
+                 "'WAITING',?,?,?)", shipment_id, DRIVER, stamp, stamp, stamp)
+    delete(world)
+    told_before = query(world, "select count(*) from notification_outbox where recipient_type='DRIVER'")[0][0]
+    # The maintenance sweep must find nothing left to undo.
+    assert run_sweep(world) == 0
+    assert query(world, "select destination_facility_id from shipments where shipment_id=?", shipment_id)[0][0] == "FAC-JAI-01"
+    assert query(world, "select count(*) from notification_outbox where recipient_type='DRIVER'")[0][0] == told_before
+    assert tuple(query(world, "select status, reason, follow_up from facility_change_requests where request_id='FCR-T'")[0]) == (
+        "REJECTED", "DRIVER_DELETED", None)
+
+
+def run_sweep(world: World) -> int:
+    conn = open_connection(path=world.path)
+    try:
+        return facility_change.settle(conn, world.clock)
+    finally:
+        conn.close()
