@@ -137,7 +137,9 @@ def open_availability(conn: sqlite3.Connection, *, actor: User, data: Availabili
         days = (data.last_date - data.first_date).days + 1
         _check_dates(data.first_date, data.last_date, now.astimezone(IST).date())
         opens, closes = time.fromisoformat(facility["open_time"]), time.fromisoformat(facility["close_time"])
-        if not opens <= data.from_time < data.to_time <= closes:
+        # "To 00:00" is the end of the day, and a warehouse open all day closes then too.
+        until = time.max if data.to_time == time() else data.to_time
+        if not (opens <= data.from_time < until and (closes <= opens or until <= closes)):
             raise AuthError("INVALID_TIMES")
         docks = sorted(set(data.dock_ids))
         own = {r["dock_id"] for r in conn.execute("select dock_id from docks where facility_id=?", (data.facility_id,))}
@@ -148,7 +150,7 @@ def open_availability(conn: sqlite3.Connection, *, actor: User, data: Availabili
         for offset in range(days):
             day = data.first_date + timedelta(days=offset)
             start = datetime.combine(day, data.from_time, tzinfo=IST)
-            end = datetime.combine(day, data.to_time, tzinfo=IST)
+            end = datetime.combine(day + timedelta(days=1) if data.to_time == time() else day, data.to_time, tzinfo=IST)
             recorded = [(parse_operational_timestamp(w[0]), parse_operational_timestamp(w[1])) for w in conn.execute(
                 "select window_start, window_end from labour_windows where facility_id=? and substr(window_start,1,10)=?",
                 (data.facility_id, day.isoformat()))]

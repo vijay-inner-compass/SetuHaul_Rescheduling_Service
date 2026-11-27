@@ -50,10 +50,16 @@ _WAREHOUSE: tuple[Task, ...] = (
     )),
     ("Read the dock board", (
         "On the Dock board tab, click the facility's button at the top.",
+        "The board shows one day. To see another, choose it under “Day” and click “Show”.",
         ("Each row is a dock and each column an hour. A cell with initials has a booking; the colour says Free, Booked, "
         "Held (not yet confirmed) or Blocked."),
         "Hover over a cell, or click it, to see the dock, time, driver, order and any block reason.",
         "Open “On the bays now” under the board to see what is on each dock at this moment and what comes next.",
+    )),
+    ("Create slots day and night", (
+        "Warehouses are open 24 hours. Under the board, open “Round-the-clock slots”.",
+        "Type how many docks can unload at the same time and click “Save”.",
+        "1-hour slots for every dock are created 14 days ahead and topped up automatically. Labour already recorded is kept.",
     )),
     ("Free a booked slot", (
         "Click the booking's cell on the dock board.",
