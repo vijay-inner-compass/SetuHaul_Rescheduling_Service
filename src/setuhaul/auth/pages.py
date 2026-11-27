@@ -528,12 +528,45 @@ def _who(label: str) -> str:
     return f"<strong>{esc(name)}</strong>" + (f"<span>{esc(order)}</span>" if order else "")
 
 
-def _cross(dock: str, slot: dict[str, Any]) -> str:
-    # The small cross on a booked cell. The label is "driver · order"; the click handler is the shared data-api one.
-    name, _, order = slot["label"].partition(" · ")
-    ask = f"Free {dock} {slot['start']} for {order} ({name})? The shipment stays and will need a new slot."
-    return (f'<button type="button" class="free-slot" data-api="/v1/warehouse/appointments/{_segment(slot["appointment_id"])}/free"'
-            f' data-confirm="{esc(ask)}" aria-label="{esc(f"Free dock {dock} {slot['start']}, order {order}")}">&times;</button>')
+def _slot_button(dock: str, slot: dict[str, Any]) -> str:
+    # One compact cell: initials to look at, the whole story for hover, screen readers and the detail box.
+    name, _, order = slot["label"].partition(" \u00b7 ")
+    occupied = bool(order)
+    state = _STATUS_WORDS.get(slot["status"], "Blocked")
+    parts = [state] + ([name, order] if occupied else [])
+    if slot["status"] == "BLOCKED":
+        reason = slot.get("reason") or ("" if occupied else slot["label"])
+        parts += [reason] if reason else []
+    detail = f"{dock} {slot['start']}-{slot['end']}: {', '.join(parts)}"
+    initials = "".join(word[0] for word in name.split()[:2]).upper() if occupied else ""
+    free = ""
+    if slot.get("freeable"):
+        ask = f"Free {dock} {slot['start']} for {order} ({name})? The shipment stays and will need a new slot."
+        free = (f' data-free="/v1/warehouse/appointments/{_segment(slot["appointment_id"])}/free"'
+                f' data-confirm="{esc(ask)}"')
+    return (f'<button type="button" class="slot" data-key="{esc("slot:" + str(slot.get("slot_id", detail)))}"'
+            f' data-detail="{esc(detail)}" title="{esc(detail)}" aria-label="{esc(detail)}"{free}>{esc(initials)}</button>')
+
+
+# Up to this many facilities are offered as buttons; more would not fit on one line.
+_FACILITY_BUTTONS = 5
+
+
+def _facility_chooser(options: list[tuple[str, str]], selected: str | None) -> str:
+    shown = f' data-facility="{esc(selected or "")}"'
+    if len(options) > _FACILITY_BUTTONS:
+        return (f'<form method="get" action="/warehouse" class="filters facilities"{shown}><label>Facility '
+                f'<select name="facility">{_options(options, selected)}</select></label><button type="submit">Show</button></form>')
+    links = "".join(
+        f'<a href="/warehouse?facility={_segment(value)}#board"{" aria-current=\"true\"" if value == selected else ""}>'
+        f'{esc(label.partition(" - ")[2] or label)}</a>' for value, label in options)
+    return f'<nav class="facilities" aria-label="Facility"{shown}>{links}</nav>'
+
+
+# The detail of one cell. It sits outside everything the live refresh replaces.
+_SLOT_DETAIL = ('<dialog id="slot-detail" aria-labelledby="slot-detail-text"><p id="slot-detail-text"></p>'
+                '<button type="button" data-slot-free hidden>Free this slot</button>'
+                '<form method="dialog"><button type="submit">Close</button></form></dialog>')
 
 
 def _bay_card(dock: dict[str, Any], moment: datetime) -> str:
@@ -559,8 +592,7 @@ def _bay_card(dock: dict[str, Any], moment: datetime) -> str:
 
 def _board_section(board: dict[str, Any] | None, options: list[tuple[str, str]], selected: str | None, moment: datetime,
                    blocks: str = "") -> str:
-    selector = ('<form method="get" action="/warehouse" class="filters"><label>Facility '
-                f'<select name="facility">{_options(options, selected)}</select></label><button type="submit">Show</button></form>')
+    selector = _facility_chooser(options, selected)
     if board is None:
         return (f'<section id="board" data-panel="board"><h2>Dock board</h2>{selector}'
                 '<p class="empty">No facility to show.</p></section>')
@@ -576,9 +608,7 @@ def _board_section(board: dict[str, Any] | None, options: list[tuple[str, str]],
             kind = _CELL_CLASSES.get(slots[0]["status"], "blocked") if slots else "none"
             past = " past" if slots and all(s["past"] for s in slots) else ""
             marker = " now" if hour == current else ""
-            text = "".join(_who(s["label"]) if s["status"] in ("BOOKED", "HELD") and s["label"]
-                           else f'<em>{esc(s["label"] or _STATUS_WORDS.get(s["status"], s["status"].title()))}</em>' for s in slots)
-            text += "".join(_cross(dock["code"], s) for s in slots if s.get("freeable"))
+            text = "".join(_slot_button(dock["code"], s) for s in slots)
             cells.append(f'<td class="cell cell-{kind}{past}{marker}">{text}</td>')
         rows.append(f'<tr><th scope="row"><b>{esc(dock["code"])}</b><span>{esc(dock["type"])}</span></th>{"".join(cells)}</tr>')
     table = f'<div class="scroll"><table class="board"><thead><tr>{head}</tr></thead><tbody>{"".join(rows)}</tbody></table></div>'
@@ -591,7 +621,7 @@ def _board_section(board: dict[str, Any] | None, options: list[tuple[str, str]],
     return (f'<section id="board" data-panel="board"><h2>Dock board</h2>{selector}'
             f'<p class="legend asof">Facility {esc(board["facility"])}, {esc(f"{moment.astimezone(IST):%a %d %b, %H:%M}")}</p>'
             f'<h3>On the bays now</h3><ul class="bays">{bays}</ul>'
-            f'<h3>Today by hour</h3><p class="keys">{legend}</p>{table}<h3>Waiting for partner reply</h3><div class="waiting">{waiting}</div>{blocks}</section>')
+            f'<h3>Today by hour</h3><p class="keys">{legend}</p><p id="block-result" class="note" role="status"></p>{table}{_SLOT_DETAIL}<h3>Waiting for partner reply</h3><div class="waiting">{waiting}</div>{blocks}</section>')
 
 
 def _clock(stamp: str) -> str:

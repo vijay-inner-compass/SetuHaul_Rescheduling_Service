@@ -50,7 +50,9 @@ def build_board(conn: sqlite3.Connection, facility_id: str, now: datetime) -> di
                           "start_ts": slot.start.astimezone(IST).isoformat(), "end_ts": slot.end.astimezone(IST).isoformat(),
                           "label": who[1] if who else (slot.block_reason or (events[0].reason if events else "")), "driver_id": who[0] if who else None,
                           "source": who[2] if who else None, "appointment_id": occ.appointment_id if occ else None,
-                          "freeable": freeable, "partner": bool(who and who[2] == "WAREHOUSE")})
+                          "freeable": freeable,
+                          # Kept apart from the label: a blocked slot may also have a booking.
+                          "reason": (slot.block_reason or (events[0].reason if events else "")) if status == "BLOCKED" else "", "partner": bool(who and who[2] == "WAREHOUSE")})
         # One row of the board.
         docks.append({"code": dock.code, "type": dock.dock_type.title(), "max_kg": dock.max_weight_kg, "slots": slots})
     # The hours that have slots, for the column headings.

@@ -43,7 +43,7 @@ def blocks_section(conn: sqlite3.Connection, user: User, facility: str, now: dat
             '<button type="submit">Check bookings</button>'
             '<div id="block-warning"></div></form>')
     table = _table(("Dock", "From", "To", "Reason", ""), rows, "No dock is blocked.")
-    return (f'<h3>Block a dock</h3><p id="block-result" class="note" role="status"></p>{form}'
+    return (f'<h3>Block a dock</h3>{form}'
             f'<h3>Current and upcoming blocks</h3><div class="blocks-list">{table}</div>')
 
 

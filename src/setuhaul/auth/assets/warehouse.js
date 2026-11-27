@@ -11,6 +11,35 @@
   }
 })();
 
+// A board cell opens its detail, with "Free this slot" where that is allowed.
+(function () {
+  "use strict";
+  var box = document.getElementById("slot-detail");
+  if (!box) {
+    return;
+  }
+  var free = box.querySelector("[data-slot-free]");
+  document.addEventListener("click", function (event) {
+    var cell = event.target.closest("#board button.slot");
+    if (!cell) {
+      return;
+    }
+    box.setAttribute("data-slot", cell.getAttribute("data-key"));
+    box.querySelector("p").textContent = cell.getAttribute("data-detail");
+    var address = cell.getAttribute("data-free");
+    free.hidden = !address;
+    // common.js sends any button with data-api after asking data-confirm.
+    if (address) {
+      free.setAttribute("data-api", address);
+      free.setAttribute("data-confirm", cell.getAttribute("data-confirm"));
+    } else {
+      free.removeAttribute("data-api");
+      free.removeAttribute("data-confirm");
+    }
+    box.showModal();
+  });
+})();
+
 // Driver chats and live refresh.
 (function () {
   "use strict";
@@ -112,6 +141,19 @@
     return !!active && active.tagName === "TEXTAREA" && section.contains(active);
   }
 
+  // An open detail box must not offer to free a slot that has since changed.
+  function checkDetail() {
+    var box = document.getElementById("slot-detail");
+    if (!box || !box.open) { return; }
+    var cell = document.querySelector("#board [data-key='" + CSS.escape(box.getAttribute("data-slot")) + "']");
+    var free = box.querySelector("[data-slot-free]");
+    if (!cell || cell.getAttribute("data-detail") !== box.querySelector("p").textContent ||
+        (cell.getAttribute("data-free") || "") !== (free.getAttribute("data-api") || "")) {
+      box.close();
+      window.SH.say("That slot changed while you were looking at it. Open it again.");
+    }
+  }
+
   function apply(page) {
     var keep = position();
     var changed = false;
@@ -132,7 +174,7 @@
       restore(node);
       changed = true;
     });
-    if (changed) { reopen(keep); }
+    if (changed) { reopen(keep); checkDetail(); }
   }
 
   // Say how fresh the live parts are. The state is written only when it changes, so it is announced once.
@@ -168,9 +210,8 @@
     asked = Date.now();
     // Ask for the facility this tab is showing, whatever another tab has chosen since.
     var address = new URL(window.location.href);
-    var select = document.querySelector("#board select[name=facility]");
-    var shown = select && Array.prototype.filter.call(select.options, function (o) { return o.defaultSelected; })[0];
-    if (shown) { address.searchParams.set("facility", shown.value); }
+    var shown = document.querySelector("#board [data-facility]");
+    if (shown && shown.getAttribute("data-facility")) { address.searchParams.set("facility", shown.getAttribute("data-facility")); }
     fetch(address.pathname + address.search,
       { credentials: "same-origin", redirect: "manual", headers: { "X-Live": "1" }, signal: AbortSignal.timeout(2 * STALE_MS) })
       .then(function (response) {

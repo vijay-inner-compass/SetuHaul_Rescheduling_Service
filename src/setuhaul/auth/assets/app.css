@@ -118,20 +118,31 @@ body.login { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1
 .wh .bay.cell-held { border-top-color: var(--sh-held-mark); }
 .wh .bay-head { display: flex; justify-content: space-between; align-items: center; font-size: 1.05rem; }
 .wh .occupant { min-height: 2.4rem; }
-.wh .occupant strong, .wh .occupant span, .wh .board td strong, .wh .board td span { display: block; }
-.wh .occupant span, .wh .next, .wh .board td span { font-size: 0.78rem; color: var(--sh-ink-2); }
+.wh .occupant strong, .wh .occupant span { display: block; }
+.wh .occupant span, .wh .next { font-size: 0.78rem; color: var(--sh-ink-2); }
 .wh .pill { padding: 0.1rem 0.5rem; border: 1px solid var(--sh-input-line); border-radius: 99px; background: var(--sh-white); font-size: 0.75rem; font-weight: 600; }
 .wh .keys { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0 0 0.6rem; }
 .wh .legend-key { padding: 0.15rem 0.6rem; border: 1px solid var(--sh-line); border-radius: 4px; font-size: 0.8rem; }
-.wh .board { border-collapse: separate; border-spacing: 0; min-width: 100%; }
+.wh .board { border-collapse: separate; border-spacing: 0; table-layout: fixed; width: 100%; min-width: 44rem; }
 .wh .board th, .wh .board td { border-width: 0 1px 1px 0; }
-.wh .board thead th { text-align: center; }
-.wh .board tbody th, .wh .board thead th:first-child { position: sticky; left: 0; z-index: 1; min-width: 5.5rem; text-align: left; }
-.wh .board tbody th span { display: block; font-weight: 400; font-size: 0.75rem; color: var(--sh-muted); }
-.wh .board td { min-width: 7.5rem; height: 3rem; vertical-align: middle; font-size: 0.82rem; }
-.wh .board td em { font-style: normal; color: var(--sh-ok); }
-/* The cross that frees a booked slot. */
-.wh .board .free-slot { float: right; min-width: 1.5rem; padding: 0 0.3rem; line-height: 1.4; border: 1px solid var(--sh-input-line); border-radius: 4px; background: var(--sh-white); color: var(--sh-danger); }
+.wh .board thead th { text-align: center; padding: 0.3rem 0.1rem; font-size: 0.75rem; }
+.wh .board tbody th, .wh .board thead th:first-child { position: sticky; left: 0; z-index: 1; width: 5.5rem; text-align: left; padding-left: 0.5rem; }
+.wh .board tbody th span { display: block; font-weight: 400; font-size: 0.72rem; color: var(--sh-muted); }
+.wh .board td { height: 2.4rem; padding: 0; vertical-align: middle; }
+/* The cell is the button: its colour and pattern come from the cell behind it. Two slots in an hour share the cell. */
+.wh .board td { white-space: nowrap; }
+.wh .board .slot { width: 100%; height: 2.4rem; min-width: 1.5rem; padding: 0; border: 0; border-radius: 0; background: transparent;
+  color: var(--sh-ink); font-weight: 700; font-size: 0.75rem; cursor: pointer; }
+.wh .board .slot + .slot { border-left: 1px dashed var(--sh-input-line); }
+.wh .board td:has(.slot + .slot) .slot { width: 50%; }
+.wh .board .slot:hover { box-shadow: inset 0 0 0 2px var(--sh-navy); }
+.wh .board .slot:focus-visible { outline-offset: -3px; }
+.wh .facilities { display: flex; flex-wrap: wrap; gap: 0.25rem; margin: 0 0 0.5rem; }
+.wh nav.facilities a { padding: 0.35rem 0.8rem; border: 1px solid var(--sh-input-line); border-radius: 6px; color: var(--sh-ink-2); text-decoration: none; background: var(--sh-white); }
+.wh nav.facilities a[aria-current=true] { background: var(--sh-navy); border-color: var(--sh-navy); color: var(--sh-white); }
+#slot-detail { max-width: min(26rem, 90vw); border: 1px solid var(--sh-input-line); border-radius: 8px; padding: 1rem; }
+#slot-detail form { display: inline; }
+#slot-detail button { margin-right: 0.5rem; }
 .wh .cell-booked { background: var(--sh-info-soft); }
 .wh .board td.cell-booked { box-shadow: inset 0.25rem 0 0 var(--sh-info); }
 .wh .cell-held { background: repeating-linear-gradient(135deg, var(--sh-held-a), var(--sh-held-a) 8px, var(--sh-held-b) 8px, var(--sh-held-b) 16px); }

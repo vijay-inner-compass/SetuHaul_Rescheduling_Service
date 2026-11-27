@@ -3,6 +3,7 @@
 # Lazy annotations, like the rest of the codebase.
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -84,3 +85,62 @@ def test_a_booking_that_starts_mid_hour_is_judged_by_its_real_times() -> None:
         assert "ORD-9" in during and "Booked" in during and "Nothing else booked" in during
     # The end time is exclusive.
     assert "ORD-9" not in card("11:30")
+
+
+# ---- compact board --------------------------------------------------------------------------------------------
+def _one(slots: list[dict[str, Any]], code: str = "D1") -> str:
+    board = {"facility": "FAC-JAI-01", "hours": sorted({s["hour"] for s in slots}), "pending_partner": [],
+             "docks": [{"code": code, "type": "Standard", "slots": slots}]}
+    page = _board_section(board, [("FAC-JAI-01", "FAC-JAI-01 - Jaipur")], "FAC-JAI-01", NOW)
+    return page.split('<table class="board"', 1)[1].split("</table>", 1)[0]
+
+
+def _buttons(table: str) -> list[tuple[str, str]]:
+    return re.findall(r'<button type="button" class="slot"([^>]*)>([^<]*)</button>', table)
+
+
+def test_cells_show_initials_and_carry_the_detail() -> None:
+    [(attrs, text)] = _buttons(_one([_slot(11, "BOOKED", "Manoj Sharma · ORD-1")]))
+    assert text == "MS"
+    full = "D1 11:00-12:00: Booked, Manoj Sharma, ORD-1"
+    assert f'aria-label="{full}"' in attrs and f'data-detail="{full}"' in attrs and f'title="{full}"' in attrs
+    assert "data-free" not in attrs
+
+
+def test_two_slots_in_one_hour_are_both_buttons() -> None:
+    table = _one([_slot(10, "BOOKED", "Asha Rao · ORD-1"), _slot(10, "AVAILABLE", minute=30)])
+    assert [text for _, text in _buttons(table)] == ["AR", ""]
+
+
+def test_a_blocked_cell_with_a_booking_names_both() -> None:
+    slot = _slot(11, "BLOCKED", "Asha Rao · ORD-1") | {"reason": "Leveller <broke>"}
+    [(attrs, text)] = _buttons(_one([slot]))
+    assert text == "AR" and "D1 11:00-12:00: Blocked, Asha Rao, ORD-1, Leveller &lt;broke&gt;" in attrs
+
+
+def test_free_cells_have_no_visible_word_but_a_name() -> None:
+    [(attrs, text)] = _buttons(_one([_slot(11, "AVAILABLE")]))
+    assert text == "" and 'aria-label="D1 11:00-12:00: Free"' in attrs
+
+
+def test_freeable_slot_carries_the_free_address_and_question() -> None:
+    slot = _slot(11, "BOOKED", "Asha Rao · ORD-1") | {"freeable": True, "appointment_id": "APT 1"}
+    [(attrs, _)] = _buttons(_one([slot]))
+    assert 'data-free="/v1/warehouse/appointments/APT%201/free"' in attrs
+    assert "Free D1 11:00 for ORD-1 (Asha Rao)? The shipment stays and will need a new slot." in attrs
+
+
+def test_facilities_are_buttons_and_six_fall_back_to_a_list() -> None:
+    few = [("FAC-A", "FAC-A - Alpha"), ("FAC-B", "FAC-B - Beta")]
+    page = _board_section(BOARD, few, "FAC-B", NOW)
+    assert '<a href="/warehouse?facility=FAC-B#board" aria-current="true">Beta</a>' in page
+    assert 'data-facility="FAC-B"' in page and "<select name=\"facility\">" not in page
+    many = [(f"FAC-{n}", f"FAC-{n} - Site {n}") for n in range(6)]
+    page = _board_section(BOARD, many, "FAC-1", NOW)
+    assert "<select name=\"facility\">" in page and 'data-facility="FAC-1"' in page
+
+
+def test_the_detail_box_is_outside_what_the_refresh_replaces() -> None:
+    page = _board_section(BOARD, [("FAC-JAI-01", "Jaipur")], "FAC-JAI-01", NOW)
+    assert page.count('<dialog id="slot-detail"') == 1
+    assert page.index('<dialog id="slot-detail"') > page.index("</table></div>")
