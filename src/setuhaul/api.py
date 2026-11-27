@@ -17,6 +17,7 @@ import hmac
 
 # json encodes and decodes request and stored reply bodies.
 import json
+import logging
 
 # os reads environment configuration.
 import os
@@ -65,7 +66,7 @@ from redis import Redis
 from starlette.concurrency import run_in_threadpool
 
 # The Dock Access Pass check that runs before the conversation.
-from setuhaul import pass_check
+from setuhaul import chat_loads, pass_check
 
 # Web sessions, the role guard and the facility scope of cases.
 from setuhaul.auth import same_origin, sessions
@@ -339,6 +340,17 @@ def _reject(request_id: str, status: int, reason: str, **extra: Any) -> JSONResp
 
 
 # Build the FastAPI application from its dependencies.
+def _record_turn(conn: sqlite3.Connection, memory: ConversationMemoryStore, driver_id: str, thread_id: str, before: int,
+                 about: str | None = None) -> None:
+    """Tag the turn's messages with their load, so that load's warehouse sees them. Never fails the driver's message."""
+    try:
+        selected = about or memory.load(driver_id, thread_id).state.selected_shipment_id
+        chat_loads.record(conn, thread_id, before, about or chat_loads.load_of_turn(conn, driver_id, selected))
+        conn.commit()
+    except Exception:
+        logging.getLogger(__name__).warning("chat message load not recorded", exc_info=True)
+
+
 def resolve_eligible_driver(conn: sqlite3.Connection, raw_phone: str, clock: Clock) -> TrustedDriverContext:
     """The phone channel's driver, refused like an inactive one unless eligible today (IST): approved with a valid licence.
 
@@ -575,6 +587,8 @@ def create_app(deps: AppDeps) -> FastAPI:
             # A pass code is checked by the app. Everything after this line sees the message with any code blanked, so a code is
             # never saved, put in a case or sent to a model.
             clean = blank(payload.text)
+            # Everything written from here is this turn's, to be tagged with the load it is about.
+            before = chat_loads.mark(conn)
             lang = str(detect_language(clean.replace(HIDDEN, ""), memory.load(driver_id, thread_id).state.language).language)
             lang = lang if lang in LANGS else "en"
             answer = pass_check.check(conn, clock, driver_id=driver_id, thread_id=thread_id, text=payload.text, lang=lang,
@@ -582,6 +596,7 @@ def create_app(deps: AppDeps) -> FastAPI:
             if answer is not None:
                 memory.append(driver_id, thread_id, "DRIVER", clean, external_message_id=payload.message_id)
                 memory.append(driver_id, thread_id, "AGENT", answer.text)
+                _record_turn(conn, memory, driver_id, thread_id, before, answer.shipment_id)
                 body = {"status": "REPLIED", "reply": answer.text, "language": lang, "reason_code": None, "case_id": answer.case_id}
                 with immediate(conn):
                     conn.execute("update inbound_messages set status='DONE', reply_json=?, completed_at=? where driver_id=? and message_id=?",
@@ -596,6 +611,7 @@ def create_app(deps: AppDeps) -> FastAPI:
             # Run the conversation (this is where the model is called).
             reply = handle_message(InboundMessage(message_id=payload.message_id, text=clean),
                                    TrustedConversationContext(driver=trusted, thread_id=thread_id), clock, services)
+            _record_turn(conn, memory, driver_id, thread_id, before)
             # The response body; this exact body is stored so a duplicate delivery gets the same answer.
             body = {"status": reply.status, "reply": reply.text, "language": reply.language, "reason_code": reply.escalation_reason,
                     "case_id": reply.case_id}

@@ -27,7 +27,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 # The injectable clock.
-from setuhaul import passes
+from setuhaul import chat_loads, passes
 from setuhaul.clock import Clock
 
 # immediate() takes the write lock up front.
@@ -167,10 +167,11 @@ def _tell_driver(conn: sqlite3.Connection, req: sqlite3.Row, status: str, now: d
     if thread is None:
         return
     fac = conn.execute("select facility_name from facilities where facility_id=?", (req["facility_id"],)).fetchone()
-    conn.execute("insert into chat_messages (chat_message_id, thread_id, sender_type, message_text, message_ts) "
-                 "values (?,?, 'OPERATIONS', ?, ?)",
-                 ("MSG-" + uuid.uuid4().hex[:12].upper(), thread,
-                  _say_status(status, fac["facility_name"], req["proposed_start"], "en"), now.isoformat()))
+    with chat_loads.recording(conn, thread, req["shipment_id"]):
+        conn.execute("insert into chat_messages (chat_message_id, thread_id, sender_type, message_text, message_ts) "
+                     "values (?,?, 'OPERATIONS', ?, ?)",
+                     ("MSG-" + uuid.uuid4().hex[:12].upper(), thread,
+                      _say_status(status, fac["facility_name"], req["proposed_start"], "en"), now.isoformat()))
 
 
 # ---------------------------------------------------------------------------------------------------------------------

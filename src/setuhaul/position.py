@@ -18,6 +18,7 @@ import sqlite3
 from datetime import datetime, timedelta
 
 # Ranks feasible slots into a menu, earliest first.
+from setuhaul import chat_loads
 from setuhaul.allocation import rank_options
 
 # Releases a hold the truck can no longer reach.
@@ -120,13 +121,15 @@ def handle_new_position(conn: sqlite3.Connection, shipment_id: str, clock: Clock
     # A live hold the truck can no longer reach is released first; the driver is told which one and why.
     released = reassess_hold_after_position_change(conn, shipment_id, clock)
     if released is not None:
-        memory.append(driver_id, thread_id, "AGENT", say(
-            "position_released", lang, start=released["start"], end=released["end"], dock=released["dock"]))
+        with chat_loads.recording(conn, thread_id, shipment_id):
+            memory.append(driver_id, thread_id, "AGENT", say(
+                "position_released", lang, start=released["start"], end=released["end"], dock=released["dock"]))
         return
     # Otherwise confirm the new position: distance, drive time and the earliest arrival (once per ping, for the primary load).
     if announce:
-        memory.append(driver_id, thread_id, "AGENT", say(
-            "position_received", lang, km=f"{km:.0f}", minutes=str(minutes), eta=f"{eta:%H:%M}"))
+        with chat_loads.recording(conn, thread_id, shipment_id):
+            memory.append(driver_id, thread_id, "AGENT", say(
+                "position_received", lang, km=f"{km:.0f}", minutes=str(minutes), eta=f"{eta:%H:%M}"))
 
     # Earlier slots are only worth offering when the shipment already relies on a slot to improve on.
     current = _current_slot(conn, shipment_id, now)
@@ -178,7 +181,8 @@ def handle_new_position(conn: sqlite3.Connection, shipment_id: str, clock: Clock
         start, end = parse_operational_timestamp(slot["slot_start_ts"]), parse_operational_timestamp(slot["slot_end_ts"])
         offer = say("earlier_hold", lang, order=order, facility=slot["facility_name"], dock=slot["dock_code"], start=f"{start:%H:%M}",
                     end=f"{end:%H:%M}", date=f"{start:%d %b %Y}", until=f"{held.expires_at.astimezone(IST):%H:%M}")
-        memory.append(driver_id, thread_id, "AGENT", offer)
+        with chat_loads.recording(conn, thread_id, shipment_id):
+            memory.append(driver_id, thread_id, "AGENT", offer)
         queue_driver_notice(conn, driver_id, shipment_id, offer, clock.now())
         return
 
