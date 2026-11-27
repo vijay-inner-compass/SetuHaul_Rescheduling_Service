@@ -194,3 +194,15 @@ def test_another_bot_cannot_be_given_the_old_secret_again(world: World) -> None:
     chosen = "a-different-secret-0123456789"
     assert admin.post(f"{URL}/telegram", json={"bot_token": "456:other-bot", "webhook_secret": chosen}).status_code == 200
     assert _secret(world) == chosen
+
+
+def test_the_model_test_sends_a_tool_as_driver_messages_do(world: World) -> None:
+    def refuses_tools(request: httpx.Request) -> httpx.Response:
+        if "tools" in json.loads(request.content):
+            return httpx.Response(400, json={"error": {"message": "Function tools need reasoning_effort none"}})
+        return _good(request)
+
+    seen = _use(world, refuses_tools)
+    r = world.client("admin").post(f"{URL}/model/test", json={})
+    assert json.loads(seen[-1].content)["tools"][0]["type"] == "function"
+    assert r.json()["ok"] is False and "reasoning_effort" in r.json()["message"]

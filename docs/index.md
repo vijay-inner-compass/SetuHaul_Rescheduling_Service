@@ -24,6 +24,7 @@ None yet.
 ## subsystems
 
 - [[refusal-messages]] -- how a refused request says what to fix
+- [[model-calls]] -- why a driver message can fail when the connection test passes
 
 ## decisions
 

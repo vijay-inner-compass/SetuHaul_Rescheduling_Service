@@ -31,6 +31,11 @@ def _clean(message: str, *hidden: str) -> str:
     return message[:300]
 
 
+# Driver messages send tools, and some models answer a plain question yet refuse those.
+_TEST_TOOL = {"name": "connection_test", "description": "Not for use: only checks that tools are accepted.",
+              "input_schema": {"type": "object", "properties": {}, "additionalProperties": False}}
+
+
 def check_model(env: Mapping[str, str], transport: httpx.BaseTransport | None = None) -> tuple[bool, str]:
     policy = load_model_policy(env)
     if policy.provider not in PROVIDERS or not policy.model_id or not env.get("SETUHAUL_MODEL_API_KEY"):
@@ -38,7 +43,7 @@ def check_model(env: Mapping[str, str], transport: httpx.BaseTransport | None = 
     messages = [ModelMessage(role="system", content="This is a connection test."),
                 ModelMessage(role="user", content="Reply with the word OK.")]
     try:
-        build_gateway(policy, env, transport).complete(messages, [], policy)
+        build_gateway(policy, env, transport).complete(messages, [_TEST_TOOL], policy)
     except ModelTimeout:
         return False, "The provider did not answer in time."
     except (PermanentModelError, TransientModelError) as error:

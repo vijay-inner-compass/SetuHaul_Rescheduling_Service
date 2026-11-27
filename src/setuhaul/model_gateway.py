@@ -16,8 +16,14 @@ from __future__ import annotations
 # json encodes tool arguments for OpenAI and decodes them back.
 import json
 
+# Standard logger.
+import logging
+
 # os reads configuration (provider, model id, key) from environment variables; nothing secret lives in the repository.
 import os
+
+# Patterns for hiding keys.
+import re
 
 # Callable types scripted steps and the tool executor; Sequence is the read-only list type.
 from collections.abc import Callable, Mapping, Sequence
@@ -449,6 +455,11 @@ def build_gateway(policy: ModelPolicy, env: Mapping[str, str] | None = None,
     raise ModelUnavailable("MODEL_NOT_CONFIGURED", f"unsupported or unset provider {policy.provider!r}")
 
 
+_log = logging.getLogger("setuhaul")
+# Anything shaped like a key or a bearer value in another service's words.
+_KEY_LIKE = re.compile(r"(Bearer\s+|sk-)[^\s'\";,]+")
+
+
 # Call the model with one retry on transient errors.
 def complete_with_retry(
     gateway: ModelGateway, messages: Sequence[ModelMessage], tools: Sequence[dict[str, Any]], policy: ModelPolicy
@@ -468,6 +479,8 @@ def complete_with_retry(
                 raise ModelUnavailable(code, str(exc)) from exc
         # A permanent failure is not retried.
         except PermanentModelError as exc:
+            # The case and the call record keep only a code, so the provider's reason goes here.
+            _log.warning("model_call.refused: %s / %s: %s", policy.provider, policy.model_id, _KEY_LIKE.sub("[hidden]", str(exc)))
             raise ModelUnavailable("MODEL_PERMANENT_FAILURE", str(exc)) from exc
         # Already the final form: pass it up.
         except ModelUnavailable:
