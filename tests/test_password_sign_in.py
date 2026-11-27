@@ -3,19 +3,22 @@
 # Lazy annotations, like the rest of the codebase.
 from __future__ import annotations
 
+import re
 import shutil
 import threading
 from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from redis.exceptions import RedisError
 
+from setuhaul import partner_booking
 from setuhaul.auth import audit, links, local_admin, sessions, users
 from setuhaul.clock import FakeClock
 from setuhaul.config import load_settings
 from setuhaul.db import MIGRATIONS_DIR, apply_migrations, open_connection
 from setuhaul.identity import AuthError
-from setuhaul.mail_transport import InMemoryMailbox
+from setuhaul.mail_transport import InMemoryMailbox, MailDeliveryError, OutgoingMail
 from tests.auth_helpers import World, build_world
 
 MIGRATION = "020_password_sign_in.sql"
@@ -290,3 +293,177 @@ def test_no_secret_in_audit(world: World) -> None:
     _set(world, token)
     rows = str(_query(world, "select * from audit_log"))
     assert "PASSWORD_SET" in rows and token not in rows and PASSWORD not in rows
+
+
+# ---- sending the links -------------------------------------------------------------------------------------
+class _BrokenSender:
+    def send(self, mail: OutgoingMail) -> None:
+        raise MailDeliveryError("SMTP SMTPAuthenticationError")
+
+
+def _mails(world: World) -> list[OutgoingMail]:
+    return world.deps.password_sender.sent  # type: ignore[union-attr]
+
+
+def _token_in(mail: OutgoingMail) -> str:
+    found = re.search(rf"{BASE}/set-password#token=([A-Za-z0-9_-]+)", mail.body)
+    assert found, mail.body
+    return found.group(1)
+
+
+def _invite(world: World, email: str = "new@x.com"):  # type: ignore[no-untyped-def]
+    return world.client("admin").post("/v1/admin/users", json={
+        "email": email, "role": "WAREHOUSE_AUTHORITY", "display_name": "New", "facilities": ["FAC-JAI-01"]})
+
+
+def _forgot(world: World, email: str = "wha@x.com"):  # type: ignore[no-untyped-def]
+    return world.client().post("/auth/password/forgot", json={"email": email})
+
+
+def _send_link(world: World, who: str = "wh_a"):  # type: ignore[no-untyped-def]
+    return world.client("admin").post(f"/v1/admin/users/{world.users[who].user_id}/password-link", json={})
+
+
+def _cool_down_over(world: World) -> None:
+    # Fakeredis expiry does not follow the fake clock, so the two-minute keys are removed by hand.
+    for key in world.deps.redis.keys("pwmail:cool:*"):
+        world.deps.redis.delete(key)
+
+
+def test_invite_sends_one_link_that_works(world: World) -> None:
+    r = _invite(world)
+    assert r.status_code == 201 and r.json()["invite_email"] == "SENT"
+    [mail] = _mails(world)
+    assert mail.to_addr == "new@x.com" and mail.subject == "You're invited to SetuHaul"
+    assert "48 hours" in mail.body
+    assert _set(world, _token_in(mail)).status_code == 200
+    assert _login(world, "new@x.com").status_code == 200
+
+
+def test_invite_survives_send_failure(world: World) -> None:
+    world.deps.password_sender = _BrokenSender()
+    r = _invite(world)
+    assert r.status_code == 201 and r.json()["invite_email"] == "FAILED"
+    assert _query(world, "select count(*) from users where email='new@x.com'") == [(1,)]
+    assert _query(world, "select outcome from audit_log where action='ACCOUNT_LINK'") == [("SEND_FAILED",)]
+    # A failed send does not make the admin wait before trying again.
+    world.deps.password_sender = InMemoryMailbox()
+    user_id = _query(world, "select user_id from users where email='new@x.com'")[0][0]
+    assert world.client("admin").post(f"/v1/admin/users/{user_id}/password-link", json={}).status_code == 200
+
+
+def test_invite_with_feature_off_sends_nothing(world: World) -> None:
+    box = world.deps.password_sender
+    world.deps.password_sender = None
+    r = _invite(world)
+    assert r.status_code == 201 and r.json()["invite_email"] is None
+    assert box.sent == []  # type: ignore[union-attr]
+
+
+def test_forgot_same_reply_known_and_unknown(world: World) -> None:
+    known, unknown = _forgot(world), _forgot(world, "nobody@x.com")
+    assert known.status_code == unknown.status_code == 200
+    replies = [{k: v for k, v in r.json().items() if k != "request_id"} for r in (known, unknown)]
+    assert replies[0] == replies[1]
+    assert replies[0]["message"] == "If that address has access, we have sent it a link."
+    [mail] = _mails(world)
+    assert mail.to_addr == "wha@x.com" and mail.subject == "Reset your SetuHaul password" and "1 hour" in mail.body
+
+
+def test_forgot_normalises_email(world: World) -> None:
+    _forgot(world, "  WHA@X.com ")
+    assert [m.to_addr for m in _mails(world)] == ["wha@x.com"]
+
+
+def test_forgot_disabled_user_gets_nothing(world: World) -> None:
+    _toggle(world, "wh_a", on=False)
+    assert _forgot(world).status_code == 200
+    assert _mails(world) == []
+
+
+def test_forgot_bad_bodies_and_off(world: World) -> None:
+    client = world.client()
+    for body in (b"not json", b"{}", b'{"email": 5}'):
+        r = client.post("/auth/password/forgot", content=body, headers={"content-type": "application/json"})
+        assert _code(r) == (422, "INVALID_REQUEST"), body
+    assert _forgot(world, "x" * 300 + "@x.com").status_code == 200
+    world.deps.password_sender = None
+    assert _forgot(world).status_code == 404
+
+
+def test_limits_per_account(world: World) -> None:
+    _forgot(world)
+    _forgot(world)
+    assert len(_mails(world)) == 1
+    for _ in range(5):
+        _cool_down_over(world)
+        _forgot(world)
+    assert len(_mails(world)) == 5
+    assert ("THROTTLED",) in _query(world, "select outcome from audit_log where action='ACCOUNT_LINK'")
+
+
+def test_limit_on_all_forgot_emails(world: World) -> None:
+    world.deps.redis.set("pwmail:forgot", 30, ex=3600)
+    _forgot(world)
+    assert _mails(world) == []
+    # An administrator's own send is not part of that allowance.
+    assert _send_link(world).status_code == 200
+
+
+def test_redis_down(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    def down(*args: object, **kwargs: object) -> None:
+        raise RedisError("down")
+
+    for name in ("ping", "set", "incr"):
+        monkeypatch.setattr(world.deps.redis, name, down)
+    assert _code(_forgot(world)) == (503, "TRY_LATER")
+    assert _mails(world) == []
+    assert _send_link(world).status_code == 200
+    assert len(_mails(world)) == 1
+
+
+def test_link_uses_public_url_not_host_header(world: World) -> None:
+    world.client().post("/auth/password/forgot", json={"email": "wha@x.com"}, headers={"host": "evil.example"})
+    [mail] = _mails(world)
+    assert "evil.example" not in mail.body
+    _token_in(mail)
+
+
+def test_admin_send_link_codes(world: World) -> None:
+    assert _send_link(world).status_code == 200
+    assert _mails(world)[-1].subject == "You're invited to SetuHaul"
+    assert _code(_send_link(world)) == (429, "TOO_SOON")
+    _set_password(world, "wh_b")
+    assert _send_link(world, "wh_b").status_code == 200
+    assert _mails(world)[-1].subject == "Reset your SetuHaul password"
+    admin = world.client("admin")
+    assert _code(admin.post("/v1/admin/users/USR-NOBODY/password-link", json={})) == (404, "UNKNOWN_USER")
+    _toggle(world, "wh_a", on=False)
+    assert _code(_send_link(world)) == (409, "USER_DISABLED")
+    world.deps.password_sender = _BrokenSender()
+    _cool_down_over(world)
+    assert _code(_send_link(world, "wh_b")) == (502, "EMAIL_FAILED")
+    world.deps.password_sender = None
+    assert _code(_send_link(world, "wh_b")) == (404, "NOT_FOUND")
+
+
+def test_no_link_or_token_in_audit_after_sending(world: World) -> None:
+    _forgot(world)
+    token = _token_in(_mails(world)[0])
+    rows = str(_query(world, "select * from audit_log"))
+    assert token not in rows and "set-password" not in rows
+
+
+def test_partner_reply_reader_ignores_account_mail(world: World) -> None:
+    # Both may use one mailbox, and the account subjects contain the word the partner reader searches for.
+    conn = open_connection(path=world.path)
+    try:
+        before = conn.execute("select count(*) from escalation_cases").fetchone()[0]
+        for number, subject in enumerate(("Re: You're invited to SetuHaul", "Reset your SetuHaul password")):
+            outcome = partner_booking.handle_reply(
+                conn, world.clock, message_id=f"<m{number}@x>", from_addr="wha@x.com", subject=subject,
+                in_reply_to=None, body="APPROVE", authentication_results=None, require_auth=False)
+            assert outcome.status == "UNMATCHED"
+        assert conn.execute("select count(*) from escalation_cases").fetchone()[0] == before
+    finally:
+        conn.close()

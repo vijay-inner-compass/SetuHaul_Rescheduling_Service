@@ -3,17 +3,22 @@
 # Lazy annotations, like the rest of the codebase.
 from __future__ import annotations
 
+import logging
 import sqlite3
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, Response
+from redis.exceptions import RedisError
+from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
-from setuhaul.auth import links, local_admin, sessions
+from setuhaul.auth import audit, links, local_admin, sessions, users
+from setuhaul.auth.authz import require_role
 from setuhaul.auth.http import reject as _reject
 from setuhaul.auth.routes import _is_secure
+from setuhaul.auth.users import User
 from setuhaul.db import open_connection
 from setuhaul.identity import AuthError
 
@@ -22,6 +27,24 @@ if TYPE_CHECKING:
 
 # The longest address worth looking up.
 MAX_EMAIL = 254
+# The one answer "Forgot password?" gives, whether or not the account exists.
+FORGOT_REPLY = "If that address has access, we have sent it a link."
+
+_log = logging.getLogger(__name__)
+
+
+def send_reset(deps: AppDeps, email: str) -> None:
+    """After the reply: send a reset link if the address belongs to an active user."""
+    try:
+        conn = open_connection(path=deps.db_path)
+        try:
+            user = users.find_by_email(conn, email)
+        finally:
+            conn.close()
+        if user is not None and user.status == "ACTIVE":
+            links.send(deps, user.user_id, "RESET", forgot=True)
+    except (sqlite3.Error, FileNotFoundError) as exc:
+        _log.warning("password reset not sent: %s", type(exc).__name__)
 
 
 async def read_strings(request: Request, *names: str) -> tuple[str, ...] | None:
@@ -102,3 +125,57 @@ def register_password_routes(app: FastAPI, deps: AppDeps) -> None:
             return JSONResponse({"status": "OK", "request_id": rid})
 
         return await run_in_threadpool(with_conn, deps, rid, redeem)
+
+    @app.post("/auth/password/forgot")
+    async def forgot_password(request: Request) -> Response:
+        rid = request.state.request_id
+        if not deps.password_login_on:
+            return _reject(rid, 404, "NOT_FOUND")
+        ip = request.client.host if request.client else None
+        fields = await read_strings(request, "email")
+        if fields is None:
+            return _reject(rid, 422, "INVALID_REQUEST")
+        email = fields[0].strip()
+        # Checked before anything is looked up, so the answer is the same whoever was asked about.
+        try:
+            await run_in_threadpool(deps.redis.ping)
+        except RedisError:
+            return _reject(rid, 503, "TRY_LATER")
+
+        def requested(conn: sqlite3.Connection) -> Response:
+            audit.record(conn, actor_user_id=None, actor_email=email[:MAX_EMAIL], action="ACCOUNT_LINK", target_type=None,
+                         target_id=None, outcome="REQUESTED", ip=ip, detail=None, clock=deps.clock)
+            conn.commit()
+            return JSONResponse({"status": "OK", "message": FORGOT_REPLY, "request_id": rid})
+
+        resp = await run_in_threadpool(with_conn, deps, rid, requested)
+        if resp.status_code == 200 and len(email) <= MAX_EMAIL:
+            # Looked up and sent after the reply, so its timing does not reveal whether the account exists.
+            resp.background = BackgroundTask(send_reset, deps, email)
+        return resp
+
+    @app.post("/v1/admin/users/{user_id}/password-link")
+    async def password_link(request: Request, user_id: str,
+                            user: Annotated[User, Depends(require_role("ADMIN"))]) -> Response:
+        rid = request.state.request_id
+        if not deps.password_login_on:
+            return _reject(rid, 404, "NOT_FOUND")
+
+        def send(conn: sqlite3.Connection) -> Response:
+            target = users.find_by_id(conn, user_id)
+            if target is None:
+                return _reject(rid, 404, "UNKNOWN_USER")
+            if target.status != "ACTIVE":
+                return _reject(rid, 409, "USER_DISABLED")
+            has = conn.execute("select 1 from admin_credentials where user_id=?", (user_id,)).fetchone()
+            sent = links.send(deps, user_id, "RESET" if has else "INVITE")
+            audit.record(conn, actor_user_id=user.user_id, actor_email=user.email, action="SEND_PASSWORD_LINK",
+                         target_type="user", target_id=user_id, outcome=sent, ip=None, detail=None, clock=deps.clock)
+            conn.commit()
+            if sent == "THROTTLED":
+                return _reject(rid, 429, "TOO_SOON")
+            if sent == "FAILED":
+                return _reject(rid, 502, "EMAIL_FAILED")
+            return JSONResponse({"status": "OK", "user_id": user_id, "request_id": rid})
+
+        return await run_in_threadpool(with_conn, deps, rid, send)

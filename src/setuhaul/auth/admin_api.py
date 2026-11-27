@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from starlette.concurrency import run_in_threadpool
 
-from setuhaul.auth import audit, users
+from setuhaul.auth import audit, links, users
 from setuhaul.auth.authz import require_role
 from setuhaul.auth.http import reject as _reject
 from setuhaul.auth.users import Role, User
@@ -93,7 +93,12 @@ def register_admin_api(app: FastAPI, deps: AppDeps) -> None:
         def write(conn: sqlite3.Connection) -> Response:
             created = users.invite(conn, actor=user, email=body.email, role=body.role, display_name=body.display_name,
                                    facilities=tuple(body.facilities), clock=deps.clock)
-            return JSONResponse({"status": "OK", "user": _user_json(created, None), "request_id": rid}, status_code=201)
+            # The user exists whether or not the email goes; the admin is told which happened.
+            emailed = None
+            if deps.password_login_on:
+                emailed = "SENT" if links.send(deps, created.user_id, "INVITE") == "SENT" else "FAILED"
+            return JSONResponse({"status": "OK", "user": _user_json(created, None), "invite_email": emailed,
+                                 "request_id": rid}, status_code=201)
 
         return await run_in_threadpool(with_conn, rid, write)
 

@@ -70,7 +70,11 @@
     SERVICE_UNAVAILABLE: "The service is not available. Try again shortly.",
     DRIVER_DELETED_RESTORE: "This phone or licence belongs to a deleted driver. An administrator can restore them from the Admin screen.",
     DRIVER_DELETED: "That driver is deleted. Restore them first.",
-    LINK_INVALID: "This link has been used or has expired. Use Forgot password? to get a new one."
+    LINK_INVALID: "This link has been used or has expired. Use Forgot password? to get a new one.",
+    TOO_SOON: "A link was sent to this user a short while ago. Try again in a few minutes.",
+    TRY_LATER: "A link cannot be sent just now. Try again shortly.",
+    EMAIL_FAILED: "The email could not be sent. Check the mail settings, then try again.",
+    USER_DISABLED: "That user is disabled. Re-enable them first."
   };
 
   // The form field a refusal is about, so it can be marked and focused.
