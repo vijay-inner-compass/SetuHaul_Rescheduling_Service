@@ -32,8 +32,8 @@ def build_board(conn: sqlite3.Connection, facility_id: str, now: datetime) -> di
             # Who occupies it, if anyone (unexpired holds count).
             occ = state.occupancy.get(slot.slot_id)
             # Blocked by a planner, an out-of-service dock or a maintenance event.
-            blocked = slot.status != "OPEN" or dock.status != "ACTIVE" or any(
-                e.start < slot.end and (e.end is None or e.end > slot.start) for e in state.effective_events(dock.dock_id))
+            events = [e for e in state.effective_events(dock.dock_id) if e.start < slot.end and (e.end is None or e.end > slot.start)]
+            blocked = slot.status != "OPEN" or dock.status != "ACTIVE" or bool(events)
             # BLOCKED, HELD, BOOKED or AVAILABLE.
             status = "BLOCKED" if blocked else ("HELD" if occ and occ.status == "HELD" else "BOOKED" if occ else "AVAILABLE")
             # The occupant's label.
@@ -43,7 +43,7 @@ def build_board(conn: sqlite3.Connection, facility_id: str, now: datetime) -> di
                           "end": f"{slot.end.astimezone(IST):%H:%M}", "status": status, "past": slot.start < now,
                           # Full times: partner bookings can start partway through an hour.
                           "start_ts": slot.start.astimezone(IST).isoformat(), "end_ts": slot.end.astimezone(IST).isoformat(),
-                          "label": who[1] if who else (slot.block_reason or ""), "driver_id": who[0] if who else None,
+                          "label": who[1] if who else (slot.block_reason or (events[0].reason if events else "")), "driver_id": who[0] if who else None,
                           "source": who[2] if who else None, "partner": bool(who and who[2] == "WAREHOUSE")})
         # One row of the board.
         docks.append({"code": dock.code, "type": dock.dock_type.title(), "max_kg": dock.max_weight_kg, "slots": slots})

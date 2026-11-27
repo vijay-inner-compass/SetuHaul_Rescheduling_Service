@@ -55,7 +55,8 @@ ASSET_TYPES = {"app.css": "text/css; charset=utf-8", "common.js": "text/javascri
                "admin.js": "text/javascript; charset=utf-8", "tabs.js": "text/javascript; charset=utf-8",
                "model.js": "text/javascript; charset=utf-8",
                "settings.js": "text/javascript; charset=utf-8",
-               "warehouse.js": "text/javascript; charset=utf-8", "gate.js": "text/javascript; charset=utf-8"}
+               "warehouse.js": "text/javascript; charset=utf-8", "exceptions.js": "text/javascript; charset=utf-8",
+               "gate.js": "text/javascript; charset=utf-8"}
 # Sent with every HTML response: nothing but our own files may run or load, and nothing is cached.
 SECURITY_HEADERS = {
     "Content-Security-Policy": ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
@@ -494,7 +495,8 @@ def _bay_card(dock: dict[str, Any], moment: datetime) -> str:
             f'<div class="occupant">{occupant}</div><div class="next">{upcoming}</div></li>')
 
 
-def _board_section(board: dict[str, Any] | None, options: list[tuple[str, str]], selected: str | None, moment: datetime) -> str:
+def _board_section(board: dict[str, Any] | None, options: list[tuple[str, str]], selected: str | None, moment: datetime,
+                   blocks: str = "") -> str:
     selector = ('<form method="get" action="/warehouse" class="filters"><label>Facility '
                 f'<select name="facility">{_options(options, selected)}</select></label><button type="submit">Show</button></form>')
     if board is None:
@@ -526,7 +528,7 @@ def _board_section(board: dict[str, Any] | None, options: list[tuple[str, str]],
     return (f'<section id="board" data-panel="board"><h2>Dock board</h2>{selector}'
             f'<p class="legend">Facility {esc(board["facility"])}, {esc(f"{moment.astimezone(IST):%a %d %b, %H:%M}")}</p>'
             f'<h3>On the bays now</h3><ul class="bays">{bays}</ul>'
-            f'<h3>Today by hour</h3><p class="keys">{legend}</p>{table}<h3>Waiting for partner reply</h3>{waiting}</section>')
+            f'<h3>Today by hour</h3><p class="keys">{legend}</p>{table}<h3>Waiting for partner reply</h3>{waiting}{blocks}</section>')
 
 
 def _clock(stamp: str) -> str:
@@ -702,16 +704,19 @@ def render_warehouse(conn: sqlite3.Connection, user: User, now: Any, facility: s
             return _message_page("Not found", "No such facility.", 404, user)
     today = now.date()
     # Imported here: the tab's module uses this one's page helpers.
+    from setuhaul.auth.exception_pages import blocks_section
     from setuhaul.auth.shipment_pages import shipments_section
+
+    blocks = "" if chosen is None else blocks_section(conn, user, chosen, now)
 
     tabs = _tabs((("board", "Dock board"), ("messages", "Messages"), ("projects", "Projects"), ("shipments", "Shipments"),
                   ("drivers", "Drivers")))
     body = ('<div class="wh">' + _attention(conn, user, today, board) + tabs
-            + _board_section(board, options, chosen, now) + _messages_section(conn, user, now)
+            + _board_section(board, options, chosen, now, blocks) + _messages_section(conn, user, now)
             + _projects_section(conn, user, today, options) + shipments_section(conn, user, now, options)
             + _drivers_section(conn, user, today) + "</div>")
     nav = '<a href="/warehouse">Warehouse</a>' + (' <a href="/admin">Admin</a>' if user.role == "ADMIN" else "")
-    return _respond(_layout("Warehouse", body, ("common.js", "tabs.js", "warehouse.js"), user, nav))
+    return _respond(_layout("Warehouse", body, ("common.js", "tabs.js", "warehouse.js", "exceptions.js"), user, nav))
 
 
 # ---- routes -----------------------------------------------------------------------------------------------

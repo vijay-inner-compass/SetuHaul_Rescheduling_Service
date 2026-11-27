@@ -1,0 +1,104 @@
+"""Warehouse routes for exceptions: blocking a dock and reopening it."""
+
+# Lazy annotations.
+from __future__ import annotations
+
+import sqlite3
+from collections.abc import Callable
+from typing import Annotated, Any
+
+from fastapi import Depends, FastAPI, Request
+from fastapi.responses import JSONResponse, Response
+from starlette.concurrency import run_in_threadpool
+
+from setuhaul import dock_blocks
+from setuhaul.auth.authz import require_role
+from setuhaul.auth.http import reject
+from setuhaul.auth.users import User
+from setuhaul.db import open_connection
+from setuhaul.identity import AuthError
+
+# The refusal is about what is stored now, not about what was typed.
+_CONFLICT = {"PLAN_CHANGED", "NOT_BOOKED", "SLOT_STARTED", "UNLOADING", "TRUCK_ON_SITE"}
+
+# What the person at the screen is told for each refusal.
+_MESSAGES = {
+    "FACILITY_NOT_FOUND": "That facility is not one of yours.",
+    "PARTNER_FACILITY": "Partner warehouses are managed by email, not here.",
+    "DOCK_NOT_FOUND": "Choose a dock of that facility.",
+    "INVALID_TIMES": "The end must be after the start and after now.",
+    "REASON_REQUIRED": "Say why the dock is blocked.",
+    "BLOCK_NOT_FOUND": "That block has already ended. Reload the page.",
+    "PLAN_CHANGED": "Bookings or free slots have changed. Check the new list and confirm again.",
+}
+
+
+class Confirmed(dock_blocks.BlockRequest):
+    # What the warning showed.
+    expected: list[dock_blocks.Expected]
+
+
+def _status(code: str) -> int:
+    if code.endswith("_NOT_FOUND"):
+        return 404
+    return 409 if code in _CONFLICT else 422
+
+
+def register_exception_routes(app: FastAPI, deps: Any) -> None:
+    def run(rid: str, work: Callable[[sqlite3.Connection], Response], readonly: bool = False) -> Response:
+        try:
+            conn = open_connection(path=deps.db_path, readonly=readonly)
+        except (sqlite3.Error, FileNotFoundError):
+            return reject(rid, 503, "DATABASE_UNAVAILABLE")
+        try:
+            return work(conn)
+        except AuthError as exc:
+            extra = {"items": [i.model_dump() for i in exc.items]} if isinstance(exc, dock_blocks.PlanChanged) else {}
+            return JSONResponse({"status": "REJECTED", "reason_code": exc.code, "message": _MESSAGES.get(exc.code),
+                                 "request_id": rid, **extra}, status_code=_status(exc.code))
+        except sqlite3.Error:
+            return reject(rid, 503, "DATABASE_UNAVAILABLE")
+        finally:
+            conn.close()
+
+    def telegram_on() -> bool:
+        from setuhaul.api import telegram_in_force
+
+        return telegram_in_force(deps)[1] is not None
+
+    def ok(rid: str, status: int = 200, **fields: Any) -> Response:
+        return JSONResponse({"status": "OK", **fields, "request_id": rid}, status_code=status)
+
+    @app.post("/v1/warehouse/dock-blocks/preview")
+    async def preview(request: Request, body: dock_blocks.BlockRequest,
+                      user: Annotated[User, Depends(require_role("WAREHOUSE_AUTHORITY", "ADMIN"))]) -> Response:
+        rid = request.state.request_id
+
+        def read(conn: sqlite3.Connection) -> Response:
+            items = dock_blocks.preview(conn, actor=user, data=body, clock=deps.clock)
+            return ok(rid, items=[i.model_dump() for i in items])
+
+        return await run_in_threadpool(run, rid, read, True)
+
+    @app.post("/v1/warehouse/dock-blocks")
+    async def create(request: Request, body: Confirmed,
+                     user: Annotated[User, Depends(require_role("WAREHOUSE_AUTHORITY", "ADMIN"))]) -> Response:
+        rid = request.state.request_id
+
+        def write(conn: sqlite3.Connection) -> Response:
+            result = dock_blocks.block(conn, actor=user, data=body, expected=body.expected, clock=deps.clock,
+                                       telegram_on=telegram_on())
+            return ok(rid, 201, **result.model_dump())
+
+        return await run_in_threadpool(run, rid, write)
+
+    @app.post("/v1/warehouse/dock-blocks/{dock_event_id}/reopen")
+    async def reopen(request: Request, dock_event_id: str,
+                     user: Annotated[User, Depends(require_role("WAREHOUSE_AUTHORITY", "ADMIN"))]) -> Response:
+        rid = request.state.request_id
+
+        def write(conn: sqlite3.Connection) -> Response:
+            dock_blocks.reopen(conn, actor=user, dock_event_id=dock_event_id, clock=deps.clock)
+            return ok(rid, dock_event_id=dock_event_id)
+
+        return await run_in_threadpool(run, rid, write)

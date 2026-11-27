@@ -29,7 +29,7 @@
 (function () {
   "use strict";
   // The parts that change on their own. Forms are left alone so nothing being typed is lost.
-  var LIVE = [".wh .attention", "#board .bays", "#board .scroll", "#messages"];
+  var LIVE = [".wh .attention", "#board .bays", "#board .scroll", "#board .blocks-list", "#messages"];
   var EVERY_MS = 3000;
   var seen = {};
   // What the server last sent, taken before any script changes the page.
