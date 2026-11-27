@@ -211,16 +211,21 @@ def build_facility_state(conn: sqlite3.Connection, facility_id: str, as_of: date
         for r in conn.execute("select * from appointment_slots where facility_id=?", (facility_id,))
     }
     # Dock events for this facility's docks; an empty end time means open-ended.
-    events = [
-        DockEvent(
-            r["dock_id"], r["event_type"], parse_operational_timestamp(r["event_start_ts"]),
-            parse_operational_timestamp(r["event_end_ts"]) if r["event_end_ts"] else None, r["reason"],
-        )
-        for r in conn.execute(
-            "select e.* from dock_status_events e join docks d using(dock_id) where d.facility_id=?",
-            (facility_id,),
-        )
-    ]
+    events = []
+    for r in conn.execute(
+        "select e.*, b.ended_at from dock_status_events e join docks d using(dock_id) "
+        "left join dock_blocks b using(dock_event_id) where d.facility_id=?",
+        (facility_id,),
+    ):
+        start = parse_operational_timestamp(r["event_start_ts"])
+        end = parse_operational_timestamp(r["event_end_ts"]) if r["event_end_ts"] else None
+        # A block reopened from the screen ends then; reopened before it began, it never applies.
+        if r["ended_at"]:
+            ended = parse_operational_timestamp(r["ended_at"])
+            end = ended if end is None else min(end, ended)
+            if end <= start:
+                continue
+        events.append(DockEvent(r["dock_id"], r["event_type"], start, end, r["reason"]))
     # One "?" per active status, for the SQL IN (...) list.
     marks = ",".join("?" for _ in ACTIVE_STATUSES)
     # A hold past its expiry no longer consumes capacity, whether or not the sweep has run yet.

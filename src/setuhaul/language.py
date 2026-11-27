@@ -231,6 +231,30 @@ T: dict[str, dict[str, str]] = {
         "hinglish": "{facility} mein koi slot book nahi hua, isliye aapka load {origin} hi jayega; aapki booking waisi hi hai. "
                     "Ab bhi badalna ho toh dobara bataiye.",
     },
+    # A dock went out of use and the warehouse moved the booking to another one.
+    "dock_moved": {
+        "en": "For order {order}: dock {old_dock} is out of use, so the warehouse has moved you to dock {dock} at {start} on {date}. "
+              "Reply here if you cannot make it.",
+        "hi": "ऑर्डर {order} के लिए: डॉक {old_dock} अभी बंद है, इसलिए वेयरहाउस ने आपको {date} को {start} बजे डॉक {dock} पर भेज दिया है। "
+              "आप न पहुँच सकें तो यहाँ जवाब दें।",
+        "hinglish": "Order {order} ke liye: dock {old_dock} abhi band hai, isliye warehouse ne aapko {date} ko {start} baje dock "
+                    "{dock} par shift kiya hai. Nahi pahunch sakte toh yahan reply karein.",
+    },
+    # A held slot sat on a dock that went out of use.
+    "hold_blocked": {
+        "en": "For order {order}: dock {dock} is out of use, so the slot held for you is released.",
+        "hi": "ऑर्डर {order} के लिए: डॉक {dock} अभी बंद है, इसलिए आपके लिए होल्ड किया गया स्लॉट छोड़ दिया गया है।",
+        "hinglish": "Order {order} ke liye: dock {dock} abhi band hai, isliye aapke liye hold kiya slot release ho gaya hai.",
+    },
+    # The warehouse freed the booking; the load is kept and needs a new slot.
+    "slot_freed": {
+        "en": "For order {order}: the warehouse has freed your booking at dock {dock}, {start} on {date}. You have no slot now. "
+              "Reply here to get a new one.",
+        "hi": "ऑर्डर {order} के लिए: वेयरहाउस ने {date} को डॉक {dock} पर {start} की आपकी बुकिंग हटा दी है। अभी आपके पास कोई स्लॉट नहीं है। "
+              "नया स्लॉट पाने के लिए यहाँ जवाब दें।",
+        "hinglish": "Order {order} ke liye: warehouse ne {date} ko dock {dock} par {start} ki aapki booking hata di hai. Abhi aapke "
+                    "paas koi slot nahi hai. Naya slot paane ke liye yahan reply karein.",
+    },
     # One earlier slot, held because the truck has come closer. The current booking stays unless the driver says yes.
     "earlier_hold": {
         "en": "For order {order}: your truck is closer now, so I am holding an earlier slot at {facility}: {start}-{end} at dock "

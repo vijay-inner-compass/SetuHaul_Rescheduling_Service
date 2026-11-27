@@ -182,7 +182,9 @@ def may_manage_binding(conn: sqlite3.Connection, actor: User, driver_id: str) ->
     An active admin: any existing driver. An active warehouse authority: only drivers they onboarded themselves
     (allocation to their project does not count). Supplied drivers have no creator, so only an admin.
     """
-    if actor.status != "ACTIVE":
+    # A deleted driver is restored first; their binding stays cut until then.
+    if actor.status != "ACTIVE" or conn.execute(
+            "select 1 from driver_deletions where driver_id=? and restored_at is null", (driver_id,)).fetchone():
         return False
     if actor.role == "ADMIN":
         return conn.execute("select 1 from drivers where driver_id=?", (driver_id,)).fetchone() is not None

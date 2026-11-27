@@ -17,6 +17,12 @@
     if (data && data.reason_code === "BAD_CREDENTIALS") {
       return "The email or password is not correct. Repeated failures lock the password for a while.";
     }
+    if (data && data.reason_code === "DRIVER_DELETED_RESTORE") {
+      return "This phone or licence belongs to a deleted driver. An administrator can restore them from the Admin screen.";
+    }
+    if (data && data.reason_code === "DRIVER_DELETED") {
+      return "That driver is deleted. Restore them first.";
+    }
     if (data && typeof data.message === "string") {
       return data.message;
     }
@@ -40,6 +46,11 @@
     }).then(function (response) {
       return response.json().catch(function () { return null; }).then(function (data) {
         if (response.ok) {
+          // A freed slot whose driver the message cannot reach: kept across the reload so staff can phone them.
+          if (data && data.reached === false && data.order_reference) {
+            window.sessionStorage.setItem("exceptions", "Slot freed. Could not reach the driver of " + data.order_reference +
+              ". Please phone them.");
+          }
           if (next) {
             window.location.assign(next);
           } else {

@@ -9,11 +9,13 @@ from typing import Any
 
 from setuhaul.capacity import build_facility_state
 from setuhaul.db import IST
+from setuhaul.release import booking, not_freeable
 
 
 def build_board(conn: sqlite3.Connection, facility_id: str, now: datetime) -> dict[str, Any] | None:
     # Unknown facility: nothing to draw.
-    if conn.execute("select 1 from facilities where facility_id=?", (facility_id,)).fetchone() is None:
+    facility = conn.execute("select is_partner from facilities where facility_id=?", (facility_id,)).fetchone()
+    if facility is None:
         return None
     # The same snapshot the service uses to judge slots.
     state = build_facility_state(conn, facility_id, now)
@@ -32,10 +34,13 @@ def build_board(conn: sqlite3.Connection, facility_id: str, now: datetime) -> di
             # Who occupies it, if anyone (unexpired holds count).
             occ = state.occupancy.get(slot.slot_id)
             # Blocked by a planner, an out-of-service dock or a maintenance event.
-            blocked = slot.status != "OPEN" or dock.status != "ACTIVE" or any(
-                e.start < slot.end and (e.end is None or e.end > slot.start) for e in state.effective_events(dock.dock_id))
+            events = [e for e in state.effective_events(dock.dock_id) if e.start < slot.end and (e.end is None or e.end > slot.start)]
+            blocked = slot.status != "OPEN" or dock.status != "ACTIVE" or bool(events)
             # BLOCKED, HELD, BOOKED or AVAILABLE.
             status = "BLOCKED" if blocked else ("HELD" if occ and occ.status == "HELD" else "BOOKED" if occ else "AVAILABLE")
+            # The warehouse may free a booking that has not started; partner bookings are agreed by email.
+            found = booking(conn, occ.appointment_id) if occ and not facility["is_partner"] and slot.start > now else None
+            freeable = found is not None and not_freeable(conn, found) is None
             # The occupant's label.
             who = owner.get(slot.slot_id) if occ else None
             # One cell of the board.
@@ -43,8 +48,9 @@ def build_board(conn: sqlite3.Connection, facility_id: str, now: datetime) -> di
                           "end": f"{slot.end.astimezone(IST):%H:%M}", "status": status, "past": slot.start < now,
                           # Full times: partner bookings can start partway through an hour.
                           "start_ts": slot.start.astimezone(IST).isoformat(), "end_ts": slot.end.astimezone(IST).isoformat(),
-                          "label": who[1] if who else (slot.block_reason or ""), "driver_id": who[0] if who else None,
-                          "source": who[2] if who else None, "partner": bool(who and who[2] == "WAREHOUSE")})
+                          "label": who[1] if who else (slot.block_reason or (events[0].reason if events else "")), "driver_id": who[0] if who else None,
+                          "source": who[2] if who else None, "appointment_id": occ.appointment_id if occ else None,
+                          "freeable": freeable, "partner": bool(who and who[2] == "WAREHOUSE")})
         # One row of the board.
         docks.append({"code": dock.code, "type": dock.dock_type.title(), "max_kg": dock.max_weight_kg, "slots": slots})
     # The hours that have slots, for the column headings.

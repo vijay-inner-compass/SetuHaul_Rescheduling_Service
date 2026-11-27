@@ -55,7 +55,8 @@ ASSET_TYPES = {"app.css": "text/css; charset=utf-8", "common.js": "text/javascri
                "admin.js": "text/javascript; charset=utf-8", "tabs.js": "text/javascript; charset=utf-8",
                "model.js": "text/javascript; charset=utf-8",
                "settings.js": "text/javascript; charset=utf-8",
-               "warehouse.js": "text/javascript; charset=utf-8", "gate.js": "text/javascript; charset=utf-8"}
+               "warehouse.js": "text/javascript; charset=utf-8", "exceptions.js": "text/javascript; charset=utf-8",
+               "gate.js": "text/javascript; charset=utf-8"}
 # Sent with every HTML response: nothing but our own files may run or load, and nothing is cached.
 SECURITY_HEADERS = {
     "Content-Security-Policy": ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
@@ -454,10 +455,14 @@ def _configuration_section(conn: sqlite3.Connection, deps: AppDeps) -> str:
 def render_admin(conn: sqlite3.Connection, me: User, query: dict[str, str], deps: AppDeps) -> str:
     # The admin screen: users, pending drivers, decided onboarded drivers (suspend / re-approve), audit log.
     nav = '<a href="/admin">Admin</a> <a href="/warehouse">Warehouse</a>'
-    tabs = _tabs((("users", "Users"), ("pending", "Pending drivers"), ("decided", "Onboarded drivers"), ("audit", "Audit log"), ("model", "Model"),
+    tabs = _tabs((("users", "Users"), ("pending", "Pending drivers"), ("decided", "Onboarded drivers"), ("deleted", "Deleted drivers"), ("audit", "Audit log"), ("model", "Model"),
                   ("config", "Configuration")))
     # The "wh" class gives the same tab styling as the warehouse screen.
+    # Imported here: that module uses this one's page helpers.
+    from setuhaul.auth.exception_pages import deleted_section
+
     body = ('<div class="wh">' + tabs + _users_section(conn, me) + _pending_section(conn) + _decided_section(conn)
+            + deleted_section(conn)
             + _audit_section(conn, query) + _model_section(conn, deps)
             + _configuration_section(conn, deps) + "</div>")
     return _layout("Admin", body, ("common.js", "tabs.js", "admin.js", "model.js", "settings.js"), me, nav)
@@ -471,6 +476,14 @@ def _who(label: str) -> str:
     # A booking label is "driver · order": the name on one line, the order under it.
     name, _, order = label.partition(" \u00b7 ")
     return f"<strong>{esc(name)}</strong>" + (f"<span>{esc(order)}</span>" if order else "")
+
+
+def _cross(dock: str, slot: dict[str, Any]) -> str:
+    # The small cross on a booked cell. The label is "driver · order"; the click handler is the shared data-api one.
+    name, _, order = slot["label"].partition(" · ")
+    ask = f"Free {dock} {slot['start']} for {order} ({name})? The shipment stays and will need a new slot."
+    return (f'<button type="button" class="free-slot" data-api="/v1/warehouse/appointments/{_segment(slot["appointment_id"])}/free"'
+            f' data-confirm="{esc(ask)}" aria-label="{esc(f"Free dock {dock} {slot['start']}, order {order}")}">&times;</button>')
 
 
 def _bay_card(dock: dict[str, Any], moment: datetime) -> str:
@@ -494,7 +507,8 @@ def _bay_card(dock: dict[str, Any], moment: datetime) -> str:
             f'<div class="occupant">{occupant}</div><div class="next">{upcoming}</div></li>')
 
 
-def _board_section(board: dict[str, Any] | None, options: list[tuple[str, str]], selected: str | None, moment: datetime) -> str:
+def _board_section(board: dict[str, Any] | None, options: list[tuple[str, str]], selected: str | None, moment: datetime,
+                   blocks: str = "") -> str:
     selector = ('<form method="get" action="/warehouse" class="filters"><label>Facility '
                 f'<select name="facility">{_options(options, selected)}</select></label><button type="submit">Show</button></form>')
     if board is None:
@@ -514,6 +528,7 @@ def _board_section(board: dict[str, Any] | None, options: list[tuple[str, str]],
             marker = " now" if hour == current else ""
             text = "".join(_who(s["label"]) if s["status"] in ("BOOKED", "HELD") and s["label"]
                            else f'<em>{esc(s["label"] or _STATUS_WORDS.get(s["status"], s["status"].title()))}</em>' for s in slots)
+            text += "".join(_cross(dock["code"], s) for s in slots if s.get("freeable"))
             cells.append(f'<td class="cell cell-{kind}{past}{marker}">{text}</td>')
         rows.append(f'<tr><th scope="row"><b>{esc(dock["code"])}</b><span>{esc(dock["type"])}</span></th>{"".join(cells)}</tr>')
     table = f'<div class="scroll"><table class="board"><thead><tr>{head}</tr></thead><tbody>{"".join(rows)}</tbody></table></div>'
@@ -526,7 +541,7 @@ def _board_section(board: dict[str, Any] | None, options: list[tuple[str, str]],
     return (f'<section id="board" data-panel="board"><h2>Dock board</h2>{selector}'
             f'<p class="legend">Facility {esc(board["facility"])}, {esc(f"{moment.astimezone(IST):%a %d %b, %H:%M}")}</p>'
             f'<h3>On the bays now</h3><ul class="bays">{bays}</ul>'
-            f'<h3>Today by hour</h3><p class="keys">{legend}</p>{table}<h3>Waiting for partner reply</h3>{waiting}</section>')
+            f'<h3>Today by hour</h3><p class="keys">{legend}</p>{table}<h3>Waiting for partner reply</h3>{waiting}{blocks}</section>')
 
 
 def _clock(stamp: str) -> str:
@@ -660,6 +675,9 @@ def _drivers_section(conn: sqlite3.Connection, user: User, today: date) -> str:
             elif d["telegram_status"] == "REVOKED":
                 action = _button("Allow re-link", f"{base}/allow-relink",
                                  confirm=f"Let {d['driver_name']} link a Telegram account again?")
+        # Deleting follows the same rule: an admin, or the authority who added the driver.
+        if telegram.may_manage_binding(conn, user, d["driver_id"]):
+            action += f'<button type="button" data-delete-driver="{esc(d["driver_id"])}">Delete</button>'
         rows.append([esc(d["driver_id"]), esc(d["driver_name"]), esc(d["phone"]), esc(d["approval_status"]),
                      "Yes" if d["licence_valid"] else "No", esc(d["telegram_status"]), action])
     carriers = [(r["carrier_id"], f"{r['carrier_id']} - {r['carrier_name']}")
@@ -677,7 +695,7 @@ def _drivers_section(conn: sqlite3.Connection, user: User, today: date) -> str:
            f'<label>Vehicle <select name="vehicle_id" id="vehicle">{vehicle_options}</select></label>'
            '<button type="submit">Add driver</button></form>')
     table = _table(("Driver", "Name", "Phone", "Approval", "Licence valid", "Telegram", ""), rows, "No drivers yet.")
-    return f'<section id="drivers" data-panel="drivers"><h2>Drivers</h2><div class="scroll">{table}</div>{add}</section>'
+    return f'<section id="drivers" data-panel="drivers"><h2>Drivers</h2><div class="scroll">{table}</div><div id="driver-removal" role="region" aria-live="polite"></div>{add}</section>'
 
 
 def render_warehouse(conn: sqlite3.Connection, user: User, now: Any, facility: str | None) -> HTMLResponse:
@@ -702,16 +720,19 @@ def render_warehouse(conn: sqlite3.Connection, user: User, now: Any, facility: s
             return _message_page("Not found", "No such facility.", 404, user)
     today = now.date()
     # Imported here: the tab's module uses this one's page helpers.
+    from setuhaul.auth.exception_pages import blocks_section
     from setuhaul.auth.shipment_pages import shipments_section
+
+    blocks = "" if chosen is None else blocks_section(conn, user, chosen, now)
 
     tabs = _tabs((("board", "Dock board"), ("messages", "Messages"), ("projects", "Projects"), ("shipments", "Shipments"),
                   ("drivers", "Drivers")))
     body = ('<div class="wh">' + _attention(conn, user, today, board) + tabs
-            + _board_section(board, options, chosen, now) + _messages_section(conn, user, now)
+            + _board_section(board, options, chosen, now, blocks) + _messages_section(conn, user, now)
             + _projects_section(conn, user, today, options) + shipments_section(conn, user, now, options)
             + _drivers_section(conn, user, today) + "</div>")
     nav = '<a href="/warehouse">Warehouse</a>' + (' <a href="/admin">Admin</a>' if user.role == "ADMIN" else "")
-    return _respond(_layout("Warehouse", body, ("common.js", "tabs.js", "warehouse.js"), user, nav))
+    return _respond(_layout("Warehouse", body, ("common.js", "tabs.js", "warehouse.js", "exceptions.js"), user, nav))
 
 
 # ---- routes -----------------------------------------------------------------------------------------------

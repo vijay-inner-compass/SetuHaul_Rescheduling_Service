@@ -94,6 +94,23 @@ model, guarantees one holder per slot (`python scripts/show_phase5.py`).
 * `my truck is 60 minutes late`, then `never mind, keep my original slot`: *I have released the hold. Your original appointment is unchanged.*
 * `please cancel my appointment`: with the demo data this goes to a person (case reference) and nothing is changed.
 
+#### Example: release a held slot on the dock board
+
+The demo console's board has no release button: a click on a free cell books it. A hold is released from the driver's side.
+
+Press **Reset demo** (**Supplied schedule**), open `http://127.0.0.1:8800/demo/driver-login` (Manoj Sharma) and keep the
+console's **Dock board** on SetuHaul Jaipur beside it.
+
+| Step | Type (driver page) | Driver sees | Dock board shows |
+|---|---|---|---|
+| 1 | `my truck is 60 minutes late` | *I am holding 12:00-13:00 at dock D2 ...* | D2 12:00 **Held**; D4 10:00 still **Booked** (the original) |
+| 2 | `never mind, keep my original slot` | *I have released the hold. Your original appointment is unchanged.* | D2 12:00 free again; D4 10:00 still **Booked** |
+
+Other ways a hold ends:
+
+* `no` releases it and holds the next slot (scenario A).
+* **+3 min and sweep** lets it lapse (scenario B).
+
 ### G. Languages
 
 `bhai meri gaadi 60 minute late hai` gets the held-slot message in Hinglish. Hindi in Devanagari depends on the configured model.
@@ -103,6 +120,22 @@ No native speaker has reviewed the wording.
 
 Start with `python scripts/run_demo.py --fresh`, or **Reset demo** and choose **Empty dock board**. All supplied appointments are
 removed, so a first booking has no "original ended" step. The hard rules still apply: Pradeep Jat still goes to a person.
+
+### Warehouse exceptions (signed-in warehouse screen, not the demo console)
+
+On `/warehouse`, for your own facilities (an admin: all):
+
+* **Block a dock** (Dock board tab): choose dock, type, from, optional to, and a reason, then **Check bookings**. The warning lists
+  each affected booking and where it would move. **Block and move** applies exactly that list; if things changed meanwhile you are
+  shown the new list. A booking that fits nowhere is freed and its shipment waits for a slot. Trucks already inside are left alone.
+* **Reopen** ends one block early. Bookings already moved stay where they are.
+* **Free a slot:** the **x** on a booked, not yet started slot under "Today by hour". The shipment stays and needs a new slot.
+* **Delete a driver** (Drivers tab): lists the unfinished shipments that will be cancelled and asks for the driver's name. Admins
+  may delete anyone; warehouse staff only drivers they added. Nothing is erased.
+* **Restore** (admin): Admin screen, **Deleted drivers**. Cancelled shipments and project allocations do not come back, and
+  Telegram must be allowed to re-link.
+
+If a driver cannot be reached on Telegram after a slot is freed or moved, the screen says so: phone them.
 
 ## 3. Showing the edge cases and failures
 
