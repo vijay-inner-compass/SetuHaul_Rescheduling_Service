@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from setuhaul.db import open_connection
+from setuhaul.gps import store_ping
+from setuhaul.schemas import GpsPing
 from tests.auth_helpers import World
 from tests.exception_helpers import D1, D2, appointment_of, booked_world
-from tests.shipment_helpers import query, slot_at
+from tests.shipment_helpers import DAY, query, slot_at
 
 PAGE = "/warehouse?facility=FAC-JAI-01"
 CASE = "ESC-T-FAC-JAI-01"
@@ -131,3 +137,37 @@ def test_a_failed_message_can_be_sent_again(tmp_path: Path) -> None:
     assert client.post(url, json={}).status_code == 200
     again = notices(world)[-1]
     assert (again["status"], again["attempts"]) == ("PENDING", 0)
+
+
+@pytest.mark.parametrize("status", ["AT_GATE", "WAITING", "IN_DOCK"])
+def test_a_truck_recorded_on_site_keeps_its_booking(tmp_path: Path, status: str) -> None:
+    world, shipment_id, old, client = case_world(tmp_path)
+    query(world, "update shipments set current_status=? where shipment_id=?", status, shipment_id)
+    r = resolve(client, slot_id=slot_at(world, 11, D2))
+    assert r.status_code == 409 and r.json()["reason_code"] == "ORIGINAL_IN_PROGRESS"
+    assert appointment_of(world, shipment_id) == old and case_status(world) == "CLAIMED"
+
+
+def test_a_slot_before_the_truck_can_arrive_is_refused(tmp_path: Path) -> None:
+    world, shipment_id, old, client = case_world(tmp_path)
+    query(world, "update shipments set latest_eta_ts=?, original_eta_ts=? where shipment_id=?",
+          f"{DAY}T12:00:00+05:30", f"{DAY}T12:00:00+05:30", shipment_id)
+    r = resolve(client, slot_id=slot_at(world, 11, D2))
+    assert r.status_code == 422 and "cannot arrive" in r.json()["message"]
+    assert appointment_of(world, shipment_id) == old and case_status(world) == "CLAIMED"
+
+
+def test_a_fresh_position_far_away_rules_out_an_early_slot(tmp_path: Path) -> None:
+    world, shipment_id, old, client = case_world(tmp_path)
+    # 40 minutes before the slot, with the truck seen near Mumbai.
+    world.clock.advance(timedelta(hours=24, minutes=20))
+    client = world.client("wh_a")
+    conn = open_connection(path=world.path)
+    try:
+        store_ping(conn, shipment_id, GpsPing(lat=19.07, lon=72.87, recorded_at=world.clock.now()), world.clock, "DRIVER_APP")
+        conn.commit()
+    finally:
+        conn.close()
+    r = resolve(client, slot_id=slot_at(world, 11, D2))
+    assert r.status_code == 422 and "cannot arrive" in r.json()["message"], r.text
+    assert appointment_of(world, shipment_id) == old

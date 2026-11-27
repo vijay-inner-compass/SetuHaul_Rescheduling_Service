@@ -10,16 +10,19 @@ import sqlite3
 import uuid
 from datetime import datetime
 
-from setuhaul import passes
+from setuhaul import passes, release
 from setuhaul.auth import audit
 from setuhaul.auth.authz import facility_ids
 from setuhaul.auth.users import User
 from setuhaul.booking import _expire_due_for, release_hold_in_txn
 from setuhaul.capacity import build_facility_state
 from setuhaul.clock import Clock
+from setuhaul.config import load_settings
 from setuhaul.db import IST, parse_operational_timestamp
+from setuhaul.eta import load_eta_records
 from setuhaul.events import append_appointment_event
 from setuhaul.feasibility import build_context, evaluate_slot
+from setuhaul.gps import gps_arrival_floor
 from setuhaul.identity import AuthError
 from setuhaul.notifications import enqueue_downstream
 from setuhaul.schemas import BaselineType, EtaEvidence
@@ -55,6 +58,7 @@ _WHY = {
     "EQUIPMENT_UNAVAILABLE": "no equipment is available then", "labour_availability": "no labour is recorded for that day",
     "AFTER_LAST_NEW_START": "it starts after the facility's last start time", "OUTSIDE_FACILITY_HOURS": "it is outside opening hours",
     "DOCK_UNAVAILABLE": "the dock is out of service", "DOCK_EVENT_BLOCK": "the dock is blocked then",
+    "RELEASE_AFTER_SLOT_START": "the truck cannot arrive by then",
 }
 
 
@@ -83,6 +87,18 @@ def open_slots(conn: sqlite3.Connection, facility_id: str, now: datetime) -> lis
     return [r for r in free if r["slot_id"] not in blocked]
 
 
+def _arrival(conn: sqlite3.Connection, shipment_id: str, clock: Clock) -> EtaEvidence:
+    """When the truck can be there: the load's latest ETA, never before now or before a fresh position allows."""
+    # A reported update, otherwise the shipment's own latest figure, otherwise the planned one.
+    planned, current = load_eta_records(conn, shipment_id)
+    latest = conn.execute("select latest_eta_ts from shipments where shipment_id=?", (shipment_id,)).fetchone()[0]
+    record = current or planned
+    known = parse_operational_timestamp(latest) if current is None and latest else record.eta if record else clock.now()
+    floor = gps_arrival_floor(conn, shipment_id, clock, load_settings())
+    eta = max(known, clock.now(), floor or known)
+    return EtaEvidence(eta=eta, source="DRIVER_DECLARED", confidence="MEDIUM", baseline_type=BaselineType.CURRENT_ETA)
+
+
 def assign_in_txn(conn: sqlite3.Connection, *, actor: User, shipment_id: str | None, slot_id: str,
                   clock: Clock) -> tuple[str, datetime]:
     """Book the load into the slot. Call inside a transaction. Returns the dock code and the start (IST)."""
@@ -101,7 +117,7 @@ def assign_in_txn(conn: sqlite3.Connection, *, actor: User, shipment_id: str | N
         raise AuthError("SHIPMENT_FINISHED")
     orig = conn.execute("select appointment_id, appointment_status, slot_id from appointments where shipment_id=? and is_current=1"
                         " and appointment_status in ('PENDING_CONFIRMATION','CONFIRMED','IN_PROGRESS')", (shipment_id,)).fetchone()
-    if passes.on_site(conn, shipment_id) or (orig is not None and orig["appointment_status"] == "IN_PROGRESS"):
+    if release.truck_inside(conn, shipment_id) or (orig is not None and orig["appointment_status"] == "IN_PROGRESS"):
         raise AuthError("ORIGINAL_IN_PROGRESS")
     # An overdue hold the sweep has not cleared yet would still occupy the slot.
     _expire_due_for(conn, now, shipment_id=shipment_id, slot_id=slot_id)
@@ -121,7 +137,7 @@ def assign_in_txn(conn: sqlite3.Connection, *, actor: User, shipment_id: str | N
     state = build_facility_state(conn, ship["destination_facility_id"], now)
     if orig is not None:
         state.occupancy.pop(orig["slot_id"], None)
-    eta = EtaEvidence(eta=start, source="DRIVER_DECLARED", confidence="HIGH", baseline_type=BaselineType.PLANNED_ETA)
+    eta = _arrival(conn, shipment_id, clock)
     verdict = evaluate_slot(build_context(conn, shipment_id, eta, now), state.slots[slot_id], state)
     if verdict.status in ("INFEASIBLE", "INCOMPLETE_FEASIBILITY_DATA"):
         raise Refused((*verdict.reasons, *verdict.missing))
