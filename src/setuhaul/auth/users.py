@@ -49,7 +49,7 @@ def _normalise(email: str) -> str:
 def _load(conn: sqlite3.Connection, where: str, param: str) -> User | None:
     # One user row, matched by the caller's (fixed, internal) condition.
     row = conn.execute(
-        f"select user_id, email, role, status, display_name from users where {where}", (param,)
+        f"select user_id, email, role, status, display_name from users where deleted_at is null and ({where})", (param,)
     ).fetchone()
     if row is None:
         return None
@@ -183,6 +183,79 @@ def _fresh_admin(conn: sqlite3.Connection, actor: User) -> None:
     fresh = _load(conn, "user_id = ?", actor.user_id)
     if fresh is None or fresh.role != "ADMIN" or fresh.status != "ACTIVE":
         raise AuthError("FORBIDDEN")
+
+
+
+_HISTORY_REFS: tuple[tuple[str, str], ...] = (
+    ("users", "invited_by"),
+    ("driver_profiles", "approved_by"),
+    ("driver_profiles", "created_by_user_id"),
+    ("projects", "created_by"),
+    ("project_drivers", "allocated_by"),
+    ("shipment_assignments", "created_by"),
+    ("dock_blocks", "created_by"),
+    ("dock_blocks", "ended_by"),
+    ("driver_deletions", "deleted_by"),
+    ("driver_deletions", "restored_by"),
+)
+
+
+def delete(conn: sqlite3.Connection, *, actor: User, user_id: str, clock: Clock) -> bool:
+    """Delete a web user (e.g. warehouse supervisor). Returns True if hard-deleted, False if soft-deleted to keep FKs."""
+    if actor.role != "ADMIN" or actor.status != "ACTIVE":
+        raise AuthError("FORBIDDEN")
+    from setuhaul.auth import links
+
+    now = clock.now().isoformat()
+    with immediate(conn):
+        _fresh_admin(conn, actor)
+        if user_id == actor.user_id:
+            raise AuthError("CANNOT_DELETE_SELF")
+        target = _load(conn, "user_id = ?", user_id)
+        if target is None:
+            raise AuthError("UNKNOWN_USER")
+        if target.role == "ADMIN" and target.status == "ACTIVE":
+            others = conn.execute(
+                "select count(*) from users where role='ADMIN' and status='ACTIVE' and deleted_at is null and user_id<>?",
+                (user_id,),
+            ).fetchone()[0]
+            if others == 0:
+                raise AuthError("LAST_ADMIN")
+        # End all sessions, password links, credentials, lockouts and facility bindings immediately.
+        conn.execute("update auth_sessions set revoked_at=? where user_id=? and revoked_at is null", (now, user_id))
+        links.cancel_all(conn, user_id, clock)
+        conn.execute("delete from admin_credentials where user_id=?", (user_id,))
+        conn.execute("delete from auth_ip_lockouts where user_id=?", (user_id,))
+        conn.execute("delete from user_facilities where user_id=?", (user_id,))
+        referenced = any(
+            conn.execute(f"select 1 from {tbl} where {col}=? limit 1", (user_id,)).fetchone() is not None
+            for tbl, col in _HISTORY_REFS
+        )
+        if not referenced:
+            conn.execute("delete from account_links where user_id=?", (user_id,))
+            conn.execute("delete from auth_sessions where user_id=?", (user_id,))
+            conn.execute("delete from users where user_id=?", (user_id,))
+            hard_deleted = True
+        else:
+            # Soft-delete and free the original email so the address can be re-invited later while keeping FKs valid.
+            conn.execute(
+                "update users set status='DISABLED', deleted_at=?, email=? where user_id=?",
+                (now, f"deleted+{user_id.lower()}@deleted.invalid", user_id),
+            )
+            hard_deleted = False
+        audit.record(
+            conn,
+            actor_user_id=actor.user_id,
+            actor_email=actor.email,
+            action="USER_DELETED",
+            target_type="user",
+            target_id=user_id,
+            outcome="OK",
+            ip=None,
+            detail={"role": target.role, "email": target.email, "hard_deleted": hard_deleted},
+            clock=clock,
+        )
+    return hard_deleted
 
 
 def enable(conn: sqlite3.Connection, *, actor: User, user_id: str, clock: Clock) -> None:

@@ -249,7 +249,7 @@ def _users_section(conn: sqlite3.Connection, me: User, passwords: bool = False, 
                   for r in conn.execute("select facility_id, facility_name from facilities order by facility_id")]
     rows = []
     # Every user, oldest first, each re-read through the users module like the JSON API does.
-    for row in conn.execute("select user_id, last_login_at from users order by created_at, user_id").fetchall():
+    for row in conn.execute("select user_id, last_login_at from users where deleted_at is null order by created_at, user_id").fetchall():
         found = users.find_by_id(conn, row["user_id"])
         if found is None:
             continue
@@ -259,6 +259,8 @@ def _users_section(conn: sqlite3.Connection, me: User, passwords: bool = False, 
                   if found.status == "ACTIVE" and found.user_id != me.user_id else "")
         if found.status == "DISABLED":
             action = _button("Re-enable", f"{base}/enable", confirm=f"Let {found.email} sign in again?", done="User re-enabled.")
+        if found.user_id != me.user_id:
+            action += _button("Delete", f"{base}/delete", confirm=f"Delete {found.email}? They will be removed and their sessions ended.", done="User deleted.")
         if found.role in users.FACILITY_BOUND:
             action += (f'<details><summary>Change facilities</summary><form data-api="{esc(base)}/facilities" '
                        f'data-done="Facilities saved.">{_checkboxes("facilities", facilities, found.facilities)}'

@@ -81,6 +81,7 @@ ROLE_GUARDED: dict[tuple[str, str], frozenset[str]] = {
     ("POST", "/v1/admin/users"): ADMIN,
     ("GET", "/v1/admin/users"): ADMIN,
     ("POST", "/v1/admin/users/{user_id}/disable"): ADMIN,
+    ("POST", "/v1/admin/users/{user_id}/delete"): ADMIN,
     ("POST", "/v1/admin/users/{user_id}/password-link"): ADMIN,
     ("POST", "/v1/admin/users/{user_id}/enable"): ADMIN,
     ("POST", "/v1/admin/users/{user_id}/facilities"): ADMIN,

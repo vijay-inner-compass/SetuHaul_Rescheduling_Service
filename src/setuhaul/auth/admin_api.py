@@ -28,7 +28,7 @@ MAX_AUDIT_LIMIT = 500
 # Rows returned when no (or a non-positive) limit is given.
 DEFAULT_AUDIT_LIMIT = 200
 # Refusal code -> HTTP status; anything unlisted is a 422 (bad input).
-_STATUS = {"FORBIDDEN": 403, "UNKNOWN_USER": 404, "ALREADY_INVITED": 409, "CANNOT_DISABLE_SELF": 409, "LAST_ADMIN": 409,
+_STATUS = {"FORBIDDEN": 403, "UNKNOWN_USER": 404, "ALREADY_INVITED": 409, "CANNOT_DISABLE_SELF": 409, "CANNOT_DELETE_SELF": 409, "LAST_ADMIN": 409,
            "NOT_FACILITY_BOUND": 409}
 
 
@@ -109,7 +109,7 @@ def register_admin_api(app: FastAPI, deps: AppDeps) -> None:
         def read(conn: sqlite3.Connection) -> Response:
             out = []
             # Every user, oldest first; each one re-read through the users module so the shape is the same everywhere.
-            for row in conn.execute("select user_id, last_login_at from users order by created_at, user_id").fetchall():
+            for row in conn.execute("select user_id, last_login_at from users where deleted_at is null order by created_at, user_id").fetchall():
                 found = users.find_by_id(conn, row["user_id"])
                 if found is not None:
                     out.append(_user_json(found, row["last_login_at"]))
@@ -132,6 +132,26 @@ def register_admin_api(app: FastAPI, deps: AppDeps) -> None:
                     conn.commit()
                 raise
             return JSONResponse({"status": "OK", "user_id": user_id, "request_id": rid})
+
+        return await run_in_threadpool(with_conn, rid, write)
+
+    @app.post("/v1/admin/users/{user_id}/delete")
+    async def delete_user(request: Request, user_id: str, user: Annotated[User, Depends(require_role("ADMIN"))]) -> Response:
+        rid = request.state.request_id
+
+        def write(conn: sqlite3.Connection) -> Response:
+            try:
+                hard_deleted = users.delete(conn, actor=user, user_id=user_id, clock=deps.clock)
+            except AuthError as exc:
+                if exc.code in ("CANNOT_DELETE_SELF", "LAST_ADMIN"):
+                    audit.record(
+                        conn, actor_user_id=user.user_id, actor_email=user.email, action="USER_DELETED",
+                        target_type="user", target_id=user_id, outcome="REFUSED", ip=None,
+                        detail={"reason": exc.code}, clock=deps.clock,
+                    )
+                    conn.commit()
+                raise
+            return JSONResponse({"status": "OK", "user_id": user_id, "hard_deleted": hard_deleted, "request_id": rid})
 
         return await run_in_threadpool(with_conn, rid, write)
 

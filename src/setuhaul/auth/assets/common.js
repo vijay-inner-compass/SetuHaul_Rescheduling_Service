@@ -48,6 +48,7 @@
     PROJECT_NOT_FOUND: "That project was not found.",
     PROJECT_CLOSED: "That project is closed.",
     PROJECT_ENDED: "That project has ended.",
+    CANNOT_DELETE_SELF: "You cannot delete your own account.",
     CANNOT_DISABLE_SELF: "You cannot disable your own account.",
     LAST_ADMIN: "The last administrator cannot be disabled.",
     NOT_PENDING: "This item is no longer waiting for a decision.",
