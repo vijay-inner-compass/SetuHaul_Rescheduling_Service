@@ -3,8 +3,9 @@
 The model **interprets and drafts**. Code **decides and states facts**. Provider, model id and key come from
 the environment (`SETUHAUL_MODEL_PROVIDER`, `SETUHAUL_MODEL_ID`, `SETUHAUL_MODEL_API_KEY`) or from values an admin saved on
 **Admin > Configuration**, which override it; none is in the repo. Each call is recorded as numbers and codes only (D98).
-Two provider adapters exist, `anthropic` and `openai`, chosen by `SETUHAUL_MODEL_PROVIDER`. The OpenAI adapter was run live on 2026-11-20 on the
-earlier numbered-menu flow; those recordings are retired and the current flow has no recorded live run. Provider approval is still open (Q9).
+Two provider adapters exist, `anthropic` and `openai`, chosen by `SETUHAUL_MODEL_PROVIDER`. The OpenAI adapter was run live on 2026-11-26 on the
+one-slot flow, once each in English, Hindi and Hinglish; nothing has been recorded since the 2026-11-27 changes
+([evaluation-plan.md](verification/evaluation-plan.md)). Provider approval is still open (Q9).
 
 ## Limits (`ModelPolicy`, provisional until approved)
 | Limit | Value | Enforced by |

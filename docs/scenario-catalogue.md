@@ -283,5 +283,5 @@ Legend: **Demo** = can be shown on the demo console; **Script** = shown by an ev
 * The rate limit's increment and rollback are not atomic across processes (documented in `rate_limit.py`).
 * The demo console has no rule-based assistant: chat needs a configured model (the stand-in is used by tests, load runs and the Telegram trial).
 * The held-slot message is system-worded, so the model cannot add an explanation to it.
-* No Hindi (Devanagari) live-model run has been recorded yet; Hindi and Hinglish wording needs native-speaker review.
+* Hindi (Devanagari) has one recorded live-model run (2026-11-26); Hindi and Hinglish wording needs native-speaker review.
 * Operational thresholds that depend on a real model, real traffic or a real labour feed are not demonstrated by scripted runs.

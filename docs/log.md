@@ -27,3 +27,13 @@ Started in grow mode: one page, [[refusal-messages]].
 ## [2026-11-27] add | [[warehouse-operations]], [[passes-and-gate]], [[round-the-clock-slots]], [[sign-in]]
 
 - The four pages proposed by the sync, approved by the user. Checked against `b5b462f`.
+
+## [2026-11-28] fix | real-model run statements
+
+- The documents said the one-slot flow had no recorded real-model run. `250d283` (2026-11-26) added English, Hindi and Hinglish
+  recordings. Current-behaviour documents corrected; details in `verification/evaluation-plan.md`.
+- Decision register entries and other dated records were left as they are.
+
+## [2026-11-28] add | [[guardrails]], [[evals]]
+
+- Requested by the user: all guardrails and evals in one lookup pair. Checked against `8c1a551`.

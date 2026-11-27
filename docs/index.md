@@ -38,7 +38,8 @@ None yet.
 
 ## reference
 
-None yet.
+- [[guardrails]] -- every control on a driver message, the model, its reply and the booking
+- [[evals]] -- evaluators, traces, replay, other evidence and what is not evaluated
 
 ## operations
 

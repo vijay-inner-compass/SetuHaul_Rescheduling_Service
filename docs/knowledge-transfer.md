@@ -293,24 +293,24 @@ Make a writable database with `make_working_db(Path('data/working.sqlite3'))`; n
 | Lint | `python -m ruff check .` | all checks passed |
 | Types | `python -m mypy src` | no issues in 105 source files (`strict`) |
 | End-to-end scenario | `python scripts/run_scenario.py` | **23/23 checks** |
-| Trace replay | `python scripts/replay_traces.py` | **9/9 traces clean, 109/109 evaluator checks**; live recordings of the earlier menu flow are retired |
+| Trace replay | `python scripts/replay_traces.py` | **9/9 traces clean, 109/109 evaluator checks**; includes 2026-11-26 live runs in English, Hindi and Hinglish; recordings of the earlier menu flow are retired |
 | Concurrency | `python scripts/run_integrity_proof.py` (about 8 min, not re-run) | recorded in `docs/verification/concurrency-proof.md` |
 
 Evidence files for every phase are in `docs/verification/`. The client-facing summary is [client-readout.md](client-readout.md).
 
 **Strong claims:** no double allocation (20 rounds of thread, process and mixed contention, zero invariant violations, for SQLite on one
 machine); wording matches stored state on the deterministic path; failure paths safe; capacity search p95 about 13 ms.
-**Weak or absent claims:** real-model behaviour on the current flow, Hindi/Hinglish quality, auto-resolution rate, multi-worker behaviour, real Redis.
+**Weak or absent claims:** real-model behaviour beyond single runs, Hindi/Hinglish quality, auto-resolution rate, multi-worker behaviour, real Redis.
 
 ## 12. Decisions, open questions and risks
 
 * [decision-register.md](decision-register.md) lists decisions D1 onward with the reason for each (examples: D5 FCFS, D6 delay counted from planned ETA, D13 LangGraph, D64 demo console, D93 one slot held instead of a menu, D101 Dock Access Pass).
 * [operations-questions.md](operations-questions.md) lists Q1-Q20, each an **engineering default awaiting an approver**. Blockers: model provider and data protection (Q9), labour/consignee data source (Q17), cancellation cut-off (Q6), ETA buffer and priority classes (Q3, Q4), unload longer than a slot (Q20).
-* Top risks from the readout: live-model evidence is thin (a handful of runs, English); Hindi/Hinglish wording is unreviewed by a native speaker and language detection and the claim guard are heuristics; no labour source means every case reaches a human; the messaging-provider integration and coordinator authentication are minimal; SQLite saturates around 245 writes/s (move to PostgreSQL before more than one sustained writer or more than four API workers; the invariants carry over).
+* Top risks from the readout: live-model evidence is thin (one scripted run per language, before the 2026-11-27 changes); Hindi/Hinglish wording is unreviewed by a native speaker and language detection and the claim guard are heuristics; no labour source means every case reaches a human; the messaging-provider integration and coordinator authentication are minimal; SQLite saturates around 245 writes/s (move to PostgreSQL before more than one sustained writer or more than four API workers; the invariants carry over).
 
 ## 13. Known gaps (read before you trust a claim)
 
-* No recorded real-model run of the current one-slot flow. The Telegram trial used the stand-in.
+* No recorded real-model run since the 2026-11-27 changes; the 2026-11-26 runs are one per language. The Telegram trial used the stand-in.
 * No data retention, export or erasure for personal data; no encryption at rest; no privacy notice. See the [FAQ](faq.md), section 6.
 * Notices for warehouse, customer and operations are queued; no sender is connected.
 * Telegram: photos, voice notes and locations are not read; the driver is told so.

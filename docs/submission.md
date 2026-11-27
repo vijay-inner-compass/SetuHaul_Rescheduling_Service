@@ -50,7 +50,7 @@ so the service opens a `NO_SLOT` case and changes nothing.
 **Optional scheduling tool:** not attempted
 
 ## What does not work yet
-* No recorded real-model run of the current flow.
+* Only one recorded real-model run per language (2026-11-26), none since the 2026-11-27 changes.
 * No labour or consignee feed: on the supplied data alone no otherwise feasible slot can be offered, and screen-created loads rest on
   figures warehouse staff type.
 * A driver is not told why an earlier slot went to someone else.
