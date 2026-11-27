@@ -11,19 +11,35 @@ import base64
 import hashlib
 import re
 import secrets
+import unicodedata
 
 HIDDEN = "DAP-[hidden]"
 _C = "[A-Z2-7]"
-# The code in its groups of five (the last has six), with single spaces or hyphens, or run together.
-_GROUPS = rf"(?:{_C}{{5}}[ -]?){{4}}{_C}{{6}}"
+# Whatever people put between the groups: spaces, line breaks and ordinary punctuation.
+_SEP = r"""[\s\-_.,/\\|:;*`~'"+]"""
+# Characters that only look like nothing, and the dashes that are not "-". NFKC deals with full-width forms.
+_INVISIBLE = re.compile("[\u00ad\u200b-\u200f\u2060\ufeff]")
+_DASHES = re.compile("[\u2010-\u2015\u2212\ufe58\ufe63]")
+# The code in its groups of five (the last has six), or run together.
+_GROUPS = rf"(?:{_C}{{5}}{_SEP}*){{4}}{_C}{{6}}"
 _PATTERN = re.compile(
     r"(?<![A-Za-z0-9])(?:"
-    rf"DAP[ \t\r\n-]*(?P<full>{_GROUPS})(?![A-Za-z0-9-])"
+    # A whole code after DAP.
+    rf"DAP{_SEP}*(?P<full>{_GROUPS})(?![A-Za-z0-9])"
     # A mistyped or cut-off code after "DAP-".
-    r"|DAP-(?P<near>[A-Z0-9-]{7,})"
-    # Without DAP: run together, or grouped (grouped needs a digit, so five-letter words are left alone).
-    rf"|(?P<bare>{_C}{{26}}|(?=[A-Z -]*[2-7]){_GROUPS})(?![A-Za-z0-9])"
+    rf"|DAP\s*-\s*(?P<near>[A-Z0-9]+(?:{_SEP}+[A-Z0-9]{{4,6}}(?![A-Za-z0-9]))*)(?<=[A-Z0-9]{{4}})"
+    # A whole code without DAP.
+    rf"|(?P<run>{_C}{{26}})(?![A-Za-z0-9])"
+    rf"|(?P<grouped>(?=[A-Z\s\-]*[2-7])(?:{_C}{{5}}[\s\-]+){{4}}{_C}{{6}})(?![A-Za-z0-9])"
+    # Anything else shaped like a damaged code: blanked, never counted. Three or more five-character groups with a digit,
+    # or a very long run of letters and digits.
+    rf"|(?=(?:[A-Z]|{_SEP})*[0-9])(?:[A-Z0-9]{{5}}{_SEP}+){{3,}}[A-Z0-9]{{3,8}}(?![A-Za-z0-9])"
+    r"|[A-Z0-9]{20,}"
     r")", re.IGNORECASE)
+
+
+def _clean(text: str) -> str:
+    return _DASHES.sub("-", _INVISIBLE.sub("", unicodedata.normalize("NFKC", text)))
 
 
 def new_code() -> str:
@@ -32,8 +48,8 @@ def new_code() -> str:
 
 
 def normalise(text: str) -> str:
-    # Case, spaces and hyphens are formatting.
-    return re.sub(r"[\s-]", "", text).upper()
+    # Case, spacing and punctuation between groups are formatting.
+    return re.sub(_SEP, "", _clean(text)).upper()
 
 
 def hash_code(code: str) -> str:
@@ -41,10 +57,26 @@ def hash_code(code: str) -> str:
     return hashlib.sha256(normalise(code).encode()).hexdigest()
 
 
+def _codes(text: str, kinds: tuple[str, ...]) -> list[str]:
+    out = []
+    for m in _PATTERN.finditer(_clean(text)):
+        value = next((m.group(k) for k in kinds if m.group(k)), None)
+        if value:
+            out.append("DAP" + normalise(value))
+    return out
+
+
 def find(text: str) -> list[str]:
-    """Every code or near-miss in the text, normalised and starting with DAP."""
-    return ["DAP" + normalise(m.group("full") or m.group("near") or m.group("bare")) for m in _PATTERN.finditer(text)]
+    """Everything in the text that could be someone's code, normalised and starting with DAP."""
+    return _codes(text, ("full", "near", "run", "grouped"))
+
+
+def guesses(text: str) -> list[str]:
+    """The finds that are clearly meant as a pass, so a wrong one counts as an attempt. Grouped words without DAP do not."""
+    return _codes(text, ("full", "near", "run"))
 
 
 def blank(text: str) -> str:
-    return _PATTERN.sub(HIDDEN, text)
+    """The text with anything shaped like a code removed; untouched when there is nothing to remove."""
+    cleaned = _clean(text)
+    return _PATTERN.sub(HIDDEN, cleaned) if _PATTERN.search(cleaned) else text

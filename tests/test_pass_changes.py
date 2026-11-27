@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
-from setuhaul import facility_change, passes
+from setuhaul import facility_change, pass_check, passes
 from setuhaul.auth import shipments, telegram
 from setuhaul.auth.projects import allocate
 from setuhaul.booking import ConfirmCommand, acquire_hold, confirm_reschedule
 from setuhaul.db import open_connection
 from setuhaul.db import parse_operational_timestamp as ts
 from setuhaul.dock_pass import find, hash_code
+from setuhaul.escalation import InMemoryEscalationSink
 from setuhaul.identity import AuthError
 from setuhaul.jobs.send_driver_notifications import DriverNoticeRunner
 from tests.gate_helpers import ARRIVE, Yard
@@ -132,10 +134,12 @@ def test_a_warehouse_move_revokes_the_old_pass_and_sends_a_new_one(yard: Yard) -
 
 def test_a_reverted_move_sends_a_pass_for_the_old_warehouse(yard: Yard) -> None:
     request = _move(yard)
+    _link(yard)
+    bot = telegram.FakeTelegramClient()
     conn = open_connection(path=yard.world.path)
-    passes.send_pending(conn, None, yard.world.clock)
+    passes.send_pending(conn, bot, yard.world.clock)
     facility_change.abandon(conn, yard.world.clock, request, "FOLLOW_UP_FAILED")
-    assert passes.send_pending(conn, None, yard.world.clock) == 1
+    assert passes.send_pending(conn, bot, yard.world.clock) == 1
     conn.close()
     assert yard.one("select warehouse_id from dock_access_authorizations where status='ISSUED'")[0] == "FAC-JAI-01"
 
@@ -156,3 +160,71 @@ def test_the_notice_runner_sends_the_new_pass(yard: Yard) -> None:
     bot = telegram.FakeTelegramClient()
     DriverNoticeRunner(yard.world.clock, bot, lambda: open_connection(path=yard.world.path)).run_once()  # type: ignore[arg-type]
     assert sum(bool(find(text)) for _, text, _ in bot.sent) == 1
+
+
+# ---- from the pull request review ----------------------------------------------------------------------
+class Down(telegram.FakeTelegramClient):
+    def send(self, chat_id: int, text: str, request_contact_button: bool = False) -> None:
+        raise telegram.TelegramSendError("sendMessage failed: ConnectError")
+
+
+def _link(yard: Yard) -> None:
+    query(yard.world, "insert into telegram_identities(telegram_user_id, chat_id, driver_id, bound_at) "
+                      "values ('777','777','DRV001','2026-11-27T10:00:00+05:30')")
+
+
+def _pending(yard: Yard, client: telegram.TelegramClient | None) -> int:
+    conn = open_connection(path=yard.world.path)
+    try:
+        return passes.send_pending(conn, client, yard.world.clock)
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("linked", [True, False])
+def test_a_replacement_that_cannot_be_sent_is_tried_again(yard: Yard, linked: bool) -> None:
+    if linked:
+        _link(yard)
+    _move(yard)
+    assert _pending(yard, None) == 0
+    assert _pending(yard, Down()) == 0
+    # Nothing the driver has not received is left standing as their pass.
+    assert yard.one("select count(*) from dock_access_authorizations where status='ISSUED'")[0] == 0
+    if not linked:
+        _link(yard)
+    yard.world.clock.advance(timedelta(seconds=61))  # type: ignore[attr-defined]
+    bot = telegram.FakeTelegramClient()
+    assert _pending(yard, bot) == 1 and _pending(yard, bot) == 0
+    [code] = find(bot.sent[0][1])
+    assert yard.one("select token_hash from dock_access_authorizations where status='ISSUED'")[0] == hash_code(code)
+
+
+def test_a_failed_send_waits_before_the_next_try(yard: Yard) -> None:
+    _link(yard)
+    _move(yard)
+    assert _pending(yard, Down()) == 0
+    issued = yard.one("select count(*) from dock_access_authorizations")[0]
+    assert _pending(yard, Down()) == 0
+    assert yard.one("select count(*) from dock_access_authorizations")[0] == issued
+
+
+def test_an_expired_pass_is_replaced_when_the_warehouse_changes(yard: Yard) -> None:
+    _link(yard)
+    query(yard.world, "update dock_access_authorizations set status='EXPIRED'")
+    _move(yard)
+    assert _pending(yard, telegram.FakeTelegramClient()) == 1
+    assert yard.one("select warehouse_id from dock_access_authorizations where status='ISSUED'")[0] == "FAC-GGN-01"
+
+
+def test_a_new_pass_after_a_reschedule_names_the_new_time(yard: Yard) -> None:
+    _confirm(yard, 15)
+    conn = open_connection(path=yard.world.path)
+    bot = telegram.FakeTelegramClient()
+    _link(yard)
+    passes.send_new(conn, bot, actor=yard.world.users["wh_a"], shipment_id=yard.shipment_id, clock=yard.world.clock)
+    [code] = find(bot.sent[0][1])
+    answer = pass_check.check(conn, yard.world.clock, driver_id="DRV001", thread_id="THR-C", text=code, lang="en",
+                              sink=InMemoryEscalationSink())
+    conn.close()
+    assert answer is not None and answer.kind == "CONFIRMED"
+    assert "28 Nov 2026 15:00" in answer.text and "12:00" not in answer.text

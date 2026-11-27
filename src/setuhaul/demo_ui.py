@@ -43,7 +43,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 # Typing helper.
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 # Web framework types.
 from fastapi import APIRouter, Depends, FastAPI, Request
@@ -63,6 +63,8 @@ from setuhaul import facility_change
 from setuhaul.auth import audit, local_admin, sessions, users
 from setuhaul.auth.authz import AuthzError, require_role
 from setuhaul.auth.google import GoogleVerifier, RealGoogleVerifier
+from setuhaul.auth.users import User
+from setuhaul.auth.warehouse_routes import case_ids_in_scope
 
 # The same facility snapshot the service uses, to draw the dock board.
 from setuhaul.board import build_board
@@ -89,7 +91,7 @@ from setuhaul.db import (
 from setuhaul.demo_driver import register_demo_driver
 
 # Case queue operations for the operations panel.
-from setuhaul.escalation import claim_case, get_driver_case_status, list_open_cases, resolve_case
+from setuhaul.escalation import claim_case, get_case, get_driver_case_status, resolve_case
 
 # GPS ping storage and the active-shipment lookup.
 from setuhaul.gps import (
@@ -868,7 +870,7 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
 
     # The hand-off queue for the operations panel.
     @router.get("/demo/api/cases")
-    async def cases(request: Request) -> Any:
+    async def cases(request: Request, user: Annotated[User, Depends(require_role("WAREHOUSE_AUTHORITY", "ADMIN"))]) -> Any:
         def read() -> dict[str, Any]:
             conn = db(True)
             try:
@@ -876,8 +878,9 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
                 who = {r["driver_id"]: r["driver_name"] for r in conn.execute("select driver_id, driver_name from drivers")}
                 # Order and customer by shipment.
                 order = {r["shipment_id"]: f"{r['order_reference']} · {r['customer_name']}" for r in conn.execute("select * from shipments")}
-                # All cases, any status, up to 40.
-                rows = list_open_cases(conn, ("OPEN", "CLAIMED", "RESOLVED", "CANCELLED"), 40)
+                # The user's cases, any status, up to 40: the same facility scope as the coordinator API.
+                ids = case_ids_in_scope(conn, user, ("OPEN", "CLAIMED", "RESOLVED", "CANCELLED"), 40)
+                rows = [x for x in (get_case(conn, i) for i in ids) if x is not None]
                 out = []
                 # Newest first.
                 for c in reversed(rows):
@@ -896,7 +899,8 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
 
     # A coordinator claims a case.
     @router.post("/demo/api/cases/{case_id}/claim")
-    async def claim(request: Request, case_id: str, body: ClaimIn) -> Any:
+    async def claim(request: Request, case_id: str, body: ClaimIn,
+                    user: Annotated[User, Depends(require_role("WAREHOUSE_AUTHORITY", "ADMIN"))]) -> Any:
         denied = local_only(request)
         if denied:
             return denied
@@ -904,6 +908,9 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
         def go() -> Any:
             conn = db()
             try:
+                # A case outside the user's facilities looks like it does not exist.
+                if not case_ids_in_scope(conn, user, case_id=case_id):
+                    return JSONResponse({"status": "NOT_FOUND", "claimed_by": None}, status_code=404)
                 # The real queue operation.
                 r = claim_case(conn, case_id, body.coordinator, demo.clock)
                 return JSONResponse({"status": r.status, "claimed_by": r.claimed_by}, status_code=200 if r.status in ("CLAIMED",) or r.replayed else 409)
@@ -914,7 +921,8 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
 
     # A coordinator resolves a case with a code and note.
     @router.post("/demo/api/cases/{case_id}/resolve")
-    async def resolve(request: Request, case_id: str, body: ResolveIn) -> Any:
+    async def resolve(request: Request, case_id: str, body: ResolveIn,
+                    user: Annotated[User, Depends(require_role("WAREHOUSE_AUTHORITY", "ADMIN"))]) -> Any:
         denied = local_only(request)
         if denied:
             return denied
@@ -922,6 +930,9 @@ def register_demo(app: FastAPI, deps: Any, process: Callable[[Any, str], JSONRes
         def go() -> Any:
             conn = db()
             try:
+                # A case outside the user's facilities looks like it does not exist.
+                if not case_ids_in_scope(conn, user, case_id=case_id):
+                    return JSONResponse({"status": "NOT_FOUND", "claimed_by": None}, status_code=404)
                 # The real queue operation.
                 r = resolve_case(conn, case_id, body.coordinator, body.resolution_code, body.note, demo.clock)
                 return JSONResponse({"status": r.status, "claimed_by": r.claimed_by}, status_code=200 if r.status == "RESOLVED" else 409)

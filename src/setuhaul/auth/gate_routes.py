@@ -30,7 +30,7 @@ MESSAGES = {
     "DRIVER_NOT_ELIGIBLE": "This driver is not approved, active and licensed. Do not admit the truck; tell the warehouse.",
     "DETAILS_DO_NOT_MATCH": "The vehicle number or licence number does not match the pass. Check what you typed against the "
                             "truck and the licence.",
-    "TOO_MANY_ATTEMPTS": "Too many failed checks. Wait 15 minutes, or ask an administrator.",
+    "TOO_MANY_ATTEMPTS": "Too many wrong passes or details. Wait 15 minutes, or ask an administrator to check this truck.",
     "NOT_CHECKED_IN": "That truck is not checked in.",
     "UNLOADING_NOT_COMPLETE": "The warehouse has not marked unloading complete. Ask them before the truck leaves.",
     "VISIT_NOT_FOUND": "No such visit at your warehouse.",

@@ -109,7 +109,7 @@ def shipments_section(conn: sqlite3.Connection, user: User, now: datetime, facil
             actions += _button("Unlock", f"{base}/unlock")
         if s["state"] != "CANCELLED" and s["visit_state"] in (None, "EXPECTED"):
             actions += _button("Send new pass", f"{base}/pass", confirm=f"Replace the pass for {s['order_reference']}?")
-        if s["pass_state"] in ("ISSUED", "VALIDATED", "ACTIVE", "COMPLETED"):
+        if s["pass_state"] in ("ISSUED", "VALIDATED"):
             actions += (f'<form data-api="{esc(base)}/pass/revoke">' + _input("Reason", "reason", extra='required maxlength="200"')
                         + '<button type="submit">Revoke pass</button><span class="note" data-form-result role="alert"></span></form>')
         visit = passes.visit_for(conn, s["shipment_id"])
@@ -117,7 +117,10 @@ def shipments_section(conn: sqlite3.Connection, user: User, now: datetime, facil
             actions += _button("Unloading complete", f"/v1/warehouse/visits/{_segment(visit['truck_visit_id'])}/unloading-complete",
                                confirm=f"Has {s['order_reference']} been unloaded?")
         pass_text = _PASS.get(s["pass_state"] or "", "None")
-        if s["pass_state"] == "ISSUED" and not s["delivered"]:
+        latest = passes.state_for(conn, s["shipment_id"])
+        # A replacement still on its way reads the same as one that has not arrived.
+        waiting = latest is not None and latest["revocation_reason"] in ("WAREHOUSE_CHANGED", "SEND_FAILED")
+        if waiting or (s["pass_state"] == "ISSUED" and not s["delivered"]):
             pass_text = "Pass not delivered"
         rows.append([esc(s["order_reference"]), esc(f"{s['driver_id']} - {s['driver_name']}"), esc(s["facility_id"]),
                      esc(_when(s["planned_start"])), esc(_STATES[s["state"]]), esc(pass_text), actions])
