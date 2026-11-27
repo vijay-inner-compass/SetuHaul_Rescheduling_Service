@@ -22,7 +22,10 @@ _START: tuple[Task, ...] = (
     ("Sign in", (
         "Open the application's address. Access is by invitation: an administrator adds your email address first.",
         "Choose “Sign in with Google” and use the invited address.",
-        "Where a backup password is set up, an administrator can open “Administrator password” and sign in with it.",
+        ("Where email sign-in is switched on, use the link in your invitation to set a password (it works once, for 48 "
+         "hours), then sign in with email and password."),
+        "Forgotten it? Click “Forgot password?”. The link emailed to you works once, for 1 hour.",
+        "Where only a backup password is set up, an administrator can open “Administrator password” and sign in with it.",
         "Use “Sign out” at the top right when you finish, especially on a shared computer.",
     )),
     ("Who can open what", (
@@ -144,14 +147,34 @@ _ADMIN: tuple[Task, ...] = (
         "The Model tab shows which model is in use, how long replies take, failures, token use and cost.",
         "“Load from LangSmith” fetches the tracing summary when tracing is set up.",
     )),
+    ("Set up invitation and password emails", (
+        ("In the Google account that will send the mail, turn on 2-Step Verification and create an app password "
+         "(Google Account, then Security, then App passwords). A separate mailbox is safest."),
+        ("Signing in to this application with Google does not let it send mail: it still needs the app password. "
+         "Never type your normal Google password here."),
+        ("On Configuration, under Email, enter the mail server (smtp.gmail.com), port (465), sending user, app password "
+         "and from address. Server and port may be left empty for Gmail."),
+        "Click “Send test email to me”. It goes to the address you are signed in with; check spam too.",
+        "Click “Save”. The app password box should then say it is set. It is never shown again.",
+        ("Whoever runs the server adds SETUHAUL_PASSWORD_LOGIN=1 and the site address (SETUHAUL_PUBLIC_URL) to the "
+         "server's settings file once, and redeploys. These cannot be changed on screen."),
+        "When the Email status says “Sign-in emails are on”, new invitations are emailed.",
+        "For people invited before that, click “Send password link” on the Users tab. It also re-sends an invitation.",
+        "Changing the mail server, port or sending user means typing the app password again.",
+    )),
     ("Change settings", (
         "On Configuration, edit Model, LangSmith, Telegram or Email and click “Save” under that group.",
-        "Email: enter the mailbox that sends invitations, then “Send test email to me”. For Gmail use an app password.",
         "Use “Test connection” or “Test bot” before relying on a change. A new Telegram bot also needs “Register webhook”.",
         "Leave a key field empty to keep the saved key. “Reset to .env” removes saved settings.",
     )),
     (ERRORS, (
         "“That email address has already been invited.” Find the user in the list instead.",
+        "“Invitation emails are off” on the Users tab: nothing is sent until Email is set up under Configuration.",
+        "“Enter the sending user and the app password first.” The app password has not been entered or saved.",
+        "“Failed: SMTP SMTPAuthenticationError” means the sending user or app password is wrong.",
+        ("A test that times out or cannot connect usually means the host blocks the mail port. Try port 587, typing the "
+         "app password again."),
+        "“A test email was just sent.” Wait a minute and try again.",
         "“Choose at least one facility for a warehouse authority.” Tick one and invite again.",
         "“The last administrator cannot be disabled.” Invite another administrator first.",
         "“That licence has expired.” The driver cannot be approved with it.",

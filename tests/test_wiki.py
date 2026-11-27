@@ -103,3 +103,20 @@ def test_warehouse_instructions_describe_the_board_and_operations_panel() -> Non
     text = " ".join(step for key, _, tasks in wiki_pages.TOPICS for _, steps in tasks for step in steps)
     assert "Messages tab" not in text and "small ×" not in text and "under Messages" not in text
     assert "Free this slot" in text and "Operations" in text
+
+
+def test_wiki_explains_setting_up_email_sign_in() -> None:
+    topics = {key: dict(tasks) for key, _, tasks in wiki_pages.TOPICS}
+    setup = " ".join(topics["admin"]["Set up invitation and password emails"])
+    for words in ("app password", "2-Step Verification", "Send test email to me", "SETUHAUL_PASSWORD_LOGIN=1",
+                  "Sign-in emails are on", "Send password link"):
+        assert words in setup, words
+    errors = " ".join(topics["admin"][ERRORS])
+    for words in ("Enter the sending user and the app password first.", "SMTPAuthenticationError",
+                  "Invitation emails are off"):
+        assert words in errors, words
+    sign_in = " ".join(topics["start"]["Sign in"])
+    assert "Forgot password?" in sign_in and "48 hours" in sign_in
+    # Instructions only: no real mailbox or site address.
+    everything = str(wiki_pages.TOPICS)
+    assert "@gmail.com" not in everything and "https://setuhaul" not in everything
