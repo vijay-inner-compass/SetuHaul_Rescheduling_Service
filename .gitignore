@@ -8,6 +8,6 @@ __pycache__/
 .superpowers/
 live_traces/
 # Local working database; the tracked seed is data/setuhaul.sqlite3.
-data/working.sqlite3
+data/working.sqlite3*
 # ForgeCI test results.
 .engineering/
