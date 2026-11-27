@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 
-from setuhaul import dock_blocks, driver_messages, release
+from setuhaul import dock_blocks, driver_messages, release, round_clock
 from setuhaul.auth import driver_removal
 from setuhaul.auth.authz import require_role
 from setuhaul.auth.http import reject
@@ -67,6 +67,13 @@ class Message(BaseModel):
         if not value.strip():
             raise ValueError("write the message first")
         return value.strip()
+
+
+class Crews(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    facility_id: str
+    crews: int = Field(ge=1, le=100)
 
 
 class Deletion(BaseModel):
@@ -130,6 +137,17 @@ def register_exception_routes(app: FastAPI, deps: Any) -> None:
         def write(conn: sqlite3.Connection) -> Response:
             driver_messages.resend(conn, actor=user, outbox_id=outbox_id, clock=deps.clock)
             return ok(rid)
+
+        return await run_in_threadpool(run, rid, write)
+
+    @app.post("/v1/warehouse/auto-slots")
+    async def auto_slots(request: Request, body: Crews,
+                         user: Annotated[User, Depends(require_role("WAREHOUSE_AUTHORITY", "ADMIN"))]) -> Response:
+        rid = request.state.request_id
+
+        def write(conn: sqlite3.Connection) -> Response:
+            created = round_clock.set_crews(conn, actor=user, facility_id=body.facility_id, crews=body.crews, clock=deps.clock)
+            return ok(rid, slots_created=created)
 
         return await run_in_threadpool(run, rid, write)
 

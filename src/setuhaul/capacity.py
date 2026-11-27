@@ -17,7 +17,7 @@ import sqlite3
 from dataclasses import dataclass, field
 
 # datetime for instants; time for the facility's opening hours (a clock time without a date).
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 
 # ZoneInfo converts opening hours into real instants in the facility's timezone.
 from zoneinfo import ZoneInfo
@@ -277,7 +277,9 @@ def local_bounds(state: FacilityState, slot: SlotRow) -> tuple[datetime, datetim
     # The slot's calendar date in the facility's own timezone.
     day = slot.start.astimezone(tz).date()
     # Combine that date with the opening and closing clock times to get exact instants.
+    # Closing at or before opening means the next day: 00:00 to 00:00 is open all day.
+    closing_day = day + timedelta(days=1) if state.close_time <= state.open_time else day
     return (
         datetime.combine(day, state.open_time, tzinfo=tz),
-        datetime.combine(day, state.close_time, tzinfo=tz),
+        datetime.combine(closing_day, state.close_time, tzinfo=tz),
     )

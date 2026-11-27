@@ -15,7 +15,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
-from setuhaul import driver_messages
+from setuhaul import driver_messages, round_clock
 from setuhaul.api import WEB_PREFIX, claim_label, env_in_force, model_in_force
 from setuhaul.assign import open_slots
 from setuhaul.auth import audit, onboarding, projects, sessions, telegram, users
@@ -637,16 +637,24 @@ def _bay_card(dock: dict[str, Any], moment: datetime) -> str:
 
 
 def _board_section(board: dict[str, Any] | None, options: list[tuple[str, str]], selected: str | None, moment: datetime,
-                   blocks: str = "", ops: str = "") -> str:
+                   blocks: str = "", ops: str = "", day: date | None = None, auto: str = "") -> str:
     selector = _facility_chooser(options, selected)
     if board is None:
         return (f'<section id="board" data-panel="board"><h2>Dock board</h2>{selector}'
                 f'<div class="board-layout"><div class="board-main"><p class="empty">No facility to show.</p></div>{ops}</div></section>')
-    hours, current = board["hours"], moment.astimezone(IST).hour
+    # The table shows one day: by hour alone, slots of different days would share a cell. The bay cards judge real times.
+    today = moment.astimezone(IST).date()
+    day = day or today
+    shown = [d | {"slots": [s for s in d["slots"] if s["start_ts"].startswith(day.isoformat())]} for d in board["docks"]]
+    hours = sorted({s["hour"] for d in shown for s in d["slots"]})
+    current = moment.astimezone(IST).hour if day == today else -1
+    picker = (f'<form method="get" action="/warehouse#board" class="filters day"><input type="hidden" name="facility" '
+              f'value="{esc(board["facility"])}"><label>Day <input type="date" name="day" value="{esc(day.isoformat())}"></label>'
+              '<button type="submit">Show</button></form>')
     head = '<th scope="col">Dock</th>' + "".join(
         f'<th scope="col"{" class=\"now\"" if h == current else ""}>{esc(f"{h:02d}:00")}</th>' for h in hours)
     rows = []
-    for dock in board["docks"]:
+    for dock in shown:
         cells = []
         for hour in hours:
             slots = [s for s in dock["slots"] if s["hour"] == hour]
@@ -661,12 +669,30 @@ def _board_section(board: dict[str, Any] | None, options: list[tuple[str, str]],
     legend = "".join(f'<span class="legend-key cell-{c}">{w}</span>' for c, w in
                      (("available", "Free"), ("booked", "Booked"), ("held", "Held, not yet confirmed"), ("blocked", "Blocked")))
     bays = "".join(_bay_card(d, moment) for d in board["docks"])
+    if not hours:
+        table = '<div class="scroll"><p class="empty">No slots on this day.</p></div>'
     below = (f'<details data-key="bays"><summary>On the bays now</summary><ul class="bays">{bays}</ul></details>'
-             + (f'<details data-key="blocking"><summary>Block a dock</summary>{blocks}</details>' if blocks else ""))
+             + (f'<details data-key="blocking"><summary>Block a dock</summary>{blocks}</details>' if blocks else "")
+             + (f'<details data-key="auto"><summary>Round-the-clock slots</summary>{auto}</details>' if auto else ""))
     return (f'<section id="board" data-panel="board"><h2>Dock board</h2>{selector}'
             f'<p class="legend asof">Facility {esc(board["facility"])}, {esc(f"{moment.astimezone(IST):%a %d %b, %H:%M}")}</p>'
-            f'<div class="board-layout"><div class="board-main"><p class="keys">{legend}</p>'
+            f'<div class="board-layout"><div class="board-main">{picker}<p class="keys">{legend}</p>'
             f'<p id="block-result" class="note" role="status"></p>{table}{_SLOT_DETAIL}{below}</div>{ops}</div></section>')
+
+
+def _auto_slots(conn: sqlite3.Connection, facility_id: str) -> str:
+    # Partner warehouses are booked by email, so they have no slots to create.
+    if conn.execute("select 1 from facilities where facility_id=? and is_partner=1", (facility_id,)).fetchone():
+        return ""
+    crews = round_clock.crews_of(conn, facility_id)
+    value = "" if crews is None else f' value="{crews}"'
+    state = ("Off: no crew number is set." if crews is None else
+             f"On: 1-hour slots for every dock, day and night, {round_clock.DAYS_AHEAD} days ahead.")
+    return (f'<p class="note">{state} The number is how many docks can unload at the same time.</p>'
+            '<form data-api="/v1/warehouse/auto-slots" data-done="Crew number saved. Missing slots were created.">'
+            f'<input type="hidden" name="facility_id" value="{esc(facility_id)}">'
+            f'<label>Crews <input name="crews" type="number" min="1" max="100" required{value}></label>'
+            '<button type="submit">Save</button></form>')
 
 
 def _waiting_for_partner(board: dict[str, Any] | None) -> str:
@@ -933,7 +959,7 @@ def _drivers_section(conn: sqlite3.Connection, user: User, today: date) -> str:
 
 
 def render_warehouse(conn: sqlite3.Connection, user: User, now: Any, facility: str | None,
-                     remembered: str | None = None) -> HTMLResponse:
+                     remembered: str | None = None, day: str | None = None) -> HTMLResponse:
     # The facilities the user may pick from: an admin all of them, anyone else only their own.
     if user.role == "ADMIN":
         wanted = conn.execute("select facility_id, facility_name from facilities order by facility_id").fetchall()
@@ -962,6 +988,12 @@ def render_warehouse(conn: sqlite3.Connection, user: User, now: Any, facility: s
     from setuhaul.auth.shipment_pages import shipments_section
 
     blocks = "" if chosen is None else blocks_section(conn, user, chosen, now)
+    auto = "" if chosen is None else _auto_slots(conn, chosen)
+    # An unreadable day shows today.
+    try:
+        wanted_day = date.fromisoformat(day) if day else None
+    except ValueError:
+        wanted_day = None
 
     tabs = _tabs((("board", "Dock board"), ("projects", "Projects"), ("shipments", "Shipments"),
                   ("drivers", "Drivers")),
@@ -969,7 +1001,8 @@ def render_warehouse(conn: sqlite3.Connection, user: User, now: Any, facility: s
     # warehouse.js writes how fresh the live parts are here.
     fresh = '<p class="live" data-live><span data-live-state role="status"></span> <span data-live-time></span></p>'
     body = ('<div class="wh">' + _attention(conn, user, today) + tabs + fresh
-            + _board_section(board, options, chosen, now, blocks, _messages_section(conn, user, now, _waiting_for_partner(board)))
+            + _board_section(board, options, chosen, now, blocks, _messages_section(conn, user, now, _waiting_for_partner(board)),
+                             wanted_day, auto)
             + _projects_section(conn, user, today, options, chosen) + shipments_section(conn, user, now, options)
             + _drivers_section(conn, user, today) + "</div>")
     nav = ('<a href="/warehouse">Warehouse</a>' + (' <a href="/admin">Admin</a>' if user.role == "ADMIN" else "")
@@ -1060,7 +1093,8 @@ def register_pages(app: FastAPI, deps: AppDeps) -> None:
             return user
         facility = request.query_params.get("facility") or None
         remembered = request.cookies.get(FACILITY_COOKIE)
-        page = read_page(user, lambda conn: render_warehouse(conn, user, deps.clock.now(), facility, remembered))
+        page = read_page(user, lambda conn: render_warehouse(conn, user, deps.clock.now(), facility, remembered,
+                                                          request.query_params.get("day")))
         # Remember a choice the user made and could see; the live refresh asks for the same page and must not move it.
         if facility and page.status_code == 200 and "x-live" not in request.headers:
             page.set_cookie(FACILITY_COOKIE, facility, max_age=30 * 86400, path="/warehouse", httponly=True, samesite="lax")

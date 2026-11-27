@@ -1034,6 +1034,19 @@ def create_app_from_env() -> FastAPI:
     problem = sample_database_problem(s.db_path)
     if problem:
         raise SystemExit(problem)
+    # Every warehouse is open 24 hours; those with a crew number get their slots topped up. Imported here: it uses auth.
+    from setuhaul import round_clock
+
+    # A database that is missing or not yet migrated is reported by the readiness check, not by refusing to start.
+    try:
+        boot = open_connection(path=s.db_path)
+        try:
+            round_clock.open_all_hours(boot)
+            round_clock.top_up(boot, SystemClock())
+        finally:
+            boot.close()
+    except (sqlite3.Error, FileNotFoundError):
+        logging.getLogger(__name__).warning("Round-the-clock hours and slots not applied", exc_info=True)
     # Coordinator tokens as a JSON map in an environment variable.
     tokens = json.loads(os.environ.get("SETUHAUL_COORDINATOR_TOKENS", "{}"))
     from setuhaul.model_gateway import PROVIDERS, build_gateway, load_model_policy
@@ -1092,8 +1105,6 @@ def create_app_from_env() -> FastAPI:
     # Email and password sign-in: the mailbox may also be saved from the screen, so this only warns about .env.
     _, unset = account_sender_from_env(os.environ)
     if unset:
-        import logging
-
         logging.getLogger(__name__).warning("Password sign-in disabled: set %s", ", ".join(unset))
     # Assemble the dependencies and build the app.
     return create_app(AppDeps(
