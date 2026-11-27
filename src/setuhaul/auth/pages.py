@@ -242,7 +242,7 @@ def _tabs(items: tuple[tuple[str, str], ...], counts: Mapping[str, int] | None =
 
 
 # ---- admin screen -----------------------------------------------------------------------------------------
-def _users_section(conn: sqlite3.Connection, me: User, passwords: bool = False) -> str:
+def _users_section(conn: sqlite3.Connection, me: User, passwords: bool = False, live: bool = False) -> str:
     facilities = [(r["facility_id"], f"{r['facility_id']} - {r['facility_name']}")
                   for r in conn.execute("select facility_id, facility_name from facilities order by facility_id")]
     rows = []
@@ -278,7 +278,9 @@ def _users_section(conn: sqlite3.Connection, me: User, passwords: bool = False) 
               '<button type="submit">Invite</button></form>')
     headers = ("Email", "Name", "Role", "Status", "Facilities", "Last login", *(("Password",) if passwords else ()), "")
     table = _table(headers, rows)
-    return f'<section id="users" data-panel="users"><h2>Users</h2>{table}{invite}</section>'
+    # An invitation that sends nothing must not look like one that did.
+    off = ('<p class="note">Invitation emails are off: see Email under Configuration.</p>' if live and not passwords else "")
+    return f'<section id="users" data-panel="users"><h2>Users</h2>{off}{table}{invite}</section>'
 
 
 def _pending_section(conn: sqlite3.Connection) -> str:
@@ -507,8 +509,23 @@ def _configuration_section(conn: sqlite3.Connection, deps: AppDeps) -> str:
         ("" if keys_off else '<button type="button" data-generate>Save with a new secret</button>')
         + check("Test bot", "telegram/test") + check("Register webhook", "telegram/register-webhook"),
         f"{webhook} Each driver has to open a new bot and press Start before it can message them.")
+    mail = deps.password_mail()
+    if deps.password_login_on:
+        state = "Sign-in emails are on."
+    else:
+        missing = [*mail.missing] + ([] if deps.public_url else ["SETUHAUL_PUBLIC_URL"])
+        # The address is also one of the sender's needs; name it once.
+        state = f"Sign-in emails are off. Missing: {', '.join(dict.fromkeys(missing))}."
+    email = block("email", "Email", (
+        text("Mail server", "host", "SETUHAUL_SMTP_HOST") + text("Port", "port", "SETUHAUL_SMTP_PORT")
+        + text("Sending user", "user", "SETUHAUL_SMTP_USER") + secret("App password", "password", "SETUHAUL_SMTP_PASSWORD")
+        + text("From address", "sender", "SETUHAUL_SMTP_FROM")),
+        check("Send test email to me", "email/test"),
+        f"{state} Password links use {deps.public_url or 'no address yet'}. The on/off switch (SETUHAUL_PASSWORD_LOGIN) and "
+        "that address are set in .env. Empty server and port mean smtp.gmail.com and 465. Changing the server, port or user "
+        "needs the password again.")
     top = "".join(f'<p class="note">{esc(n)}</p>' for n in notes)
-    return f'<section id="config" data-panel="config"><h2>Configuration</h2>{top}{model}{tracing}{bot}</section>'
+    return f'<section id="config" data-panel="config"><h2>Configuration</h2>{top}{model}{tracing}{bot}{email}</section>'
 
 
 def _cards(items: list[tuple[str, str, int]]) -> str:
@@ -538,7 +555,7 @@ def render_admin(conn: sqlite3.Connection, me: User, query: dict[str, str], deps
     # Imported here: that module uses this one's page helpers.
     from setuhaul.auth.exception_pages import deleted_section
 
-    body = ('<div class="wh">' + _admin_attention(conn, me, waiting) + tabs + _users_section(conn, me, deps.password_login_on) +_pending_section(conn) + _decided_section(conn)
+    body = ('<div class="wh">' + _admin_attention(conn, me, waiting) + tabs + _users_section(conn, me, deps.password_login_on, deps.settings is not None) +_pending_section(conn) + _decided_section(conn)
             + deleted_section(conn)
             + _audit_section(conn, query) + _model_section(conn, deps)
             + _configuration_section(conn, deps) + "</div>")

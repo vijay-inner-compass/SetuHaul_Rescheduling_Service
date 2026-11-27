@@ -145,7 +145,8 @@ _ADMIN: tuple[Task, ...] = (
         "“Load from LangSmith” fetches the tracing summary when tracing is set up.",
     )),
     ("Change settings", (
-        "On Configuration, edit Model, LangSmith or Telegram and click “Save” under that group.",
+        "On Configuration, edit Model, LangSmith, Telegram or Email and click “Save” under that group.",
+        "Email: enter the mailbox that sends invitations, then “Send test email to me”. For Gmail use an app password.",
         "Use “Test connection” or “Test bot” before relying on a change. A new Telegram bot also needs “Register webhook”.",
         "Leave a key field empty to keep the saved key. “Reset to .env” removes saved settings.",
     )),

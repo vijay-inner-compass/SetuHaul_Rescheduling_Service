@@ -10,6 +10,7 @@ from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
 from setuhaul.db import open_connection
+from setuhaul.mail_transport import MailDeliveryError
 from setuhaul.runtime_settings import SettingsSource
 from tests.auth_helpers import World, build_world
 from tests.helpers import at
@@ -212,3 +213,68 @@ def test_nothing_saved_behaves_as_before(tmp_path: Path) -> None:
     assert boxes.sent[0][0].smtp_host == "smtp.gmail.com"
     world.deps.public_url = ""
     assert not world.deps.password_login_on
+
+
+# ---- screen and test email ------------------------------------------------------------------------------------
+TEST = f"{URL}/test"
+
+
+def test_test_email_goes_only_to_the_admin(tmp_path: Path) -> None:
+    world, boxes = mail_world(tmp_path)
+    r = admin_of(world).post(TEST, json=MAILBOX)
+    assert r.status_code == 200 and r.json()["ok"] is True, r.text
+    [(settings, mail)] = boxes.sent
+    assert mail.to_addr == "boss@x.com" and settings.smtp_password == "s3cret-pass-word"
+    # Testing saves nothing.
+    assert "mail.example.com" not in rows(world, "select value from app_settings")
+    assert admin_of(world).post(TEST, json={"to": "other@x.com"}).status_code == 422
+
+
+def test_a_failed_test_hides_credentials(tmp_path: Path) -> None:
+    world, _ = mail_world(tmp_path, boxes=Boxes(MailDeliveryError("SMTP SMTPAuthenticationError")))
+    r = admin_of(world).post(TEST, json=MAILBOX)
+    assert r.json() == {"ok": False, "message": "SMTP SMTPAuthenticationError", "request_id": r.json()["request_id"]}
+
+
+def test_an_unexpected_failure_names_only_its_type(tmp_path: Path) -> None:
+    world, _ = mail_world(tmp_path, boxes=Boxes(RuntimeError("login send@example.com s3cret-pass-word")))
+    r = admin_of(world).post(TEST, json=MAILBOX)
+    assert r.json()["message"] == "RuntimeError" and "s3cret" not in r.text
+
+
+def test_test_needs_a_user_and_password_and_the_password_rule(tmp_path: Path) -> None:
+    world, boxes = mail_world(tmp_path)
+    admin = admin_of(world)
+    assert admin.post(TEST, json={}).json()["reason_code"] == "EMAIL_NOT_SET_UP"
+    admin.post(URL, json=MAILBOX)
+    assert admin.post(TEST, json={"host": "evil.example.com"}).json()["reason_code"] == "SMTP_PASSWORD_REQUIRED"
+    assert boxes.sent == []
+
+
+def test_second_test_within_a_minute_is_refused(tmp_path: Path) -> None:
+    world, boxes = mail_world(tmp_path)
+    admin = admin_of(world)
+    admin.post(TEST, json=MAILBOX)
+    r = admin.post(TEST, json=MAILBOX)
+    assert (r.status_code, r.json()["reason_code"]) == (429, "TOO_SOON") and len(boxes.sent) == 1
+
+
+def email_block(page: str) -> str:
+    return page.split("<h3>Email</h3>", 1)[1].split("</section>", 1)[0]
+
+
+def test_screen_shows_what_is_missing(tmp_path: Path) -> None:
+    world, _ = mail_world(tmp_path)
+    block = email_block(admin_of(world).get("/admin").text)
+    assert "Sign-in emails are off. Missing: SETUHAUL_SMTP_USER, SETUHAUL_SMTP_PASSWORD." in block
+    assert 'data-check="/v1/admin/settings/email/test"' in block and "https://haul.example.com" in block
+    admin_of(world).post(URL, json=MAILBOX)
+    assert "Sign-in emails are on." in email_block(admin_of(world).get("/admin").text)
+
+
+def test_users_tab_says_emails_are_off(tmp_path: Path) -> None:
+    world, _ = mail_world(tmp_path)
+    sentence = "Invitation emails are off: see Email under Configuration."
+    assert sentence in admin_of(world).get("/admin").text
+    admin_of(world).post(URL, json=MAILBOX)
+    assert sentence not in admin_of(world).get("/admin").text

@@ -8,9 +8,9 @@ from collections.abc import Callable, Mapping
 import httpx
 
 from setuhaul import app_settings
+from setuhaul.auth.telegram import RealTelegramClient, TelegramClient
 from setuhaul.mail_transport import MailSender, SmtpSender
 from setuhaul.mailcfg import MailSettings
-from setuhaul.auth.telegram import RealTelegramClient, TelegramClient
 from setuhaul.model_gateway import (
     PROVIDERS,
     ModelGateway,

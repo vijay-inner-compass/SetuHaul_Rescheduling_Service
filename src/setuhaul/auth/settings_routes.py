@@ -7,11 +7,13 @@ import os
 import re
 import secrets
 import sqlite3
+import uuid
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError, field_validator
+from redis.exceptions import RedisError
 from starlette.concurrency import run_in_threadpool
 
 from setuhaul import app_settings
@@ -21,13 +23,17 @@ from setuhaul.auth.http import reject as _reject
 from setuhaul.auth.users import User
 from setuhaul.db import immediate, open_connection
 from setuhaul.identity import AuthError
+from setuhaul.mail_transport import MailDeliveryError, OutgoingMail
+from setuhaul.mailcfg import load_smtp_settings
 from setuhaul.runtime_settings import MIN_TELEGRAM_SECRET_LEN
 from setuhaul.settings_checks import check_bot, check_model, register_webhook
 
 if TYPE_CHECKING:
     from setuhaul.api import AppDeps
 
-_STATUS = {"UNKNOWN_SECTION": 404, "SETTINGS_NOT_AVAILABLE": 409}
+_STATUS = {"UNKNOWN_SECTION": 404, "SETTINGS_NOT_AVAILABLE": 409, "TOO_SOON": 429}
+# One test email per this many seconds, per admin.
+_TEST_EVERY_S = 60
 LANGSMITH_CONFIRM = "SEND_TO_LANGSMITH"
 # A key travels in an HTTP header: printable, no spaces.
 _Key = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500, pattern=r"^[\x21-\x7e]*$")]
@@ -173,6 +179,23 @@ def _email_changes(body: EmailBody, now: app_settings.Effective) -> dict[str, st
         # A stored password is never sent to a server or account it was not typed for.
         raise AuthError("SMTP_PASSWORD_REQUIRED")
     return values
+
+
+def _send_test(source: Any, env: dict[str, str], to_addr: str) -> tuple[bool, str]:
+    """Send one message to the admin who asked. The result names only the kind of failure, never a credential."""
+    if not env.get("SETUHAUL_SMTP_USER") or not env.get("SETUHAUL_SMTP_PASSWORD"):
+        raise AuthError("EMAIL_NOT_SET_UP")
+    try:
+        sender = source.mail(load_smtp_settings(env))
+        sender.send(OutgoingMail(
+            to_addr=to_addr, subject="SetuHaul test email", message_id=f"<{uuid.uuid4().hex}@setuhaul.local>",
+            body="This is a test from the SetuHaul Configuration screen. The mailbox can send.\n"))
+    except MailDeliveryError as exc:
+        # Already stripped to the failure's type by the transport.
+        return False, str(exc)
+    except Exception as exc:  # noqa: BLE001 - library text can echo credentials, so only the type is kept
+        return False, type(exc).__name__
+    return True, f"Sent to {to_addr}. Check the inbox and the spam folder."
 
 
 def _telegram_changes(body: TelegramBody, now: app_settings.Effective) -> dict[str, str]:
@@ -350,6 +373,16 @@ def register_settings_routes(app: FastAPI, deps: AppDeps) -> None:
                     raise AuthError("KEY_REQUIRED_FOR_PROVIDER")
                 ok, message = check_model(env, source.transport)
                 action, section = "SETTINGS_TEST", "model"
+            elif what == "email":
+                env = {**now.env, **_email_changes(parse_body(EmailBody, raw), now)}
+                try:
+                    if not deps.redis.set(f"settings:testmail:{user.user_id}", 1, nx=True, ex=_TEST_EVERY_S):
+                        raise AuthError("TOO_SOON")
+                except RedisError:
+                    # An administrator's test goes ahead when it cannot be counted.
+                    pass
+                ok, message = _send_test(source, env, user.email)
+                action, section = "SETTINGS_TEST", "email"
             elif what == "bot":
                 given = parse_body(BotTestBody, raw).bot_token
                 token = given or now.env.get("SETUHAUL_TELEGRAM_BOT_TOKEN", "")
@@ -396,6 +429,12 @@ def register_settings_routes(app: FastAPI, deps: AppDeps) -> None:
         rid = request.state.request_id
         raw = await _json(request)
         return await run_in_threadpool(check, user, "bot", raw, rid)
+
+    @app.post("/v1/admin/settings/email/test")
+    async def test_email(request: Request, user: Annotated[User, Depends(require_role("ADMIN"))]) -> Response:
+        rid = request.state.request_id
+        raw = await _json(request)
+        return await run_in_threadpool(check, user, "email", raw, rid)
 
     @app.post("/v1/admin/settings/telegram/register-webhook")
     async def register(request: Request, user: Annotated[User, Depends(require_role("ADMIN"))]) -> Response:

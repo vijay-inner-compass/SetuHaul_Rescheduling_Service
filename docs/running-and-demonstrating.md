@@ -268,7 +268,8 @@ Below, `<base>` is the public origin of your service, for example `https://haul.
 
 With `SETUHAUL_PASSWORD_LOGIN=1` and the mail settings, inviting a user emails them a link to set a password, `/` offers email
 and password beside Google, and **Forgot password?** emails a reset link. **Send password link** on the Users tab covers
-resending an invitation. With Google sign-in also set up, `/` keeps its **Sign in with Google** button and the emails carry a
+resending an invitation. The mailbox can also be set on **Admin > Configuration > Email** (with **Send test email to me**); saved
+values override `.env` and apply without a restart. The switch and `SETUHAUL_PUBLIC_URL` stay in `.env`. With Google sign-in also set up, `/` keeps its **Sign in with Google** button and the emails carry a
 Google sign-in link too.
 
 * A link works once: 48 hours for an invitation, 1 hour for a reset; a newer link cancels older ones. Disabling a user cancels

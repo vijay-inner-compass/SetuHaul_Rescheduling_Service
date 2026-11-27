@@ -86,6 +86,7 @@ ROLE_GUARDED: dict[tuple[str, str], frozenset[str]] = {
     ("POST", "/v1/admin/settings/{section}/reset"): ADMIN,
     ("POST", "/v1/admin/settings/model/test"): ADMIN,
     ("POST", "/v1/admin/settings/telegram/test"): ADMIN,
+    ("POST", "/v1/admin/settings/email/test"): ADMIN,
     ("POST", "/v1/admin/settings/telegram/register-webhook"): ADMIN,
     ("POST", "/v1/drivers"): BOTH,
     ("GET", "/v1/drivers/pending"): ADMIN,

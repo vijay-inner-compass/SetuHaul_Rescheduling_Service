@@ -88,7 +88,7 @@
         var typed = changed(form);
         var body = {};
         // Each check takes only the fields it knows; registering takes none.
-        if (url.indexOf("/model/test") !== -1) {
+        if (url.indexOf("/model/test") !== -1 || url.indexOf("/email/test") !== -1) {
           body = typed;
         } else if (url.indexOf("/telegram/test") !== -1 && typed.bot_token) {
           body = { bot_token: typed.bot_token };
