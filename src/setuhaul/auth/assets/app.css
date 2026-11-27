@@ -184,3 +184,9 @@ header .session { min-width: 0; overflow-wrap: anywhere; }
 label, select, input { max-width: 100%; min-width: 0; }
 .wh form select { width: auto; text-overflow: ellipsis; }
 @media (max-width: 46rem) { main { padding: 0.75rem; } header .session { margin-left: 0; } .wh form label { width: 100%; } .wh form select { width: 100%; } }
+/* The wiki: readable line length and space between steps. */
+.wiki section { max-width: 52rem; }
+.wiki ol, .wiki ul { padding-left: 1.5rem; }
+.wiki ol { list-style: decimal; }
+.wiki ul { list-style: disc; }
+.wiki li { display: list-item; margin: 0.3rem 0; line-height: 1.5; }

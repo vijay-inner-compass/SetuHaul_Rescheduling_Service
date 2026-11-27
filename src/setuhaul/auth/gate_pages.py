@@ -43,5 +43,6 @@ def render_gate(conn: sqlite3.Connection, user: User, clock: Clock) -> HTMLRespo
         f'autocomplete="off" spellcheck="false"></label><input type="hidden" name="request_key" value="{secrets.token_hex(8)}">'
         '<button type="submit">Check out by pass</button><p class="note" data-form-result role="alert"></p></form>')
     body = f'<div class="wh">{check}<section><h2>Trucks inside</h2><div class="scroll">{table}</div>{leave}</section></div>'
-    nav = '<a href="/gate">Gate</a>' + (' <a href="/warehouse">Warehouse</a> <a href="/admin">Admin</a>' if user.role == "ADMIN" else "")
+    nav = ('<a href="/gate">Gate</a>' + (' <a href="/warehouse">Warehouse</a> <a href="/admin">Admin</a>' if user.role == "ADMIN" else "")
+           + ' <a href="/wiki">Wiki</a>')
     return _respond(_layout("Gate", body, ("common.js", "gate.js"), user, nav))

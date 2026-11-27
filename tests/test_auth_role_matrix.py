@@ -102,6 +102,7 @@ HTML_GUARDED: dict[tuple[str, str], frozenset[str]] = {
     ("GET", "/demo"): BOTH,
     ("GET", "/warehouse"): BOTH,
     ("GET", "/gate"): GATE,
+    ("GET", "/wiki"): frozenset({"ADMIN", "WAREHOUSE_AUTHORITY", "SECURITY"}),
 }
 # The whole demo console (page and API) is one guarded family, so a new demo route is covered the day it is added.
 DEMO_ROLES = BOTH

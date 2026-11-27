@@ -236,6 +236,9 @@ Coordinators can also work cases from the command line: `python -m setuhaul.coor
 
 ## 7a. Sign-in, roles and the Telegram bot
 
+Usage instructions for the screens are in the application itself: the **Wiki** link in the top menu (`/wiki`). Update
+`src/setuhaul/auth/wiki_pages.py` when a screen changes.
+
 Google sign-in has not been run against real Google. Telegram was run once against a real bot (2026-11-25, stand-in assistant); for a step-by-step
 local setup see [telegram-local-setup.md](telegram-local-setup.md). The flows were also exercised with fakes
 ([verification/auth-roles-run.md](verification/auth-roles-run.md)).

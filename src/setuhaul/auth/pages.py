@@ -503,7 +503,7 @@ def _admin_attention(conn: sqlite3.Connection, me: User, pending: int) -> str:
 
 def render_admin(conn: sqlite3.Connection, me: User, query: dict[str, str], deps: AppDeps) -> str:
     # The admin screen: users, pending drivers, decided onboarded drivers (suspend / re-approve), audit log.
-    nav = '<a href="/admin">Admin</a> <a href="/warehouse">Warehouse</a>'
+    nav = '<a href="/admin">Admin</a> <a href="/warehouse">Warehouse</a> <a href="/wiki">Wiki</a>'
     waiting = len(onboarding.pending(conn))
     tabs = _tabs((("users", "Users"), ("pending", "Pending drivers"), ("decided", "Onboarded drivers"), ("deleted", "Deleted drivers"), ("audit", "Audit log"), ("model", "Model"),
                   ("config", "Configuration")), {"pending": waiting})
@@ -851,7 +851,8 @@ def render_warehouse(conn: sqlite3.Connection, user: User, now: Any, facility: s
             + _board_section(board, options, chosen, now, blocks) + _messages_section(conn, user, now)
             + _projects_section(conn, user, today, options, chosen) + shipments_section(conn, user, now, options)
             + _drivers_section(conn, user, today) + "</div>")
-    nav = '<a href="/warehouse">Warehouse</a>' + (' <a href="/admin">Admin</a>' if user.role == "ADMIN" else "")
+    nav = ('<a href="/warehouse">Warehouse</a>' + (' <a href="/admin">Admin</a>' if user.role == "ADMIN" else "")
+           + ' <a href="/wiki">Wiki</a>')
     return _respond(_layout("Warehouse", body, ("common.js", "tabs.js", "warehouse.js", "exceptions.js"), user, nav))
 
 
@@ -952,6 +953,16 @@ def register_pages(app: FastAPI, deps: AppDeps) -> None:
         from setuhaul.auth.gate_pages import render_gate
 
         return read_page(user, lambda conn: render_gate(conn, user, deps.clock))
+
+    @app.get("/wiki", response_class=HTMLResponse)
+    def wiki_page(request: Request) -> Response:
+        user = guarded(request, "WAREHOUSE_AUTHORITY", "SECURITY", "ADMIN")
+        if isinstance(user, Response):
+            return user
+        # Imported here: the page's module uses this one's helpers. No database is needed: the text is in the code.
+        from setuhaul.auth.wiki_pages import render_wiki
+
+        return render_wiki(user)
 
     @app.get("/app/assets/{name}")
     def asset(name: str) -> Response:
