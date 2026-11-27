@@ -11,80 +11,80 @@
   "in_process": {
     "capacity_search": {
       "n": 200,
-      "p50_ms": 10.7,
-      "p95_ms": 13.1,
-      "p99_ms": 14.2,
-      "max_ms": 18.3
+      "p50_ms": 12.1,
+      "p95_ms": 14.3,
+      "p99_ms": 15.6,
+      "max_ms": 15.9
     },
     "hold_txn": {
       "n": 60,
-      "p50_ms": 3.8,
-      "p95_ms": 5.9,
-      "p99_ms": 6.3,
-      "max_ms": 11.4
+      "p50_ms": 4.2,
+      "p95_ms": 4.7,
+      "p99_ms": 4.8,
+      "max_ms": 5.4
     },
     "confirm_txn": {
       "n": 60,
-      "p50_ms": 3.8,
-      "p95_ms": 5.2,
-      "p99_ms": 5.7,
-      "max_ms": 7.1
+      "p50_ms": 4.3,
+      "p95_ms": 5.1,
+      "p99_ms": 5.5,
+      "max_ms": 5.9
     },
     "invariant_violations": 0
   },
   "saturation": [
     {
       "writers": 1,
-      "hold_attempts": 945,
-      "attempts_per_s": 236.2,
-      "p50_ms": 3.6,
-      "p95_ms": 5.0,
-      "p99_ms": 6.8,
-      "max_ms": 14.0,
+      "hold_attempts": 853,
+      "attempts_per_s": 213.2,
+      "p50_ms": 4.1,
+      "p95_ms": 4.8,
+      "p99_ms": 5.5,
+      "max_ms": 16.5,
       "outcomes": {
-        "SUCCESS": 945
+        "SUCCESS": 853
       },
       "lock_timeout_rate_pct": 0.0,
       "invariant_violations": 0
     },
     {
       "writers": 4,
-      "hold_attempts": 977,
-      "attempts_per_s": 244.2,
-      "p50_ms": 3.6,
+      "hold_attempts": 841,
+      "attempts_per_s": 210.2,
+      "p50_ms": 4.2,
       "p95_ms": 4.9,
-      "p99_ms": 9.4,
-      "max_ms": 4037.0,
+      "p99_ms": 16.1,
+      "max_ms": 3702.6,
       "outcomes": {
-        "SUCCESS": 977
+        "SUCCESS": 841
       },
       "lock_timeout_rate_pct": 0.0,
       "invariant_violations": 0
     },
     {
       "writers": 8,
-      "hold_attempts": 981,
-      "attempts_per_s": 245.2,
-      "p50_ms": 3.6,
-      "p95_ms": 4.6,
-      "p99_ms": 9.2,
-      "max_ms": 4696.8,
+      "hold_attempts": 846,
+      "attempts_per_s": 211.5,
+      "p50_ms": 4.2,
+      "p95_ms": 4.8,
+      "p99_ms": 1417.7,
+      "max_ms": 4563.2,
       "outcomes": {
-        "SUCCESS": 981
+        "SUCCESS": 846
       },
       "lock_timeout_rate_pct": 0.0,
       "invariant_violations": 0
     },
     {
       "writers": 16,
-      "hold_attempts": 975,
-      "attempts_per_s": 243.8,
-      "p50_ms": 3.6,
-      "p95_ms": 4.6,
-      "p99_ms": 4171.7,
-      "max_ms": 4715.4,
+      "hold_attempts": 833,
+      "attempts_per_s": 208.2,
+      "p50_ms": 4.2,
+      "p95_ms": 5.1,
+      "p99_ms": 4332.9,
+      "max_ms": 5198.5,
       "outcomes": {
-        "SUCCESS": 975
+        "SUCCESS": 833
       },
       "lock_timeout_rate_pct": 0.0,
       "invariant_violations": 0
@@ -95,10 +95,10 @@
   "compression": 51.4,
   "spike": {
     "n": 35,
-    "p50_ms": 45.7,
-    "p95_ms": 59.8,
-    "p99_ms": 90.6,
-    "max_ms": 90.6,
+    "p50_ms": 48.8,
+    "p95_ms": 63.3,
+    "p99_ms": 98.4,
+    "max_ms": 98.4,
     "http_codes": {
       "200": 35
     },
@@ -108,12 +108,12 @@
   },
   "burst": {
     "n": 10,
-    "p50_ms": 109.6,
-    "p95_ms": 286.3,
-    "p99_ms": 286.3,
-    "max_ms": 286.3,
+    "p50_ms": 142.3,
+    "p95_ms": 237.5,
+    "p99_ms": 237.5,
+    "max_ms": 237.5,
     "drivers": 10,
-    "winners": 1,
+    "winners": 10,
     "http_codes": {
       "200": 10
     },
@@ -122,11 +122,11 @@
     }
   },
   "locust": {
-    "requests": 34,
+    "requests": 33,
     "failures": 0,
-    "p50_ms": 28.0,
-    "p95_ms": 45.0,
-    "p99_ms": 46.0
+    "p50_ms": 35.0,
+    "p95_ms": 43.0,
+    "p99_ms": 90.0
   },
   "after": {
     "invariant_violations": 0,
