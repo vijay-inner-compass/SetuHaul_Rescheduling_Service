@@ -27,7 +27,7 @@ GATE = frozenset({"ADMIN", "SECURITY"})
 # Open to anyone: no data, or their own credential check.
 PUBLIC = {
     ("GET", "/health"), ("GET", "/ready"), ("GET", "/health/ready"), ("GET", "/version"), ("GET", "/auth/login"), ("GET", "/auth/callback"), ("POST", "/auth/logout"),
-    ("GET", "/auth/me"), ("POST", "/auth/local-admin"), ("GET", "/demo/login"), ("GET", "/demo/driver-login"),
+    ("GET", "/auth/me"), ("POST", "/auth/local-admin"), ("POST", "/auth/password"),("GET", "/demo/login"), ("GET", "/demo/driver-login"),
     # The sign-in landing page (it redirects signed-in users) and the whitelisted static assets (no secrets in them).
     ("GET", "/"), ("GET", "/app/assets/{name}"),
 }

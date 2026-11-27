@@ -132,6 +132,9 @@ from setuhaul.jobs.send_driver_notifications import DriverNoticeRunner
 # The driver's language, for the fixed pass replies.
 from setuhaul.language import LANGS, detect_language
 
+# The shape of anything that can send an email.
+from setuhaul.mail_transport import MailSender
+
 # Conversation memory.
 from setuhaul.memory import ConversationMemoryStore
 
@@ -207,6 +210,8 @@ class AppDeps:
     public_url: str = ""
     # The break-glass admin password route exists only when this is on (SETUHAUL_LOCAL_ADMIN=1).
     local_admin_enabled: bool = False
+    # Sends password links; None leaves email and password sign-in off (SETUHAUL_PASSWORD_LOGIN).
+    password_sender: MailSender | None = None
     # Shared secret Telegram echoes in a header on every webhook call; empty leaves the Telegram route off.
     telegram_secret: bytes = b""
     # Sends replies to Telegram chats; None means no replies can be sent.
@@ -217,6 +222,11 @@ class AppDeps:
     notice_interval_s: float = 5.0
     # Tell Telegram this service's webhook address at start-up (needs settings and public_url).
     auto_register_webhook: bool = False
+
+    @property
+    def password_login_on(self) -> bool:
+        # Links are built from the public URL, so without it there is nothing to send.
+        return self.password_sender is not None and bool(self.public_url)
 
 
 # The inbound webhook body. Unknown fields are rejected (extra='forbid').
@@ -866,6 +876,10 @@ def create_app(deps: AppDeps) -> FastAPI:
     from setuhaul.auth.routes import register_auth_routes
 
     register_auth_routes(app, deps)
+    # Email and password sign-in.
+    from setuhaul.auth.password_routes import register_password_routes
+
+    register_password_routes(app, deps)
     # Driver onboarding and approval.
     from setuhaul.auth.admin_routes import register_admin_routes
 
