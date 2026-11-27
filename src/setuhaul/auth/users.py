@@ -143,6 +143,9 @@ def disable(conn: sqlite3.Connection, *, actor: User, user_id: str, clock: Clock
     # Only an active admin may disable (a quick check on the object; the database is re-read below).
     if actor.role != "ADMIN" or actor.status != "ACTIVE":
         raise AuthError("FORBIDDEN")
+    # Imported here: that module reads users through this one.
+    from setuhaul.auth import links
+
     now = clock.now().isoformat()
     with immediate(conn):
         # Re-read the actor under the write lock: a stale object must not outlive a disable or role change.
@@ -167,6 +170,8 @@ def disable(conn: sqlite3.Connection, *, actor: User, user_id: str, clock: Clock
         conn.execute(
             "update auth_sessions set revoked_at=? where user_id=? and revoked_at is null", (now, user_id)
         )
+        # An emailed link must not outlive the disable, even if the account is enabled again.
+        links.cancel_all(conn, user_id, clock)
         audit.record(
             conn, actor_user_id=actor.user_id, actor_email=actor.email, action="DISABLE", target_type="user",
             target_id=user_id, outcome="OK", ip=None, detail=None, clock=clock,

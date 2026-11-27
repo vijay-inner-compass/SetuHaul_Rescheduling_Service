@@ -11,7 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 
-from setuhaul.auth import local_admin, sessions
+from setuhaul.auth import links, local_admin, sessions
 from setuhaul.auth.http import reject as _reject
 from setuhaul.auth.routes import _is_secure
 from setuhaul.db import open_connection
@@ -81,3 +81,24 @@ def register_password_routes(app: FastAPI, deps: AppDeps) -> None:
             return resp
 
         return await run_in_threadpool(with_conn, deps, rid, attempt)
+
+    @app.post("/auth/password/set")
+    async def set_password(request: Request) -> Response:
+        rid = request.state.request_id
+        if not deps.password_login_on:
+            return _reject(rid, 404, "NOT_FOUND")
+        ip = request.client.host if request.client else None
+        fields = await read_strings(request, "token", "password")
+        if fields is None:
+            return _reject(rid, 422, "INVALID_REQUEST")
+        token, password = fields
+
+        def redeem(conn: sqlite3.Connection) -> Response:
+            try:
+                links.redeem(conn, token, password, deps.clock, ip)
+            except AuthError as exc:
+                return _reject(rid, 422, exc.code)
+            # No session: the user signs in with the new password, and whoever is signed in here stays as they were.
+            return JSONResponse({"status": "OK", "request_id": rid})
+
+        return await run_in_threadpool(with_conn, deps, rid, redeem)

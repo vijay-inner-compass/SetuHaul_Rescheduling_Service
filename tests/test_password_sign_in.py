@@ -4,15 +4,17 @@
 from __future__ import annotations
 
 import shutil
+import threading
 from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
-from setuhaul.auth import audit, local_admin, sessions, users
+from setuhaul.auth import audit, links, local_admin, sessions, users
 from setuhaul.clock import FakeClock
 from setuhaul.config import load_settings
 from setuhaul.db import MIGRATIONS_DIR, apply_migrations, open_connection
+from setuhaul.identity import AuthError
 from setuhaul.mail_transport import InMemoryMailbox
 from tests.auth_helpers import World, build_world
 
@@ -148,3 +150,143 @@ def test_bad_bodies_are_refused(world: World) -> None:
     for body in bodies:
         r = client.post("/auth/password", content=body, headers={"content-type": "application/json"})
         assert (r.status_code, r.json()["reason_code"]) == (401, "BAD_CREDENTIALS"), body
+
+
+# ---- one-time links ----------------------------------------------------------------------------------------
+def _issue(world: World, who: str = "wh_a", purpose: str = "INVITE") -> str:
+    conn = open_connection(path=world.path)
+    try:
+        return links.issue(conn, world.users[who].user_id, purpose, world.clock)  # type: ignore[arg-type]
+    finally:
+        conn.close()
+
+
+def _set(world: World, token: str, password: str = PASSWORD):  # type: ignore[no-untyped-def]
+    return world.client().post("/auth/password/set", json={"token": token, "password": password})
+
+
+def _code(response) -> tuple[int, str]:  # type: ignore[no-untyped-def]
+    return response.status_code, response.json().get("reason_code", "")
+
+
+def _toggle(world: World, who: str, on: bool) -> None:
+    conn = open_connection(path=world.path)
+    try:
+        change = users.enable if on else users.disable
+        change(conn, actor=world.users["admin"], user_id=world.users[who].user_id, clock=world.clock)
+    finally:
+        conn.close()
+
+
+def test_link_sets_password_once(world: World) -> None:
+    token = _issue(world)
+    assert _set(world, token).status_code == 200
+    assert _login(world).status_code == 200
+    assert _code(_set(world, token, "another long password")) == (422, "LINK_INVALID")
+
+
+def test_only_the_hash_is_stored(world: World) -> None:
+    token = _issue(world)
+    tables = [r[0] for r in _query(world, "select name from sqlite_master where type='table'")]
+    for table in tables:
+        assert token not in str(_query(world, f'select * from "{table}"')), table
+
+
+@pytest.mark.parametrize(("purpose", "works_after", "fails_after"), [
+    ("INVITE", timedelta(hours=47), timedelta(hours=49)),
+    ("RESET", timedelta(minutes=59), timedelta(minutes=61)),
+])
+def test_expiry(world: World, purpose: str, works_after: timedelta, fails_after: timedelta) -> None:
+    early = _issue(world, "wh_a", purpose)
+    late = _issue(world, "wh_b", purpose)
+    world.clock.advance(works_after)
+    assert _set(world, early).status_code == 200
+    world.clock.advance(fails_after - works_after)
+    assert _code(_set(world, late)) == (422, "LINK_INVALID")
+
+
+def test_new_link_cancels_old(world: World) -> None:
+    first, second = _issue(world), _issue(world)
+    assert _code(_set(world, first)) == (422, "LINK_INVALID")
+    assert _set(world, second).status_code == 200
+
+
+def test_disable_cancels_links(world: World) -> None:
+    token = _issue(world)
+    _toggle(world, "wh_a", on=False)
+    assert _code(_set(world, token)) == (422, "LINK_INVALID")
+    _toggle(world, "wh_a", on=True)
+    assert _code(_set(world, token)) == (422, "LINK_INVALID")
+
+
+def test_short_password_keeps_link_usable(world: World) -> None:
+    token = _issue(world)
+    assert _code(_set(world, token, "short")) == (422, "PASSWORD_TOO_SHORT")
+    assert _code(_set(world, token, "x" * 1025)) == (422, "PASSWORD_TOO_LONG")
+    assert _set(world, token).status_code == 200
+
+
+def test_setting_password_ends_sessions_and_clears_lock(world: World) -> None:
+    _set_password(world, "wh_a")
+    signed_in = world.client("wh_a")
+    for _ in range(5):
+        _login(world, password="wrong password!!")
+    assert _set(world, _issue(world), "a brand new password").status_code == 200
+    assert signed_in.get("/auth/me").status_code == 401
+    assert _login(world, password="a brand new password").status_code == 200
+
+
+def test_two_simultaneous_redeems_one_wins(world: World) -> None:
+    token = _issue(world)
+    results: list[str] = []
+    gate = threading.Barrier(2)
+
+    def attempt(password: str) -> None:
+        conn = open_connection(path=world.path)
+        try:
+            gate.wait()
+            links.redeem(conn, token, password, world.clock)
+            results.append("OK")
+        except AuthError as exc:
+            results.append(exc.code)
+        finally:
+            conn.close()
+
+    threads = [threading.Thread(target=attempt, args=(f"long password number {n}",)) for n in (1, 2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert sorted(results) == ["LINK_INVALID", "OK"]
+
+
+def test_get_does_not_consume_and_bad_bodies_are_422(world: World) -> None:
+    token = _issue(world)
+    client = world.client()
+    assert client.get("/auth/password/set").status_code == 405
+    for body in (b"not json", b"[]", b"{}", b'{"token": 1, "password": 2}', b'{"token": "\\ud800", "password": "x"}'):
+        r = client.post("/auth/password/set", content=body, headers={"content-type": "application/json"})
+        assert _code(r) == (422, "INVALID_REQUEST"), body
+    assert _set(world, token).status_code == 200
+
+
+def test_other_signed_in_user_is_untouched(world: World) -> None:
+    token = _issue(world)
+    admin = world.client("admin")
+    r = admin.post("/auth/password/set", json={"token": token, "password": PASSWORD})
+    assert r.status_code == 200 and "set-cookie" not in r.headers
+    assert admin.get("/auth/me").json()["role"] == "ADMIN"
+
+
+def test_set_is_404_when_off(world: World) -> None:
+    token = _issue(world)
+    world.deps.password_sender = None
+    assert _set(world, token).status_code == 404
+
+
+def test_no_secret_in_audit(world: World) -> None:
+    token = _issue(world)
+    _set(world, token)
+    _set(world, token)
+    rows = str(_query(world, "select * from audit_log"))
+    assert "PASSWORD_SET" in rows and token not in rows and PASSWORD not in rows
