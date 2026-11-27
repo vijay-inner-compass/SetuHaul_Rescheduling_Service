@@ -11,7 +11,7 @@ from setuhaul.db import open_connection
 from setuhaul.demo_ui import build_demo_app
 from setuhaul.stub_model import StubGateway
 from tests.test_demo_driver import _driver
-from tests.test_driver_chat_window import THREAD, _allocate, _project_of
+from tests.test_driver_chat_window import THREAD
 
 pytest_plugins = ["tests.test_driver_chat_window"]
 
@@ -22,14 +22,13 @@ def _pair(world) -> None:  # type: ignore[no-untyped-def]
     for mid, who, text in (("MSG-ZZZ", "DRIVER", "first: I am late"), ("MSG-AAA", "AGENT", "second: these slots")):
         conn.execute("insert into chat_messages(chat_message_id, thread_id, sender_type, message_text, message_ts) values (?,?,?,?,?)",
                      (mid, THREAD, who, text, world.clock.now().isoformat()))
+        conn.execute("insert into chat_message_loads(chat_message_id, shipment_id, facility_id) values (?,'SHP1006','FAC-JAI-01')", (mid,))
     conn.commit()
     conn.close()
 
 
 def test_a_reply_never_sorts_before_its_question(world) -> None:  # type: ignore[no-untyped-def]
     world.clock.advance(timedelta(hours=1))
-    _allocate(world, "wh_a", _project_of(world, "wh_a"))
-    world.clock.advance(timedelta(minutes=1))
     _pair(world)
     for who in ("wh_a", "admin"):
         drivers = world.client(who).get("/v1/warehouse/driver-chats").json()["drivers"]

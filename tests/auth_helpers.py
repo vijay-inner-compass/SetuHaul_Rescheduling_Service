@@ -99,6 +99,9 @@ def build_world(tmp_path: Path, clock: FakeClock) -> World:
                      " created_at, updated_at) values (?,?,'OPEN','NO_SLOT',?,?,?,?,?,?)",
                      (case_id, case_id, driver, thread, shipment, "needs help", stamp, stamp))
         cases[fac] = case_id
+        if shipment is not None:
+            conn.execute("insert into chat_message_loads(chat_message_id, shipment_id, facility_id) values (?,?,?)",
+                         (f"MSG-T-{fac}", shipment, fac))
     # One partner slot request per facility (each needs a contact at that facility).
     for fac, shipment in ((JAIPUR, "SHP1001"), (GURUGRAM, "SHP1021")):
         conn.execute("insert into facility_contacts(contact_id, facility_id, contact_role, contact_name, email, active_flag) "

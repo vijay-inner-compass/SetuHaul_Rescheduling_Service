@@ -82,7 +82,7 @@ _WAREHOUSE: tuple[Task, ...] = (
     )),
     ("Answer requests and read chats", (
         "In Operations, “Requests” lists drivers asking to deliver elsewhere. Approve or Reject each one.",
-        "“Chats” shows the conversations of drivers you may see. To write to a driver, resolve their case.",
+        "“Chats” shows messages about loads going to your facilities. A message not yet tied to a load is seen only by administrators. To write to a driver, resolve their case.",
         "“Requests” also shows slot requests sent to partner warehouses by email and their answers.",
     )),
     ("Manage projects", (

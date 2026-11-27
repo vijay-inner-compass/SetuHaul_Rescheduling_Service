@@ -4,7 +4,7 @@ CREATE TABLE chat_message_loads (
     chat_message_id TEXT PRIMARY KEY,
     shipment_id TEXT NOT NULL,
     facility_id TEXT NOT NULL,
-    FOREIGN KEY (chat_message_id) REFERENCES chat_messages(chat_message_id),
+    FOREIGN KEY (chat_message_id) REFERENCES chat_messages(chat_message_id) ON DELETE CASCADE,
     FOREIGN KEY (shipment_id) REFERENCES shipments(shipment_id),
     FOREIGN KEY (facility_id) REFERENCES facilities(facility_id)
 );

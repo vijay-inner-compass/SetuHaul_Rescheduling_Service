@@ -200,3 +200,11 @@ def test_offer_from_position_is_recorded(tmp_path: Path) -> None:
     handle_new_position(c, "SHP1006", world.clock, memory)
     c.close()
     assert loads(world) and {load for _, load in loads(world)} == {"SHP1006"}
+
+
+def test_a_record_goes_with_its_message(conn: sqlite3.Connection) -> None:
+    with chat_loads.recording(conn, "T", "SHP1006"):
+        say(conn, "X1")
+    # The demo clears the chat log; the records must not block that.
+    conn.execute("delete from chat_messages")
+    assert conn.execute("select count(*) from chat_message_loads").fetchone()[0] == 0

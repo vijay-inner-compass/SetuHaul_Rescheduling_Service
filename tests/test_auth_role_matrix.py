@@ -298,19 +298,20 @@ def world(tmp_path: Path, clock: FakeClock) -> World:
     return build_world(tmp_path, clock)
 
 
-def test_warehouse_sees_chats_only_for_project_drivers(world: World) -> None:
+def test_warehouse_sees_chats_only_for_their_facility(world: World) -> None:
     a = world.client("wh_a").get("/v1/warehouse/driver-chats")
     assert a.status_code == 200
     drivers = {d["driver_id"]: d for d in a.json()["drivers"]}
-    # Only the driver on wh_a's own project, with name and recent messages (role, text, timestamp).
-    assert set(drivers) == {"DRV001"}
+    # Drivers with messages about Jaipur loads, with name and recent messages (role, text, timestamp).
+    assert "DRV001" in drivers
     item = drivers["DRV001"]
     assert item["driver_name"]
     texts = [m["text"] for m in item["messages"]]
     assert any("hello from DRV001" in t for t in texts)
     assert {"role", "text", "timestamp"} <= set(item["messages"][0])
     b = world.client("wh_b").get("/v1/warehouse/driver-chats").json()["drivers"]
-    assert {d["driver_id"] for d in b} == {"DRV006"}
+    said = [m["text"] for d in b for m in d["messages"]]
+    assert any("for FAC-GGN-01" in t for t in said) and not any("for FAC-JAI-01" in t for t in said)
     # Limits are capped, never trusted.
     assert world.client("wh_a").get("/v1/warehouse/driver-chats", params={"limit": 100000, "messages": 100000}).status_code == 200
 
@@ -444,8 +445,8 @@ def test_demo_login_refuses_a_foreign_host_header_from_a_loopback_client(tmp_pat
     assert local.get("/demo/login", headers={"host": "localhost:8800"}).status_code == 302
 
 
-def test_warehouse_with_no_project_drivers_sees_no_chats_at_all(world: World) -> None:
-    # A facility-bound user whose projects hold no drivers: the empty visible set means nothing, never everything.
+def test_a_new_facility_user_sees_that_facilitys_chats_without_any_project(world: World) -> None:
     _second_user(world, "idle@x.com", "Idle")
     got = world.client("idle@x.com").get("/v1/warehouse/driver-chats")
-    assert got.status_code == 200 and got.json()["drivers"] == []
+    said = [m["text"] for d in got.json()["drivers"] for m in d["messages"]]
+    assert got.status_code == 200 and any("for FAC-JAI-01" in t for t in said) and not any("for FAC-GGN-01" in t for t in said)
