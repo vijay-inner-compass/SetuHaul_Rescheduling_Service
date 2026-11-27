@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from redis import Redis
 
 from setuhaul import passes
 from setuhaul.auth import audit
@@ -149,6 +150,8 @@ class PlanItem(BaseModel):
     new_start: str | None = None
     # For SKIP: why the booking is left where it is.
     why: str | None = None
+    # For MOVE: the new slot starts after the customer's latest arrival and a penalty or exceptional delivery applies.
+    penalty_breach: bool = False
 
 
 class Expected(BaseModel):
@@ -193,8 +196,8 @@ def _caught(conn: sqlite3.Connection, data: BlockRequest, starts: datetime, ends
     return out
 
 
-def _new_slot(conn: sqlite3.Connection, found: Booking, state: FacilityState, now: datetime) -> str | None:
-    """The slot on another dock closest to the original that the booking rules accept, or None."""
+def _new_slot(conn: sqlite3.Connection, found: Booking, state: FacilityState, now: datetime) -> tuple[str, bool] | None:
+    """The slot on another dock closest to the original that the booking rules accept, and whether it needs approval."""
     row = conn.execute("select latest_eta_ts, original_eta_ts from shipments where shipment_id=?", (found.shipment_id,)).fetchone()
     raw = row["latest_eta_ts"] or row["original_eta_ts"]
     # Never earlier than now: the truck cannot arrive in the past.
@@ -205,12 +208,14 @@ def _new_slot(conn: sqlite3.Connection, found: Booking, state: FacilityState, no
     for slot in state.slots.values():
         if slot.dock_id == found.dock_id or slot.start <= now:
             continue
-        if evaluate_slot(context, slot, state).status in ("INFEASIBLE", "INCOMPLETE_FEASIBILITY_DATA"):
+        verdict = evaluate_slot(context, slot, state).status
+        if verdict in ("INFEASIBLE", "INCOMPLETE_FEASIBILITY_DATA"):
             continue
-        key = (abs(slot.start - found.start), slot.start, state.docks[slot.dock_id].code, slot.slot_id)
+        key = (abs(slot.start - found.start), slot.start, state.docks[slot.dock_id].code, slot.slot_id,
+               verdict == "REQUIRES_APPROVAL")
         if best is None or key < best:
             best = key
-    return None if best is None else best[3]
+    return None if best is None else (best[3], best[4])
 
 
 def _plan(conn: sqlite3.Connection, data: BlockRequest, starts: datetime, ends: datetime | None, now: datetime) -> list[PlanItem]:
@@ -230,13 +235,14 @@ def _plan(conn: sqlite3.Connection, data: BlockRequest, starts: datetime, ends: 
         if why:
             items.append(PlanItem(action="SKIP", why=why, **base))
             continue
-        slot_id = _new_slot(conn, b, state, now)
-        if slot_id is None:
+        chosen = _new_slot(conn, b, state, now)
+        if chosen is None:
             items.append(PlanItem(action="FREE", **base))
             continue
+        slot_id, penalty_breach = chosen
         slot = state.slots[slot_id]
         items.append(PlanItem(action="MOVE", new_slot_id=slot_id, new_dock_code=state.docks[slot.dock_id].code,
-                              new_start=slot.start.astimezone(IST).isoformat(), **base))
+                              new_start=slot.start.astimezone(IST).isoformat(), penalty_breach=penalty_breach, **base))
         # Taken from here on, so no slot is proposed twice and crew numbers count the move.
         state.occupancy.pop(b.slot_id, None)
         state.occupancy[slot_id] = Occupant(b.appointment_id, b.shipment_id, "CONFIRMED")
@@ -267,7 +273,7 @@ def _move(conn: sqlite3.Connection, actor: User, found: Booking, slot_id: str, c
 
 
 def block(conn: sqlite3.Connection, *, actor: User, data: BlockRequest, expected: list[Expected], clock: Clock,
-          telegram_on: bool) -> BlockResult:
+          telegram_on: bool, redis: Redis | None = None) -> BlockResult:
     """Block the dock and do what the warning showed, all of it or nothing; then tell the drivers."""
     with immediate(conn):
         now = clock.now()
@@ -306,9 +312,9 @@ def block(conn: sqlite3.Connection, *, actor: User, data: BlockRequest, expected
             key, fields = "dock_moved", {"order": found.order_reference, "old_dock": found.dock_code,
                                          "dock": str(item.new_dock_code), "start": f"{new_start:%H:%M}",
                                          "date": f"{new_start:%d %b %Y}"}
-        if not tell_driver(conn, clock, telegram_on, found, key, **fields):
+        if not tell_driver(conn, clock, telegram_on, found, key, redis=redis, **fields):
             unreachable.append(found.order_reference)
     for h in held:
-        if not tell_driver(conn, clock, telegram_on, h, "hold_blocked", order=h.order_reference, dock=h.dock_code):
+        if not tell_driver(conn, clock, telegram_on, h, "hold_blocked", redis=redis, order=h.order_reference, dock=h.dock_code):
             unreachable.append(h.order_reference)
     return BlockResult(dock_event_id=event_id, items=items, unreachable=unreachable)

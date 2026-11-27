@@ -7,10 +7,13 @@ told afterwards, because queuing their message commits on its own.
 # Lazy annotations, like the rest of the codebase.
 from __future__ import annotations
 
+import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
+
+from redis import Redis
 
 from setuhaul.auth import audit
 from setuhaul.auth.authz import facility_ids
@@ -18,10 +21,12 @@ from setuhaul.auth.telegram import bound_chat
 from setuhaul.auth.users import User
 from setuhaul.booking import release_hold_in_txn
 from setuhaul.clock import Clock
+from setuhaul.config import load_settings
 from setuhaul.db import IST, immediate, parse_operational_timestamp
 from setuhaul.events import append_appointment_event
 from setuhaul.facility_change import _tell, _thread_of
 from setuhaul.identity import AuthError
+from setuhaul.memory import ConversationMemoryStore
 from setuhaul.notifications import enqueue_downstream
 
 # Why a booking was freed; stored as its cancellation reason.
@@ -120,11 +125,21 @@ def free_slot(conn: sqlite3.Connection, *, actor: User, appointment_id: str, clo
     return found
 
 
-def tell_driver(conn: sqlite3.Connection, clock: Clock, telegram_on: bool, found: Booking, key: str, **fields: str) -> bool:
+def tell_driver(conn: sqlite3.Connection, clock: Clock, telegram_on: bool, found: Booking, key: str, *,
+                redis: Redis | None = None, **fields: str) -> bool:
     """Put the message in the driver's chat and queue it for their phone. True if it can reach the phone.
 
-    Call after the transaction that changed the booking.
+    Call after the transaction that changed the booking. With `redis` the cached conversation gets the message too, so the
+    chat model sees it. A failure is reported as "not reached", never raised: the change is already saved.
     """
-    _tell(conn, clock, None, found.driver_id, _thread_of(conn, found.driver_id), found.shipment_id, key, happened_at=None, **fields)
-    conn.commit()
-    return telegram_on and bound_chat(conn, found.driver_id) is not None
+    try:
+        memory = None if redis is None else ConversationMemoryStore(conn, redis, clock, load_settings())
+        _tell(conn, clock, memory, found.driver_id, _thread_of(conn, found.driver_id), found.shipment_id, key, happened_at=None,
+              **fields)
+        conn.commit()
+        return telegram_on and bound_chat(conn, found.driver_id) is not None
+    # Broad on purpose: staff must learn who was not told, whatever went wrong.
+    except Exception:
+        logging.getLogger(__name__).exception("telling the driver failed for appointment %s", found.appointment_id)
+        conn.rollback()
+        return False

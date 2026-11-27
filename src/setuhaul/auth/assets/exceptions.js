@@ -38,7 +38,10 @@
     return stamp.slice(8, 10) + "/" + stamp.slice(5, 7) + " " + stamp.slice(11, 16);
   }
   function outcome(item) {
-    if (item.action === "MOVE") { return "Move to " + item.new_dock_code + " " + when(item.new_start); }
+    if (item.action === "MOVE") {
+      return "Move to " + item.new_dock_code + " " + when(item.new_start) +
+        (item.penalty_breach ? " (misses the customer's latest arrival: penalty applies)" : "");
+    }
     if (item.action === "FREE") { return "None fits: slot freed, needs a new slot"; }
     return item.why === "UNLOADING" ? "Left alone: unloading" : "Left alone: truck on site";
   }

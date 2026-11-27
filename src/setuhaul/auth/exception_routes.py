@@ -99,7 +99,7 @@ def register_exception_routes(app: FastAPI, deps: Any) -> None:
 
         def write(conn: sqlite3.Connection) -> Response:
             found = release.free_slot(conn, actor=user, appointment_id=appointment_id, clock=deps.clock)
-            reached = release.tell_driver(conn, deps.clock, telegram_on(), found, "slot_freed", order=found.order_reference,
+            reached = release.tell_driver(conn, deps.clock, telegram_on(), found, "slot_freed", redis=deps.redis, order=found.order_reference,
                                           dock=found.dock_code, start=f"{found.start:%H:%M}", date=f"{found.start:%d %b %Y}")
             return ok(rid, appointment_id=appointment_id, order_reference=found.order_reference, reached=reached)
 
@@ -123,7 +123,7 @@ def register_exception_routes(app: FastAPI, deps: Any) -> None:
 
         def write(conn: sqlite3.Connection) -> Response:
             result = dock_blocks.block(conn, actor=user, data=body, expected=body.expected, clock=deps.clock,
-                                       telegram_on=telegram_on())
+                                       telegram_on=telegram_on(), redis=deps.redis)
             return ok(rid, 201, **result.model_dump())
 
         return await run_in_threadpool(run, rid, write)

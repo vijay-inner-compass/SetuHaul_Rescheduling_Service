@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from setuhaul import release
+from setuhaul.config import load_settings
+from setuhaul.db import open_connection
+from setuhaul.memory import ConversationMemoryStore
 from tests.auth_helpers import JAIPUR, World
 from tests.exception_helpers import D1, D2, booked_world
-from tests.shipment_helpers import DAY, query, slot_at
+from tests.shipment_helpers import DAY, create, query, slot_at
 
 PAGE = f"/warehouse?facility={JAIPUR}"
 
@@ -166,3 +171,47 @@ def test_admin_page_lists_deleted_drivers(tmp_path: Path) -> None:
     admin.post("/v1/warehouse/drivers/DRV001/delete", json=confirm)
     page = admin.get("/admin").text
     assert 'data-tab="deleted"' in page and "/v1/drivers/DRV001/restore" in page
+
+
+# ---- from the final review ------------------------------------------------------------------------------
+def test_the_chat_model_sees_what_the_warehouse_told_the_driver(tmp_path: Path) -> None:
+    world, _, appt = booked_world(tmp_path)
+    conn = open_connection(path=world.path)
+    try:
+        memory = ConversationMemoryStore(conn, world.deps.redis, world.clock, load_settings())
+        # The driver has just been chatting, so their window is cached.
+        # The newest open thread of this driver is the one the warehouse writes to.
+        memory.append("DRV001", "THR-T-NONE", "DRIVER", "what is my slot?")
+        memory.load("DRV001", "THR-T-NONE")
+        world.client("wh_a").post(free_url(appt), json={})
+        turns = memory.load("DRV001", "THR-T-NONE").turns
+    finally:
+        conn.close()
+    assert any("freed your booking" in t.text for t in turns)
+
+
+def test_a_failure_while_telling_the_driver_does_not_report_a_saved_change_as_failed(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    world, _, _ = booked_world(tmp_path)
+
+    def busy(*args: Any, **kwargs: Any) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(release, "_tell", busy)
+    client = world.client("wh_a")
+    items = client.post("/v1/warehouse/dock-blocks/preview", json=body()).json()["items"]
+    done = client.post("/v1/warehouse/dock-blocks", json=body(expected=expected_of(items)))
+    assert done.status_code == 201 and done.json()["unreachable"] == ["ORD-261127-001"]
+
+
+def test_the_warning_says_when_a_move_misses_a_penalty_deadline(tmp_path: Path) -> None:
+    world, _, _ = booked_world(tmp_path)
+    # A second load on D1 must arrive by 10:00; the other dock is only free after that.
+    late = create(world, slot_at(world, 10, D1), order_number="ORD-261127-002", latest_arrival=f"{DAY}T10:00",
+                  penalty_applies=True)
+    create(world, slot_at(world, 10, D2), order_number="ORD-261127-003")
+    items = world.client("wh_a").post("/v1/warehouse/dock-blocks/preview", json=body(
+        starts=f"{DAY}T10:00", ends=f"{DAY}T11:00")).json()["items"]
+    [item] = [i for i in items if i["shipment_id"] == late]
+    assert item["action"] == "MOVE" and item["new_start"] > f"{DAY}T10:00" and item["penalty_breach"] is True
+    assert "penalty" in world.client("wh_a").get("/app/assets/exceptions.js").text
