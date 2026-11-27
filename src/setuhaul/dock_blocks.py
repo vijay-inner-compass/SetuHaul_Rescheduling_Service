@@ -15,14 +15,21 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from setuhaul import passes
 from setuhaul.auth import audit
 from setuhaul.auth.authz import facility_ids
 from setuhaul.auth.shipments import _facility, _ist
 from setuhaul.auth.users import User
-from setuhaul.capacity import BLOCKING_EVENT_TYPES, build_facility_state
+from setuhaul.booking import _expire_due_for, release_hold_in_txn
+from setuhaul.capacity import BLOCKING_EVENT_TYPES, DockEvent, FacilityState, Occupant, build_facility_state
 from setuhaul.clock import Clock
 from setuhaul.db import IST, immediate, parse_operational_timestamp
+from setuhaul.events import append_appointment_event
+from setuhaul.feasibility import build_context, evaluate_slot
 from setuhaul.identity import AuthError
+from setuhaul.notifications import enqueue_downstream
+from setuhaul.release import Booking, booking, free_in_txn, not_freeable, tell_driver
+from setuhaul.schemas import BaselineType, EtaEvidence
 
 
 class BlockRequest(BaseModel):
@@ -112,3 +119,190 @@ def reopen(conn: sqlite3.Connection, *, actor: User, dock_event_id: str, clock: 
             conn.execute("update appointment_slots set slot_status='OPEN', block_reason=null where slot_id=?", (slot.slot_id,))
         audit.record(conn, actor_user_id=actor.user_id, actor_email=actor.email, action="DOCK_REOPENED", target_type="dock",
                      target_id=block["dock_id"], outcome="OK", ip=None, detail={"dock_event_id": dock_event_id}, clock=clock)
+
+
+# ---- warn, move and free --------------------------------------------------------------------------------
+# Who is placed first when there are not enough slots.
+_PRIORITY = {"CRITICAL": 0, "HIGH": 1, "NORMAL": 2, "LOW": 3}
+
+
+class PlanItem(BaseModel):
+    """One booking caught by a block, and what blocking will do with it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    appointment_id: str
+    shipment_id: str
+    order_reference: str
+    driver_name: str
+    dock_code: str
+    start: str
+    action: Literal["MOVE", "FREE", "SKIP"]
+    new_slot_id: str | None = None
+    new_dock_code: str | None = None
+    new_start: str | None = None
+    # For SKIP: why the booking is left where it is.
+    why: str | None = None
+
+
+class Expected(BaseModel):
+    """What the warning showed for one booking, sent back to confirm it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    appointment_id: str
+    new_slot_id: str | None = None
+
+
+class BlockResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    dock_event_id: str
+    items: list[PlanItem]
+    # Order numbers whose driver the message cannot reach on their phone.
+    unreachable: list[str]
+
+
+class PlanChanged(AuthError):
+    """The bookings or free slots are no longer what the warning showed; `items` is the new list."""
+
+    def __init__(self, items: list[PlanItem]) -> None:
+        super().__init__("PLAN_CHANGED")
+        self.items = items
+
+
+def _caught(conn: sqlite3.Connection, data: BlockRequest, starts: datetime, ends: datetime | None, now: datetime,
+            statuses: tuple[str, ...]) -> list[str]:
+    """Appointments on the dock whose slot overlaps the block and has not ended."""
+    marks = ",".join("?" for _ in statuses)
+    rows = conn.execute(
+        "select a.appointment_id, sl.slot_start_ts, sl.slot_end_ts from appointments a join appointment_slots sl using(slot_id)"
+        f" where sl.dock_id=? and a.appointment_status in ({marks}) order by sl.slot_start_ts, a.appointment_id",
+        (data.dock_id, *statuses))
+    out = []
+    for r in rows:
+        start, end = parse_operational_timestamp(r["slot_start_ts"]), parse_operational_timestamp(r["slot_end_ts"])
+        if end > now and end > starts and (ends is None or start < ends):
+            out.append(str(r["appointment_id"]))
+    return out
+
+
+def _new_slot(conn: sqlite3.Connection, found: Booking, state: FacilityState, now: datetime) -> str | None:
+    """The slot on another dock closest to the original that the booking rules accept, or None."""
+    row = conn.execute("select latest_eta_ts, original_eta_ts from shipments where shipment_id=?", (found.shipment_id,)).fetchone()
+    raw = row["latest_eta_ts"] or row["original_eta_ts"]
+    # Never earlier than now: the truck cannot arrive in the past.
+    eta = EtaEvidence(eta=max(parse_operational_timestamp(raw) if raw else found.start, now), source="DRIVER_DECLARED",
+                      confidence="HIGH", baseline_type=BaselineType.PLANNED_ETA)
+    context = build_context(conn, found.shipment_id, eta, now)
+    best = None
+    for slot in state.slots.values():
+        if slot.dock_id == found.dock_id or slot.start <= now:
+            continue
+        if evaluate_slot(context, slot, state).status in ("INFEASIBLE", "INCOMPLETE_FEASIBILITY_DATA"):
+            continue
+        key = (abs(slot.start - found.start), slot.start, state.docks[slot.dock_id].code, slot.slot_id)
+        if best is None or key < best:
+            best = key
+    return None if best is None else best[3]
+
+
+def _plan(conn: sqlite3.Connection, data: BlockRequest, starts: datetime, ends: datetime | None, now: datetime) -> list[PlanItem]:
+    state = build_facility_state(conn, data.facility_id, now)
+    # Judge new slots as if the block already existed.
+    state.events.append(DockEvent(data.dock_id, data.event_type, starts, ends, data.reason))
+    found = [b for b in (booking(conn, a) for a in _caught(conn, data, starts, ends, now,
+                                                           ("CONFIRMED", "PENDING_CONFIRMATION", "IN_PROGRESS"))) if b]
+    priority = {b.appointment_id: _PRIORITY.get(conn.execute(
+        "select priority_code from shipments where shipment_id=?", (b.shipment_id,)).fetchone()[0], 2) for b in found}
+    items = []
+    for b in sorted(found, key=lambda b: (priority[b.appointment_id], b.start, b.appointment_id)):
+        base: dict[str, Any] = {
+            "appointment_id": b.appointment_id, "shipment_id": b.shipment_id, "order_reference": b.order_reference,
+            "driver_name": b.driver_name, "dock_code": b.dock_code, "start": b.start.isoformat()}
+        why = not_freeable(conn, b)
+        if why:
+            items.append(PlanItem(action="SKIP", why=why, **base))
+            continue
+        slot_id = _new_slot(conn, b, state, now)
+        if slot_id is None:
+            items.append(PlanItem(action="FREE", **base))
+            continue
+        slot = state.slots[slot_id]
+        items.append(PlanItem(action="MOVE", new_slot_id=slot_id, new_dock_code=state.docks[slot.dock_id].code,
+                              new_start=slot.start.astimezone(IST).isoformat(), **base))
+        # Taken from here on, so no slot is proposed twice and crew numbers count the move.
+        state.occupancy.pop(b.slot_id, None)
+        state.occupancy[slot_id] = Occupant(b.appointment_id, b.shipment_id, "CONFIRMED")
+    return items
+
+
+def preview(conn: sqlite3.Connection, *, actor: User, data: BlockRequest, clock: Clock) -> list[PlanItem]:
+    """What blocking would do to the bookings on the dock. Writes nothing."""
+    starts, ends = _checked(conn, actor, data, clock)
+    return _plan(conn, data, starts, ends, clock.now())
+
+
+def _move(conn: sqlite3.Connection, actor: User, found: Booking, slot_id: str, clock: Clock) -> None:
+    now = clock.now()
+    stamp = now.isoformat()
+    appointment_id = "APT-W-" + uuid.uuid4().hex[:10].upper()
+    # An overdue hold the sweep has not cleared yet would still occupy the slot.
+    _expire_due_for(conn, now, shipment_id=found.shipment_id, slot_id=slot_id)
+    conn.execute("insert into appointments(appointment_id, shipment_id, slot_id, appointment_status, booking_source, is_current,"
+                 " booked_at, confirmed_at, replaced_appointment_id, updated_at) values (?,?,?,'CONFIRMED','WAREHOUSE',1,?,?,?,?)",
+                 (appointment_id, found.shipment_id, slot_id, stamp, stamp, found.appointment_id, stamp))
+    details = {"from_slot_id": found.slot_id, "to_slot_id": slot_id, "driver_id": found.driver_id}
+    event_id = append_appointment_event(
+        conn, appointment_id, found.shipment_id, "RESCHEDULE_CONFIRMED", from_status=None, to_status="CONFIRMED",
+        actor_type="WAREHOUSE", actor_id=actor.user_id, reason="DOCK_BLOCKED", occurred_at=now, details=details)
+    enqueue_downstream(conn, event_id, "RESCHEDULE_CONFIRMED", found.shipment_id, appointment_id, details, now)
+    passes.sync_window(conn, found.shipment_id, clock)
+
+
+def block(conn: sqlite3.Connection, *, actor: User, data: BlockRequest, expected: list[Expected], clock: Clock,
+          telegram_on: bool) -> BlockResult:
+    """Block the dock and do what the warning showed, all of it or nothing; then tell the drivers."""
+    with immediate(conn):
+        now = clock.now()
+        starts, ends = _checked(conn, actor, data, clock)
+        items = _plan(conn, data, starts, ends, now)
+        acting = [i for i in items if i.action != "SKIP"]
+        if sorted((i.appointment_id, i.new_slot_id or "") for i in acting) != sorted(
+                (e.appointment_id, e.new_slot_id or "") for e in expected):
+            raise PlanChanged(items)
+        # Holds of shipments with no booking being changed here: they are released and their drivers told.
+        moving = {i.shipment_id for i in acting}
+        held = []
+        for appointment_id in _caught(conn, data, starts, ends, now, ("HELD",)):
+            found = booking(conn, appointment_id)
+            if found is not None and found.shipment_id not in moving:
+                held.append(found)
+        event_id = insert_block_in_txn(conn, actor, data, clock)
+        for h in held:
+            release_hold_in_txn(conn, h.appointment_id, h.shipment_id, "SYSTEM", now, "WAREHOUSE", actor.user_id, "DOCK_BLOCKED")
+        done = []
+        for item in acting:
+            found = booking(conn, item.appointment_id)
+            assert found is not None
+            free_in_txn(conn, found, "DOCK_BLOCKED", actor, clock, announce=item.action == "FREE")
+            done.append((item, found))
+        for item, found in done:
+            if item.new_slot_id:
+                _move(conn, actor, found, item.new_slot_id, clock)
+    unreachable = []
+    for item, found in done:
+        fields = {"order": found.order_reference, "dock": found.dock_code, "start": f"{found.start:%H:%M}",
+                  "date": f"{found.start:%d %b %Y}"}
+        key = "slot_freed"
+        if item.new_start:
+            new_start = datetime.fromisoformat(item.new_start)
+            key, fields = "dock_moved", {"order": found.order_reference, "old_dock": found.dock_code,
+                                         "dock": str(item.new_dock_code), "start": f"{new_start:%H:%M}",
+                                         "date": f"{new_start:%d %b %Y}"}
+        if not tell_driver(conn, clock, telegram_on, found, key, **fields):
+            unreachable.append(found.order_reference)
+    for h in held:
+        if not tell_driver(conn, clock, telegram_on, h, "hold_blocked", order=h.order_reference, dock=h.dock_code):
+            unreachable.append(h.order_reference)
+    return BlockResult(dock_event_id=event_id, items=items, unreachable=unreachable)

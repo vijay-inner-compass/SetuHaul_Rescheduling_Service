@@ -15,8 +15,8 @@ from setuhaul.db import immediate, open_connection
 from setuhaul.db import parse_operational_timestamp as ts
 from setuhaul.identity import AuthError
 from tests.auth_helpers import JAIPUR, World, build_world
-from tests.exception_helpers import D2, booked_world, run
-from tests.shipment_helpers import DAY, query
+from tests.exception_helpers import D1, D2, booked_world, run
+from tests.shipment_helpers import DAY, count, create, query, slot_at
 
 
 def request(hour_from: int, hour_to: int | None, dock: str = D2, **over: Any) -> dock_blocks.BlockRequest:
@@ -117,3 +117,95 @@ def test_reopening_the_sample_breakdown_opens_its_slots(tmp_path: Path) -> None:
     assert [tuple(s) for s in slots] == [("OPEN", None)] * 3
     assert tuple(query(world, "select * from dock_status_events where dock_event_id='DEVT001'")[0]) == before
     assert isinstance(datetime.fromisoformat(listed[0]["starts"]), datetime)
+
+
+# ---- warn, move and free --------------------------------------------------------------------------------
+def preview(world: World, data: dock_blocks.BlockRequest) -> list[dock_blocks.PlanItem]:
+    return list(run(world, dock_blocks.preview, actor=world.users["wh_a"], data=data))
+
+
+def apply(world: World, data: dock_blocks.BlockRequest, expected: list[dock_blocks.Expected] | None = None,
+          telegram_on: bool = False) -> dock_blocks.BlockResult:
+    if expected is None:
+        expected = [dock_blocks.Expected(appointment_id=i.appointment_id, new_slot_id=i.new_slot_id)
+                    for i in preview(world, data) if i.action != "SKIP"]
+    result: dock_blocks.BlockResult = run(world, dock_blocks.block, actor=world.users["wh_a"], data=data, expected=expected,
+                                          telegram_on=telegram_on)
+    return result
+
+
+def row_of(world: World, appointment_id: str) -> tuple[Any, ...]:
+    return tuple(query(world, "select appointment_status, is_current, cancellation_reason from appointments where appointment_id=?",
+                       appointment_id)[0])
+
+
+def unchanged(world: World, appointment_id: str) -> None:
+    assert row_of(world, appointment_id) == ("CONFIRMED", 1, None)
+    assert count(world, "dock_blocks") == 0 and count(world, "appointments", "booking_source='WAREHOUSE'") == 1
+
+
+def test_preview_proposes_the_closest_slot_on_another_dock(tmp_path: Path) -> None:
+    world, _, appt = booked_world(tmp_path)
+    [item] = preview(world, request(9, 10, dock=D1))
+    assert (item.action, item.new_dock_code, item.new_start) == ("MOVE", "D2", f"{DAY}T09:00:00+05:30")
+    unchanged(world, appt)
+
+
+def test_block_moves_the_booking(tmp_path: Path) -> None:
+    world, shipment_id, appt = booked_world(tmp_path)
+    apply(world, request(9, 10, dock=D1))
+    assert row_of(world, appt) == ("CANCELLED", 0, "DOCK_BLOCKED")
+    new = query(world, "select appointment_status, is_current, replaced_appointment_id, slot_id from appointments"
+                       " where shipment_id=? and appointment_id<>?", shipment_id, appt)[0]
+    assert tuple(new) == ("CONFIRMED", 1, appt, slot_at(world, 9, D2))
+    notices = query(world, "select payload_json from notification_outbox where recipient_type='DRIVER'")
+    assert len(notices) == 1 and "D2" in notices[0][0]
+
+
+def test_two_shipments_never_get_the_same_slot(tmp_path: Path) -> None:
+    world, _, _ = booked_world(tmp_path, to_time="11:00")
+    create(world, slot_at(world, 10, D1), order_number="ORD-261127-002")
+    create(world, slot_at(world, 10, D2), order_number="ORD-261127-003")
+    result = apply(world, request(9, 11, dock=D1))
+    assert sorted(i.action for i in result.items) == ["FREE", "MOVE"]
+
+
+def test_nothing_fits_frees_and_keeps_the_shipment(tmp_path: Path) -> None:
+    world, shipment_id, appt = booked_world(tmp_path, to_time="10:00")
+    create(world, slot_at(world, 9, D2), order_number="ORD-261127-002")
+    [item] = apply(world, request(9, 10, dock=D1)).items
+    assert item.action == "FREE" and row_of(world, appt) == ("CANCELLED", 0, "DOCK_BLOCKED")
+    assert query(world, "select current_status from shipments where shipment_id=?", shipment_id)[0][0] == "ASSIGNED"
+
+
+def test_a_changed_plan_saves_nothing(tmp_path: Path) -> None:
+    world, _, appt = booked_world(tmp_path)
+    with pytest.raises(dock_blocks.PlanChanged) as caught:
+        apply(world, request(9, 10, dock=D1), expected=[])
+    assert [i.appointment_id for i in caught.value.items] == [appt]
+    unchanged(world, appt)
+
+
+def test_a_truck_on_site_is_listed_and_left(tmp_path: Path) -> None:
+    world, shipment_id, appt = booked_world(tmp_path)
+    query(world, "update shipments set current_status='AT_GATE' where shipment_id=?", shipment_id)
+    [item] = apply(world, request(9, 10, dock=D1)).items
+    assert (item.action, item.why) == ("SKIP", "TRUCK_ON_SITE")
+    assert row_of(world, appt) == ("CONFIRMED", 1, None)
+
+
+def test_a_failure_part_way_saves_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    world, _, appt = booked_world(tmp_path)
+
+    def broken(*args: Any) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(dock_blocks.passes, "sync_window", broken)
+    with pytest.raises(RuntimeError):
+        apply(world, request(9, 10, dock=D1))
+    unchanged(world, appt)
+
+
+def test_unreachable_drivers_are_named(tmp_path: Path) -> None:
+    world, _, _ = booked_world(tmp_path)
+    assert apply(world, request(9, 10, dock=D1)).unreachable == ["ORD-261127-001"]
