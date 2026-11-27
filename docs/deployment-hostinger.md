@@ -171,6 +171,8 @@ docker exec -it setuhaul-app-1 python scripts/set_admin_password.pyc you@example
 ## Limits
 
 - Run **one** application container: SQLite, and a second copy could send duplicate Telegram notices.
+- Start-up applies pending migrations (currently up to `022`), sets every warehouse to open 24 hours and switches off the
+  last-new-start rule. Slots are then kept 14 days ahead only for warehouses whose staff entered a crew number.
 - The supplied data is the dated sample (August 2026): with the real clock its slots are in the past, and delay requests on those
   shipments go to a person. Shipments created on **Warehouse > Shipments**, with availability opened there, can be booked.
 - Dock Access Pass: migration `017` rebuilds `users`; to go back, deploy the previous image and restore the pre-deploy backup

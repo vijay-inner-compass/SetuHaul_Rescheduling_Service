@@ -1,11 +1,14 @@
 # SetuHaul rescheduling by chat: what it does, and what it does not yet do
 
-For the head of operations and a warehouse planner. Prototype, 26 November 2026. Engineering detail:
+For the head of operations and a warehouse planner. Prototype, 27 November 2026. Engineering detail:
 [readiness-detail.md](readiness-detail.md).
 
 **In short.** A late driver sends a message. The service works out the new arrival time, holds one suitable dock slot for
 3 minutes, and books it only when the driver says yes. When it cannot be sure, it passes the case to a coordinator.
 **It is not ready for real drivers.**
+
+Warehouse staff get a web screen (dock board, cases, shipments, drivers), gate staff check trucks in and out against a pass
+sent to the driver, and an administrator manages people and settings.
 
 ## Policy it follows
 * **First to hold wins.** A higher-priority load does not take a slot another driver is already holding.
@@ -22,7 +25,8 @@ For the head of operations and a warehouse planner. Prototype, 26 November 2026.
 These were run on test data with a scripted stand-in for the AI model, on one computer.
 
 ## Limits
-* **Your data has no labour or customer-deadline records.** Until a feed exists, no slot can be offered automatically.
+* **Your data has no labour or customer-deadline records.** For those loads no slot can be offered automatically. For loads entered
+  on the warehouse screen, the service relies on the crew numbers and deadlines your staff type; there is no live feed.
 * Drivers are not yet told **why** an earlier slot went to someone else.
 * No response time is promised on a hand-off.
 * Loads needing longer than one slot (SHP1009, SHP1014) always go to a person.

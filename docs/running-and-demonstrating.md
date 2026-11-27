@@ -34,7 +34,7 @@ python -m ruff check .
 python -m mypy src
 ```
 
-Observed on 2026-11-26: `1364 passed`, `All checks passed!`, `Success: no issues found in 71 source files`.
+Observed on 2026-11-27: `1972 passed` (about 3 minutes), `All checks passed!`, `Success: no issues found in 105 source files`.
 
 ## 3. The demo console
 
@@ -59,8 +59,10 @@ visitors to `/demo` are sent there. Only what is configured is offered.
 | Screen | What it is | As the demo user |
 |---|---|---|
 | `/` | sign-in page; a signed-in user is sent on to their screen | redirects to `/warehouse`. The page offers only the sign-in methods you configured |
-| `/warehouse` | dock board, cases, partner requests, driver chats, projects, drivers | works |
-| `/admin` | tabs: users, pending drivers, onboarded drivers, audit log, model | "Not allowed" (403): admins only |
+| `/warehouse` | tabs: dock board (with the Operations panel: cases, chats, requests), projects, shipments, drivers | works |
+| `/gate` | check trucks in and out | security users and admins only |
+| `/wiki` | usage instructions for every role | works |
+| `/admin` | tabs: users, pending drivers, onboarded drivers, deleted drivers, audit log, model, configuration | "Not allowed" (403): admins only |
 
 The demo has no Telegram and no Google sign-in. To see the admin screen, run the real service (section 7a).
 
@@ -168,7 +170,7 @@ Remember the console's Send calls the shared store function directly; the signed
 | Injection, outages, unbacked claims | `$env:PYTHONUTF8="1"; python scripts/show_phase8.py` | tool contract table; injection: `confirm_reschedule` gives `TOOL_NOT_ALLOWED`, an invented `driver_id` gives `INVALID_ARGUMENTS`, someone else's shipment gives `FOREIGN_SHIPMENT`, appointments unchanged, prompt-leak reply replaced by `I cannot share that.`; Hinglish and Hindi conversations; model timing out twice gives `I cannot check or change bookings right now, so I cannot promise anything...` and a case; model text "Great news, your 12:00 appointment is confirmed!" with nothing committed becomes `I have not confirmed or held anything yet.` |
 | Hand-off queue and CLI | `python scripts/show_phase9.py` | a real conversation hands off (SHP1014); the CLI queue lists the case; `asha` claims it, `ben` gets `ALREADY_CLAIMED (held by asha)` and cannot resolve it (`NOT_YOUR_CASE`); the driver sees the update |
 | Whole flow, scored | `python scripts/run_scenario.py` | 23 of 23 checks pass; offer, hold, expiry, confirmation, cancellation, three hand-offs (`NO_SLOT`, `CONTRADICTORY_DATA`, `INCOMPLETE_FEASIBILITY_DATA`), claim/resolve, outbox (one transient delivery failure retried), `check_invariants() -> []`. **It rewrites `docs/verification/scenario-run.md`**; run `git checkout docs/verification/scenario-run.md` afterwards if you do not want the change |
-| Replay recorded conversations | `python scripts/replay_traces.py` | `9/9 traces replayed clean; 123/123 evaluator checks passed` (5 scripted, 4 live-model traces) |
+| Replay recorded conversations | `python scripts/replay_traces.py` | `9/9 traces replayed clean; 109/109 evaluator checks passed` (scripted traces; the live-model recordings are retired) |
 | Concurrency (about 8 min) | `python scripts/run_integrity_proof.py` | threads and processes racing for one slot, invariants after every step (*not re-run here*; see `docs/verification/concurrency-proof.md`) |
 | Scale | `python scripts/run_scale_profile.py` | generated 360-load fixture, spike, burst (*not re-run here*; `docs/verification/scale-test.md`) |
 | Snapshot quality | `python scripts/audit_data.py` | read-only JSON audit: row counts (106 slots, 20 appointments, ...), integrity and timestamp checks, one shipment trace |
@@ -301,11 +303,12 @@ key), and are kept until the database is deleted.
 ### Configuration tab
 
 With `SETUHAUL_SETTINGS_KEY` set (see `.env.example`), **Admin > Configuration** changes the model, LangSmith and Telegram settings
-from the next message. A saved value overrides the environment until **Reset to .env**. The demo console shows the tab read only.
+from the next message, and the **Email** settings. A saved value overrides the environment until **Reset to .env**. **Test connection** calls the model with a
+tool, as a driver message does. The demo console shows the tab read only.
 
 ### Database
 
-Migrations 011 to 014 add the tables (later ones, up to 020 for password links, are applied by the same command). `make_working_db` (section 7) creates a new migrated copy. To upgrade a working database you want to keep:
+Migrations 011 onwards (currently up to 022) add the sign-in, project, facility-change, model-report, settings, shipment, pass, dock-block, driver-deletion, password, chat-tag and crew-number tables, all applied by the same command. `make_working_db` (section 7) creates a new migrated copy. To upgrade a working database you want to keep:
 
 ```powershell
 python -c "from pathlib import Path; from setuhaul.db import open_connection, apply_migrations; c = open_connection(path=Path('data/working.sqlite3')); print(apply_migrations(c)); c.close()"
@@ -363,7 +366,7 @@ curl -X POST "https://api.telegram.org/bot<BOT_TOKEN>/setWebhook" -d "url=<base>
    **Re-approve** undoes it while the licence is valid); or **Revoke Telegram** for a driver. A revoke is sticky: sharing the number again,
    from that or any other account, is refused until someone allowed to clicks **Allow re-link** (audited), after which the driver can link again.
 7. To work a hand-off case: `/warehouse` > **Operations** > **Cases** > **Claim**, then choose an outcome, write the message the driver will
-   receive and **Resolve**. Only the claimant can resolve. **Recently resolved** offers **Reopen** inside the reopen window (24 hours by default).
+   receive and **Resolve**. **Assigned a slot** asks which slot and books it (see below). Only the claimant can resolve. **Recently resolved** offers **Reopen** inside the reopen window (24 hours by default).
    A case that names no load is visible to admins only.
 8. Cases that name no load belong to admins: the admin screen counts them under **Cases with no load**; work them on `/warehouse` > **Operations** > **Cases**.
 9. Admins can **Re-enable** a disabled user and **Change facilities** for warehouse and security users; both are audited. A re-enabled
@@ -388,13 +391,13 @@ Rules enforced by the server:
 
 ### Known limitations
 
-* **Driver notices are sent only when the bot is configured**, by one server process, every 5 seconds; running several server copies could send duplicates. Delivery is at least once: a crash between sending and recording can repeat a message. A failed send is tried again after 30 seconds, then 1, 3 and 5 minutes (five attempts, about ten minutes); the driver's later notices wait behind it. The waits are held in memory, so a restart retries at once, and with a frozen demo clock (`SETUHAUL_FAKE_NOW`) they never elapse. Notices more than 30 minutes old are marked `TOO_OLD` and not sent. Queued for a driver: *hold expired*, facility-change answers and closer-truck offers; booking, cancellation and escalation changes queue none (other operations, partner-warehouse and position messages are written into the chat history only). The demo does not send to Telegram.
+* **Driver notices are sent only when the bot is configured**, by one server process, every 5 seconds; running several server copies could send duplicates. Delivery is at least once: a crash between sending and recording can repeat a message. A failed send is tried again after 30 seconds, then 1, 3 and 5 minutes (five attempts, about ten minutes); the driver's later notices wait behind it. The waits are held in memory, so a restart retries at once, and with a frozen demo clock (`SETUHAUL_FAKE_NOW`) they never elapse. Notices more than 30 minutes old are marked `TOO_OLD` and not sent. Queued for a driver's phone: lapsed holds, facility-change answers, closer-truck offers, case claimed and resolved, messages written by Operations, warehouse moves and freed slots, and a bot reply whose first send failed. Replies to a driver's own message are sent directly; partner-warehouse answers and other position messages are written into the chat history only. The demo does not send to Telegram.
 * The generic `jobs/deliver_notifications` runner does not filter by recipient: a scheduler using it would also mark driver notices as sent without Telegram.
 * Drivers have no web account or screen.
 * An admin can create projects and allocate drivers, although one line of the design spec says admins only read projects.
 * Drivers on projects created by an admin do not appear in any warehouse authority's chats.
 * A driver is not tied to a warehouse: any eligible driver id can be allocated through the API by a warehouse authority to their own project. From then on, until release, that driver's new messages (including ones about other facilities' loads) are visible to them; earlier history is not.
-* The screens cannot edit a driver, renew a licence, close a project, change a user's facilities or re-enable a disabled user (only the bootstrap admin comes back).
+* The screens cannot edit a driver (including their phone number), renew a licence or close a project.
 * A message sent to the bot by a revoked account gets the neutral refusal, with no share button and no audit row (only contact shares are audited).
 * Migration 012 stops on contract references that differ only in case.
 * Phone rules are India-first: a bare 10-digit number is read as `+91`, and a trunk `0` after any other country code is rejected (including numbers where that `0` is genuine, such as Italian landlines).
@@ -419,6 +422,25 @@ On `/warehouse`, for your own facilities (an admin: all):
 
 If a driver cannot be reached on Telegram after a slot is freed or moved, the screen says so: phone them.
 
+### Round-the-clock slots
+
+At start-up the service sets every warehouse to open 24 hours and switches off the last-new-start rule. Slots are not invented:
+under the dock board, **Round-the-clock slots**, type how many docks can unload at the same time and **Save**. One-hour slots for
+every active dock are then created 14 days ahead (today and the next 13), with labour windows marked `AUTO` for the hours nothing
+else describes. Missing slots are added again at each start-up and by the background sweep. A changed number applies to the
+automatic windows still ahead. Partner warehouses are excluded. The dock board shows one day; choose it under **Day**.
+The demo console and its start-up do not do this.
+
+### Booking and messaging from Operations
+
+* **Assigned a slot:** resolving a case with this outcome books the chosen slot in the same transaction: the old booking ends, the
+  new one is confirmed (`booking_source` `WAREHOUSE`) and the driver is told the dock and time. The slot must be at the load's
+  destination, free, ahead of now and pass the booking rules against the load's latest arrival time and a fresh GPS position.
+  A slot that only needs approval is allowed. It is refused for partner warehouses, finished loads and trucks already on site.
+* **Other outcomes** only close the case; the booking is unchanged. Coordinator bearer tokens cannot book a slot.
+* **Write to a driver:** **Chats**, choose the driver, type (500 characters) and **Send**. It goes into the chat and is queued
+  for Telegram. A message the service gave up on can be queued again with **Resend**.
+
 ## 8. Live model (*not run*)
 
 To use a real model, copy `.env.example` to `.env` (git-ignored) and set `SETUHAUL_MODEL_PROVIDER` (`openai` or `anthropic`), `SETUHAUL_MODEL_ID`, `SETUHAUL_MODEL_API_KEY`; then restart the demo and switch to **Live model**.
@@ -435,7 +457,7 @@ Recorded live runs (2026-11-20) are in `tests/traces/live-*.json` and replay cle
 | 8-9 | Scenario C | the database decides who wins |
 | 9-11 | Scenario D, claim and resolve | a person takes over with context; the driver is told |
 | 11-12 | GPS cross-check (Send ping 120 km, "20 minutes late") | GPS raises a flag and never overrides the driver |
-| 12-14 | `show_phase8.py` and `replay_traces.py` | injection refused, outage safe, unbacked claim replaced; 123 evaluator checks |
+| 12-14 | `show_phase8.py` and `replay_traces.py` | injection refused, outage safe, unbacked claim replaced; 109 evaluator checks |
 | 14-15 | Real API: duplicate and `INCOMPLETE_FEASIBILITY_DATA` | what is **not** yet true: no labour feed, no real-model evidence at scale |
 
 Always close with the limits: [client-readout.md](client-readout.md) lists what is proven and what is not.
@@ -458,7 +480,7 @@ Always close with the limits: [client-readout.md](client-readout.md) lists what 
 | The board has no bookings and "original appointment ended" never appears | you are on the empty board (`--fresh`, or **Empty dock board** in the reset dialog); choose **Supplied schedule** to get the existing bookings back |
 | Rows missing on the board | switch facility tab (Gurugram or Jaipur); demo drivers' loads are mostly Jaipur |
 | `docs/verification/scenario-run.md` shows as modified | `run_scenario.py` rewrote it; `git checkout docs/verification/scenario-run.md` |
-| Sandbox or CI differs from your machine | CI runs Windows and Ubuntu (`.github/workflows/ci.yml`); Ubuntu behaviour of later phases was not re-run here |
+| Another machine behaves differently | checks are run locally on Windows (D56: GitHub Actions is not used); Ubuntu behaviour of later phases was not re-run |
 
 ## 11. Auto-hold and changing facility
 
@@ -469,7 +491,7 @@ searching again when the first three are used up; when nothing is left the case 
 changes unless the driver replies `Yes`; while a slot is already held, no further offer is made.
 
 **Facility change.** The driver writes, for example, `Please change facility to Gurugram`. It is only a request (expires after 120 minutes).
-A warehouse user of the **destination** facility, or an admin, approves or rejects it on `/warehouse` > Messages > Facility change requests.
+A warehouse user of the **destination** facility, or an admin, approves or rejects it on `/warehouse` > **Operations** > **Requests**.
 On approval the load's destination changes and a slot is held there for 15 minutes; for the partner warehouse the usual email request is sent
 instead. If nothing can be offered, the load goes back to its original facility with its original booking and a case is opened.
 

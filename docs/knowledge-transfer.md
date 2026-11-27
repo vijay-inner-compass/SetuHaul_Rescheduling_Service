@@ -6,7 +6,7 @@ section 14 you can explain the system, run it, change it safely, and know what i
 Companion documents: [Running and demonstrating the program](running-and-demonstrating.md) and the [FAQ](faq.md).
 Deeper per-layer notes: [code-walkthrough/](code-walkthrough/README.md). Every source file also carries line-by-line comments.
 
-Figures in this document were re-checked on 2026-11-26 on Windows with Python 3.12 unless a date is given.
+Figures in this document were re-checked on 2026-11-27 on Windows with Python 3.12 unless a date is given.
 Python 3.12; section 13 lists where the repository's own older text disagrees.
 
 ---
@@ -22,7 +22,7 @@ trucks compete for the same few slots, and drivers get inconsistent promises.
 The service works out the real arrival time, finds dock slots that can genuinely take that truck, **holds** the first for 3 minutes
 ("No" moves to the next), **confirms** it when the driver agrees, ends the old appointment, and queues notices for the
 planner, the customer (consignee) and operations. When it cannot act safely it opens a **case** for a human coordinator
-with full context instead of guessing. Drivers use Telegram; warehouse staff and admins use signed-in web screens.
+with full context instead of guessing. Drivers use Telegram; warehouse staff, gate security and admins use signed-in web screens.
 
 **The design stance that explains everything else:** a language model is good at understanding messy messages and bad at being
 trusted with bookings. So the model *interprets and drafts*; deterministic Python and the database *decide and state facts*.
@@ -90,8 +90,8 @@ If you remember only these, you can predict how almost any new feature should be
 
 ```
 src/setuhaul/    the service (layers in section 6; auth/ holds sign-in, roles, Telegram and the web screens)
-migrations/      001-013, numbered SQL applied in order to working copies
-tests/           about 1,360 tests; tests/traces/ = recorded conversations; tests/scenario_flow.py = the end-to-end scenario
+migrations/      001-022, numbered SQL applied in order to working copies
+tests/           about 1,970 tests; tests/traces/ = recorded conversations; tests/scenario_flow.py = the end-to-end scenario
 scripts/         evidence and demo scripts (audit, replay, scenario, show_phaseN, integrity proof, scale profile, run_demo)
 load/            Locust profile
 docs/            decisions, readout, verification evidence, this document, walkthrough, scenario catalogue
@@ -132,6 +132,13 @@ Migrations (each file is commented line by line):
 | 010 | partner warehouse requests | book only after an approval reply |
 | 011, 012 | users, sessions, onboarding, projects, Telegram links, audit | invite-only web sign-in, append-only audit |
 | 013 | facility change requests | the destination approves |
+| 014 | model calls and turns | numbers and codes only |
+| 015 | saved settings | keys encrypted |
+| 016, 017 | shipment assignments, Dock Access Pass tables, `SECURITY` role | the pass, not an order number, authorises a visit |
+| 018, 019 | dock blocks, driver deletions | warehouse exceptions; nothing is erased |
+| 020 | one-time account links | email and password sign-in |
+| 021 | which load each chat message is about | what a warehouse user may read |
+| 022 | crew number per warehouse | slots are created only where staff entered one |
 
 ### 6.2 Identity, memory, limits: `identity.py`, `memory.py`, `rate_limit.py`, `observability.py`
 
@@ -180,7 +187,7 @@ This is the **transactional core**. Read `booking.py` closely.
 
 ### 6.7 Escalation and the HTTP API: `escalation.py`, `coordinator.py`, `api.py`
 
-* A hand-off is a **case** in a queue: `OPEN` to `CLAIMED` to `RESOLVED` (or `CANCELLED` by the driver); resolved cases can be reopened within 24 hours; every transition is an immutable event. A dedupe key (driver, thread, shipment, reason) folds repeats into the active case; a partial unique index enforces it. Two coordinators racing produce one owner. The driver is told in chat when a case is claimed or resolved. Resolution codes: `ASSIGNED_SLOT`, `ADVISED_DRIVER`, `CANCELLED_BY_OPERATIONS`, `NO_ACTION_NEEDED`, `OTHER`. If the database is down, `JsonlEscalationSink` appends to a file and `ingest_fallback_file` loads it later, once.
+* A hand-off is a **case** in a queue: `OPEN` to `CLAIMED` to `RESOLVED` (or `CANCELLED` by the driver); resolved cases can be reopened within 24 hours; every transition is an immutable event. A dedupe key (driver, thread, shipment, reason) folds repeats into the active case; a partial unique index enforces it. Two coordinators racing produce one owner. The driver is told in chat, and on their phone when the case names a load, when it is claimed or resolved; resolving with `ASSIGNED_SLOT` from the web books the chosen slot. Resolution codes: `ASSIGNED_SLOT`, `ADVISED_DRIVER`, `CANCELLED_BY_OPERATIONS`, `NO_ACTION_NEEDED`, `OTHER`. If the database is down, `JsonlEscalationSink` appends to a file and `ingest_fallback_file` loads it later, once.
 * `api.py` order of work on a driver message, cheapest and safest first, **always before the model**: signature (401) then validation, text up to 2000 characters (422) then sender lookup (403) then duplicate check (same text gets the stored reply with `duplicate: true`; same id with different text is 409; still-processing is 409 unless the claim is over 60 s old) then rate limit (429 with `Retry-After`) then claim the id, run the conversation, store the reply, return it. A failure frees the id so a retry works. Errors are always `{status, reason_code, request_id}`; no stack trace or SQL leaves the process.
 
 | Route | Purpose |
@@ -189,10 +196,23 @@ This is the **transactional core**. Read `booking.py` closely.
 | `GET /v1/driver/status` | signed, read-only |
 | `POST /v1/gps/pings` | signed telematics ping, names the shipment (section 9) |
 | `POST /v1/driver/location` | signed driver-shared location; the driver is found from `from` (section 9) |
-| `GET /health`, `GET /ready` | liveness; database and cache usable |
+| `GET /health`, `GET /ready`, `GET /health/ready`, `GET /version` | liveness; database and cache usable; deployed commit |
 | `GET/POST /v1/coordinator/cases...` | list, show, claim, resolve, reopen (bearer token) |
 
 `python -m setuhaul.coordinator --db data/working.sqlite3 list|show|claim|resolve|reopen` is the CLI over the same queue.
+
+### 6.7a Web screens and warehouse operations: `auth/`, `assign.py`, `release.py`, `dock_blocks.py`, `round_clock.py`, `driver_messages.py`, `passes.py`, `gate.py`
+
+* `auth/` holds sign-in (Google, email and password, break-glass), roles and facility scope, the server-rendered screens (`/warehouse`,
+  `/admin`, `/gate`, `/wiki`), the Telegram webhook and their JSON routes.
+* Shipments created on **Warehouse > Shipments** are hidden from the driver until they send back their Dock Access Pass
+  (`passes.py`, `pass_check.py`); the gate checks it (`gate.py`). See [dock-access-pass.md](dock-access-pass.md).
+* A person can change a booking in three ways, each one transaction: resolving a case with **Assigned a slot** (`assign.py`, judged by
+  the same `evaluate_slot` rules), blocking a dock (`dock_blocks.py`, which moves or frees the bookings it showed you) and freeing one
+  slot (`release.py`).
+* `round_clock.py` opens every warehouse 24 hours at start-up and keeps 14 days of one-hour slots for warehouses with a crew number.
+* `driver_messages.py`: Operations writes to a driver and resends a failed message.
+* The screens' usage text is in `auth/wiki_pages.py`; change it with the screen.
 
 ### 6.8 Evaluation and tracing: `evaluation.py`, `langsmith_trace.py`, `proof.py`, `scale_fixture.py`
 
@@ -259,20 +279,21 @@ Design: [superpowers/specs/2026-11-21-gps-eta-design.md](superpowers/specs/2026-
 | Service | `python -m uvicorn --factory setuhaul.api:create_app_from_env --port 8000` | none configured means every turn takes the safe "cannot check" path and opens a case |
 | Load tests | `SETUHAUL_USE_STUB_MODEL=1`, `fakeredis://`, `SETUHAUL_FAKE_NOW` | stub (never in production) |
 
+Settings an admin saves on **Admin > Configuration** (model, LangSmith, Telegram, email) override the environment.
 Environment variables (from `.env.example`): `SETUHAUL_DB_PATH`, `SETUHAUL_TIMEZONE`, `SETUHAUL_REDIS_URL`, `SETUHAUL_WEBHOOK_SECRET`,
 `SETUHAUL_COORDINATOR_TOKENS` (JSON token to coordinator name), `SETUHAUL_MODEL_PROVIDER` (`openai` or `anthropic`), `SETUHAUL_MODEL_ID`,
-`SETUHAUL_MODEL_API_KEY`, optional price variables for the cost stop, OpenAI extras, and the LangSmith switches. **No secret lives in the repo.**
+`SETUHAUL_MODEL_API_KEY`, optional price variables for the cost stop, OpenAI extras, the LangSmith switches, the sign-in, mail and Telegram variables (see [running-and-demonstrating.md](running-and-demonstrating.md), section 7a). **No secret lives in the repo.**
 Make a writable database with `make_working_db(Path('data/working.sqlite3'))`; never run against `data/setuhaul.sqlite3` directly.
 
 ## 11. Quality gates and evidence
 
-| Gate | Command | Result on 2026-11-26 |
+| Gate | Command | Result on 2026-11-27 |
 |---|---|---|
-| Tests | `python -m pytest -q` | about 1,360 passed in under 2 minutes |
+| Tests | `python -m pytest -q` | 1,972 passed in about 3 minutes |
 | Lint | `python -m ruff check .` | all checks passed |
-| Types | `python -m mypy src` | no issues in 71 source files (`strict`) |
+| Types | `python -m mypy src` | no issues in 105 source files (`strict`) |
 | End-to-end scenario | `python scripts/run_scenario.py` | **23/23 checks** |
-| Trace replay | `python scripts/replay_traces.py` | **6/6 traces clean, 58/58 evaluator checks**; live recordings of the earlier menu flow are retired |
+| Trace replay | `python scripts/replay_traces.py` | **9/9 traces clean, 109/109 evaluator checks**; live recordings of the earlier menu flow are retired |
 | Concurrency | `python scripts/run_integrity_proof.py` (about 8 min, not re-run) | recorded in `docs/verification/concurrency-proof.md` |
 
 Evidence files for every phase are in `docs/verification/`. The client-facing summary is [client-readout.md](client-readout.md).
@@ -283,7 +304,7 @@ machine); wording matches stored state on the deterministic path; failure paths 
 
 ## 12. Decisions, open questions and risks
 
-* [decision-register.md](decision-register.md) lists decisions D1 onward with the reason for each (examples: D5 FCFS, D6 delay counted from planned ETA, D13 LangGraph, D64 demo console, D93 one slot held instead of a menu).
+* [decision-register.md](decision-register.md) lists decisions D1 onward with the reason for each (examples: D5 FCFS, D6 delay counted from planned ETA, D13 LangGraph, D64 demo console, D93 one slot held instead of a menu, D101 Dock Access Pass).
 * [operations-questions.md](operations-questions.md) lists Q1-Q20, each an **engineering default awaiting an approver**. Blockers: model provider and data protection (Q9), labour/consignee data source (Q17), cancellation cut-off (Q6), ETA buffer and priority classes (Q3, Q4), unload longer than a slot (Q20).
 * Top risks from the readout: live-model evidence is thin (a handful of runs, English); Hindi/Hinglish wording is unreviewed by a native speaker and language detection and the claim guard are heuristics; no labour source means every case reaches a human; the messaging-provider integration and coordinator authentication are minimal; SQLite saturates around 245 writes/s (move to PostgreSQL before more than one sustained writer or more than four API workers; the invariants carry over).
 
@@ -292,7 +313,8 @@ machine); wording matches stored state on the deterministic path; failure paths 
 * No recorded real-model run of the current one-slot flow. The Telegram trial used the stand-in.
 * No data retention, export or erasure for personal data; no encryption at rest; no privacy notice. See the [FAQ](faq.md), section 6.
 * Notices for warehouse, customer and operations are queued; no sender is connected.
-* Telegram: over the rate limit, or for photos and voice notes from a linked driver, there is no reply.
+* Telegram: photos, voice notes and locations are not read; the driver is told so.
+* No deployment has been run through the ForgeCI set-up ([deployment-hostinger.md](deployment-hostinger.md)).
 * The rule-based stand-in understands only set phrases.
 * `scripts/show_phase8.py` needs `PYTHONUTF8=1` on Windows to print Hindi.
 * The scripted scenario run rewrites `docs/verification/scenario-run.md`; restore it with `git checkout` if you only wanted to look.
@@ -311,7 +333,7 @@ machine); wording matches stored state on the deterministic path; failure paths 
 3. Add a facility-rule check to `feasibility.py` (for example a maximum number of arrivals per hour). Add a test first; check that missing data still yields `INCOMPLETE_FEASIBILITY_DATA`, not `FEASIBLE`.
 4. Add a new tool. Notice that you cannot add a `driver_id` argument and why.
 
-**Rules for changes.** Add a migration, never edit one that has run. No `datetime.now()`. No model call inside a transaction. Wording that states a booking fact goes in `language.py` and is rendered from rows. Any new write needs a test that a fault at each step rolls back. Run `pytest`, `ruff check .`, `mypy src` before committing; `.pre-commit-config.yaml` and `.github/workflows/ci.yml` run the same on Windows and Ubuntu.
+**Rules for changes.** Add a migration, never edit one that has run. No `datetime.now()`. No model call inside a transaction. Wording that states a booking fact goes in `language.py` and is rendered from rows. Any new write needs a test that a fault at each step rolls back. Run `pytest`, `ruff check .`, `mypy src` before committing; `.pre-commit-config.yaml` and `scripts/ci.py` run the same checks locally; GitHub Actions is not used (D56).
 
 ## 15. Glossary
 

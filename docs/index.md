@@ -7,7 +7,9 @@ repository. The rules are in [`CLAUDE.md`](CLAUDE.md).
 
 ## Start here
 
-1. [[refusal-messages]]
+1. [[warehouse-operations]]
+2. [[passes-and-gate]]
+3. [[refusal-messages]]
 
 The wiki is new and grows as work touches each area.
 
@@ -25,6 +27,10 @@ None yet.
 
 - [[refusal-messages]] -- how a refused request says what to fix
 - [[model-calls]] -- why a driver message can fail when the connection test passes
+- [[warehouse-operations]] -- what staff can do to a booking or a driver, and how the driver is told
+- [[passes-and-gate]] -- how a Dock Access Pass stays true as bookings change
+- [[round-the-clock-slots]] -- 24-hour opening and slots created ahead
+- [[sign-in]] -- web sessions and one-time password links
 
 ## decisions
 

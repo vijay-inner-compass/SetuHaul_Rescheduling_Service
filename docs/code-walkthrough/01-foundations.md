@@ -1,6 +1,6 @@
 # 1. Foundations
 
-Files: `clock.py`, `config.py`, `db.py`, `schemas.py`, `migrations/001`–`008`.
+Files: `clock.py`, `config.py`, `db.py`, `schemas.py`, `migrations/`.
 
 ## Purpose
 
@@ -56,6 +56,8 @@ timezone-aware, and the schema is changed only by numbered migrations.
 | 006 | `labour_windows`, `consignee_commitments` | empty by default so feasibility reports "cannot check", with a `source` on every row |
 | 007 | `idempotency_keys` | exact-retry answers per (driver, thread, message, action) |
 | 008 | `inbound_messages` | duplicate webhook delivery handling |
+
+This table covers the booking core. Migrations 009 to 022 are summarised in [knowledge transfer](../knowledge-transfer.md), section 6.1.
 
 Migration 002 rebuilds `appointments` because SQLite cannot alter a `CHECK` constraint. Views that read the table are
 dropped first and recreated after.

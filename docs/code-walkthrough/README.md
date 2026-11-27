@@ -26,6 +26,9 @@ timing, capacity, approvals and every statement about a booking come from code a
 | 7 | [Evaluation and tracing](07-evaluation-and-tracing.md) | proof the behaviour is right | `evaluation`, `langsmith_trace`, `proof`, `scale_fixture` |
 | 8 | [The demonstration console](08-demo-console.md) | showing it all | `demo_ui`, `demo/index.html`, `scripts/run_demo.py` |
 
+Not covered by a chapter: the web screens and sign-in (`auth/`), shipments, passes and the gate, and warehouse operations (`assign`,
+`release`, `dock_blocks`, `round_clock`, `driver_messages`). Start at [knowledge transfer](../knowledge-transfer.md), section 6.7a.
+
 Companion documents:
 
 * [Demonstration guide](../demonstration-guide.md): what to run, what to type, what you should see.

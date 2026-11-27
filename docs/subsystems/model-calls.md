@@ -6,7 +6,7 @@ updated: 2026-11-27
 sources:
   - code: src/setuhaul/model_gateway.py
   - code: src/setuhaul/settings_checks.py
-verified_at: 4f78e1a
+verified_at: b5b462f
 ---
 
 # Model calls and the connection test

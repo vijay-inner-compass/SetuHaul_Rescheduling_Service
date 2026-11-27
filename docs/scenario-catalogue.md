@@ -251,6 +251,33 @@ Legend: **Demo** = can be shown on the demo console; **Script** = shown by an ev
 | No webhook secret configured | forged signed requests refused | `test_a_forged_driver_request_is_refused_when_no_secret_is_set` |
 | Server started on the sample database | refuses to start | `test_the_server_does_not_start_on_the_sample_database` |
 
+## J5. Warehouse actions
+
+| Situation | Expected | Test |
+|---|---|---|
+| Case resolved with a slot | the booking moves | `test_resolving_with_a_slot_moves_the_booking` |
+| That slot is already taken | nothing changes | `test_a_taken_slot_changes_nothing` |
+| Truck cannot reach the slot, or is already on site | refused | `test_a_slot_before_the_truck_can_arrive_is_refused`, `test_a_truck_recorded_on_site_keeps_its_booking` |
+| Operations writes to a driver; a failed message | sent; can be sent again | `test_operations_can_write_after_the_case_is_closed`, `test_a_failed_message_can_be_sent_again` |
+| No crew number entered | no slots are created | `test_no_slots_appear_until_a_warehouse_has_a_crew_number` |
+| Crew number saved | 14 days of slots | `test_saving_the_crew_number_creates_fourteen_days_of_slots` |
+| Dock blocked with a booking on it | moved to the proposed slot, or freed | `test_block_moves_the_booking`, `test_nothing_fits_frees_and_keeps_the_shipment` |
+| Things changed after the warning | nothing saved | `test_a_changed_plan_saves_nothing` |
+| Slot freed | booking cancelled, shipment kept | `test_free_slot_cancels_the_booking_and_keeps_the_shipment` |
+| Driver deleted, then restored | shipments cancelled; they do not return | `test_delete_cancels_shipments_frees_slots_and_hides_the_driver`, `test_restore_brings_the_driver_back_but_not_the_shipments` |
+
+## J6. Passes, gate and password sign-in
+
+| Situation | Expected | Test |
+|---|---|---|
+| Right pass sent in chat | shipment confirmed without the model | `test_the_right_pass_confirms_without_calling_the_model` |
+| Order number alone | does nothing | `test_an_order_number_alone_does_nothing` |
+| Fifth wrong pass | shipment locked, one case | `test_fifth_wrong_pass_locks_and_opens_one_case` |
+| Two guards check in at once | one check-in | `test_two_guards_at_once_make_one_check_in` |
+| Truck stays past the window | one case, nothing released | `test_an_overstay_opens_one_case_and_releases_nothing` |
+| Password link used twice | works once | `test_link_sets_password_once` |
+| Five wrong passwords | locked 15 minutes | `test_five_failures_lock_15_minutes` |
+
 ## K. Gaps worth knowing
 
 * The rate limit's increment and rollback are not atomic across processes (documented in `rate_limit.py`).

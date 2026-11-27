@@ -79,7 +79,7 @@ model, guarantees one holder per slot (`python scripts/show_phase5.py`).
 
 1. As **Pradeep Jat** (heavy load, `?driver=DRV014`), send `my truck is 60 minutes late`.
 2. The driver is told the case was passed to operations, with a case reference, and that nothing changed.
-3. In **Operations > Cases**, **Claim** it as a coordinator, then **Resolve** with a code and a note. Both messages reach the driver's chat.
+3. In the console's **Operations > Cases**, **Claim** it as a coordinator, then **Resolve** with a code and a note. Both messages reach the driver's chat. (On `/warehouse` the outcome **Assigned a slot** also books a slot.)
 
 ### E. Change warehouse
 
@@ -137,6 +137,14 @@ On `/warehouse`, for your own facilities (an admin: all):
   Telegram must be allowed to re-link.
 
 If a driver cannot be reached on Telegram after a slot is freed or moved, the screen says so: phone them.
+
+Also on `/warehouse`:
+
+* **Assigned a slot:** claim a case, choose this outcome and a slot, **Resolve**. The dock board changes and the driver is told.
+* **Write to a driver:** **Operations > Chats**, choose the driver, type and **Send**. **Resend** appears for a message given up on.
+* **Round-the-clock slots** (under the board): enter how many docks can unload at once; 14 days of slots are created.
+* **Shipments and the gate:** create a shipment, then check its pass on `/gate` (needs Telegram for the driver to receive it):
+  [dock-access-pass.md](dock-access-pass.md).
 
 ## 3. Showing the edge cases and failures
 

@@ -46,15 +46,28 @@ After the quick start below, one command opens the demonstration console at `htt
 * [Scheduling algorithm](docs/scheduling-algorithm.md): how slots are judged, ranked, held and confirmed.
 * [Code walkthrough](docs/code-walkthrough/README.md): the story behind each layer. Every source file also has line-by-line comments.
 * [Scenario catalogue](docs/scenario-catalogue.md): edge cases and failure scenarios, each with the test that proves it.
+* [Dock Access Pass](docs/dock-access-pass.md): shipments, passes and the gate.
+* [Deploying to the VPS](docs/deployment-hostinger.md): container image and ForgeCI set-up (no deployment has been run).
+* [Documentation wiki](docs/index.md): short pages on specific subsystems, kept in step with the code.
 
 **How a slot is offered:** the service holds the first feasible slot and the driver replies Yes or No; a driver may ask to change
 facility, which the destination warehouse approves (see `docs/running-and-demonstrating.md`, section 11).
+
+## What the application does
+| Area | What is there |
+|---|---|
+| Driver (Telegram) | report a delay in English, Hindi or Hinglish, Yes/No to a held slot, keep or cancel, ask to change facility, confirm a shipment with its Dock Access Pass |
+| Warehouse screen | dock board for one day, blocking docks, freeing a slot, hand-off cases (including booking the slot a case is resolved with), messages to drivers, facility-change and partner requests, projects, shipments, drivers |
+| Round the clock | warehouses are open 24 hours; once staff enter a crew number, 1-hour slots are kept 14 days ahead |
+| Gate screen | a guard checks the pass, vehicle and licence, then checks the truck in and out |
+| Admin screen | users, driver approval, deleted drivers, audit log, model report, settings (model, LangSmith, Telegram, email) |
+| In-app help | the **Wiki** link (`/wiki`) gives step-by-step instructions for each role |
 
 ## Quick start (Windows PowerShell; Python 3.12)
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\python -m pip install -e ".[dev]"
-.\.venv\Scripts\python -m pytest -q          # about 1,360 tests
+.\.venv\Scripts\python -m pytest -q          # about 1,970 tests
 .\.venv\Scripts\python -m ruff check .
 .\.venv\Scripts\python -m mypy src
 ```
@@ -86,7 +99,7 @@ The server and `scripts/set_admin_password.py` refuse to run on `data/setuhaul.s
 `data/setuhaul.sqlite3` is hash-pinned and never written; migrations (`migrations/`) are applied to copies.
 Coordinators can also use the CLI: `python -m setuhaul.coordinator --db data/working.sqlite3 list|show|claim|resolve|reopen`.
 
-Model configuration comes from the environment only: `SETUHAUL_MODEL_PROVIDER`, `SETUHAUL_MODEL_ID`, `SETUHAUL_MODEL_API_KEY`
+Model configuration comes from the environment (an admin may override it on **Admin > Configuration**): `SETUHAUL_MODEL_PROVIDER`, `SETUHAUL_MODEL_ID`, `SETUHAUL_MODEL_API_KEY`
 (`SETUHAUL_MODEL_PROVIDER` is `openai` or `anthropic`; optionally a git-ignored `.env`, see `.env.example`). With none set, every turn takes the safe "cannot check bookings right now"
 path and opens an escalation case. Optional LangSmith tracing is off by default; it needs `SETUHAUL_LANGSMITH_ENABLED=true`, `SETUHAUL_LANGSMITH=approved` and `LANGSMITH_API_KEY` (scrubbed first; see `.env.example`). Load-test-only switches (`SETUHAUL_USE_STUB_MODEL`, `fakeredis://`, `SETUHAUL_FAKE_NOW`) are not for production.
 
@@ -100,8 +113,9 @@ Schedule `jobs/send_partner_requests`, `jobs/poll_partner_replies` and `jobs/exp
 ## Sign-in, roles and the Telegram bot
 | Who | How they get in | What they can do |
 |---|---|---|
-| Admin | Google sign-in (invite only), or the optional break-glass password | `/admin` (invite and disable users, approve, suspend and re-approve drivers, audit log) and `/warehouse` for every facility, including creating projects and allocating drivers |
-| Warehouse authority | Google sign-in (invite only) | `/warehouse` for their facilities: dock board, cases, partner requests, chats of drivers on their live projects (messages since allocation only), projects, add driver, revoke / allow re-link Telegram for drivers they added |
+| Admin | Google sign-in or, when switched on, email and password (both invite only); optional break-glass password | `/admin` (users, driver approval, deleted drivers, audit log, model report, configuration), `/warehouse` for every facility, and `/gate` |
+| Warehouse authority | Google or email and password (invite only) | `/warehouse` for their facilities: dock board, dock blocks, cases, requests, chats about loads going to their facilities, messages to drivers, projects, shipments, drivers they added |
+| Security (gate) | Google or email and password (invite only) | `/gate` for their facilities |
 | Driver | Telegram only, bound by sharing their own phone number | chat with the bot about their own loads; no web screen |
 | Service callers | bearer token (case routes) or HMAC signature (driver and GPS channel) | unchanged machine interfaces |
 
@@ -114,6 +128,8 @@ Settings (from the process environment, not loaded from `.env` at start-up; see 
 | `SETUHAUL_PUBLIC_URL` | behind a proxy or HTTPS | origin only (`https://host[:port]`); malformed values stop start-up. Without it a Host-rewriting proxy can cause 403 `CROSS_SITE_REQUEST` |
 | `SETUHAUL_BOOTSTRAP_ADMIN_EMAIL` | the first admin | created at start-up; also restores that admin's role and status if disabled or demoted (not a locked break-glass password) |
 | `SETUHAUL_LOCAL_ADMIN` | break-glass password | `1` turns it on; set the password with `python scripts/set_admin_password.py <email>` |
+| `SETUHAUL_PASSWORD_LOGIN` | email and password sign-in | `1` turns it on; also needs `SETUHAUL_PUBLIC_URL` and a mail account |
+| `SETUHAUL_SETTINGS_KEY` | Admin Configuration tab | a Fernet key; without it keys cannot be saved from the screen |
 | `SETUHAUL_TELEGRAM_BOT_TOKEN` | Telegram | both Telegram values, or the webhook answers 503 |
 | `SETUHAUL_TELEGRAM_WEBHOOK_SECRET` | Telegram | at least 16 characters, or the route stays off |
 | `SETUHAUL_COORDINATOR_TOKENS` | bearer access to case routes | JSON map token to name |
@@ -134,9 +150,11 @@ src/setuhaul/   config, clock, db, identity, rate_limit, memory, eta, feasibilit
                 booking (holds, confirmation), cancellation, events, notifications, escalation, coordinator, model_gateway,
                 prompts, tools, language, conversation, evaluation, integrity, proof, scale_fixture, stub_model, api, jobs/,
                 board, partner_booking, mail_transport, position, gps, facility_change, langsmith_trace, demo_ui,
-                auth/ (sign-in, roles, onboarding, projects, audit, Telegram, screens)
-migrations/     001-013, applied in filename order to working copies
-tests/          about 1,360 tests, traces/ (sanitised regression baselines), scenario_flow.py (the scenario)
+                passes, gate, assign, release, dock_blocks, round_clock, driver_messages, chat_loads,
+                app_settings, model_usage,
+                auth/ (sign-in, roles, onboarding, projects, shipments, audit, Telegram, screens, wiki)
+migrations/     001-022, applied in filename order to working copies
+tests/          about 1,970 tests, traces/ (sanitised regression baselines), scenario_flow.py (the scenario)
 scripts/        audit, replay, scenario, integrity proof, scale profile, live-model run, trace recording, set_admin_password
 load/           Locust profile
 docs/           problem definition, data audit, decision register, operations questions, model contract, client readout,

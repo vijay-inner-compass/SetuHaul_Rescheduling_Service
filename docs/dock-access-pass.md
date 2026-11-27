@@ -12,7 +12,7 @@ A Dock Access Pass, not an order number, authorises a truck visit. The design is
 
 | Who | Where | Does |
 |---|---|---|
-| Warehouse | **Warehouse > Shipments** | Opens availability, creates the shipment. The bot sends the driver the pass. |
+| Warehouse | **Warehouse > Shipments** | Opens availability (or uses round-the-clock slots), creates the shipment. The bot sends the driver the pass. |
 | Driver | Telegram | Sends the pass back once; then can ask about and change that booking. |
 | Guard | **Gate** | Types the pass, the vehicle number on the truck and the licence number. **Check pass**, then **Check in**. |
 | Warehouse | **Warehouse > Shipments** | **Unloading complete** when the truck is unloaded. This frees the dock slot. |

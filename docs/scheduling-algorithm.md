@@ -116,7 +116,7 @@ FEASIBLE
 | `DOCK_UNAVAILABLE` | `dock.status != ACTIVE` |
 | `DOCK_EVENT_BLOCK` | an effective event overlaps the slot (`e.start < slot.end and (e.end is None or e.end > slot.start)`) |
 | `SLOT_HELD` / `SLOT_OCCUPIED` | another shipment holds / has booked it (reported separately) |
-| `OUTSIDE_FACILITY_HOURS` | slot not within open–close on its **local** date (facility timezone) |
+| `OUTSIDE_FACILITY_HOURS` | slot not within open–close on its **local** date (facility timezone); a close at or before the open means the next day, so 00:00–00:00 is all day |
 | `AFTER_LAST_NEW_START` | rule `LAST_NEW_START_TIME` ("HH:MM") is set and the slot's local start is later |
 | `DOCK_TYPE_MISMATCH` | load needs a specific dock type (not `ANY`) and the dock differs |
 | `REFRIGERATION_REQUIRED` | temperature-controlled load, dock not refrigerated |
@@ -125,6 +125,10 @@ FEASIBLE
 | `UNLOAD_EXCEEDS_SLOT` | unload minutes > slot length + 0.5 min tolerance |
 | `RELEASE_AFTER_SLOT_START` | `release_time + buffer > slot.start`: the truck cannot get there in time |
 | `BEFORE_DRIVER_EARLIEST` / `AFTER_DRIVER_LATEST` | outside the driver's stated window |
+
+The running service (not the demo) sets every facility to 00:00–00:00 at start-up and switches off `LAST_NEW_START_TIME`
+(`round_clock.open_all_hours`), so those two reasons normally apply only to the demo and tests. Slots for a facility with a crew
+number are created 14 days ahead (`round_clock.top_up`), with `AUTO` labour windows where none were recorded.
 
 ### 5.2 Labour (`_labour_check`)
 
@@ -202,6 +206,16 @@ One `BEGIN IMMEDIATE` transaction; all steps commit together or not at all.
 **The original appointment stays active until this transaction commits.** Any failure rolls everything back, returns `SYSTEM_ERROR` / `LOCK_TIMEOUT`, and promises the driver nothing.
 Tests inject faults at six named points (`BEFORE_END_ORIGINAL` … `AFTER_IDEMPOTENCY`) to prove the rollback is complete.
 
+### 9a. Bookings made by a person
+
+* **Operations assigns a slot** (`assign.assign_in_txn`, when a case is resolved with `ASSIGNED_SLOT`): the same `evaluate_slot`
+  rules against the load's latest ETA, never before now or a fresh GPS floor. `REQUIRES_APPROVAL` is accepted; `INFEASIBLE` and
+  `INCOMPLETE_FEASIBILITY_DATA` are refused. The load's own holds are released, the old appointment ends and the new one is
+  `CONFIRMED` in the transaction that resolves the case.
+* **Dock block** (`dock_blocks.py`): the affected bookings are shown with their proposed new slots; confirming applies exactly that
+  plan or nothing. A booking that fits nowhere is freed.
+* **Warehouse shipments** (`auth/shipments.py`): the planned slot is chosen when the shipment is created.
+
 ## 10. The truck moves (`position.py`, `booking.reassess_hold_after_position_change`)
 
 Every new GPS ping triggers `handle_new_position` for each of the driver's open loads (earliest planned ETA first; only the first announces).
@@ -260,7 +274,7 @@ snapshot, the same context (ETA, load, constraints, consignee, `now`) and the sa
 
 | Source | Effect |
 |---|---|
-| The clock (`now`) | Drives slot-in-past, the 5-minute snapshot age, hold expiry, the 15-minute menu life and GPS freshness. The same request a minute later can produce a different menu. |
+| The clock (`now`) | Drives slot-in-past, the 5-minute snapshot age, hold expiry, the 15-minute option life and GPS freshness. The same request a minute later can produce a different offer. |
 | Live data | Occupancy, dock events, labour rows and the latest GPS ping change continuously, and the GPS floor moves the arrival time. |
 | Commit order | When two drivers want one slot, whoever commits first wins (FCFS, D5). `allocate_fcfs` is deterministic only once that order is fixed; the database arbitrates in production. |
 | Identifiers | Appointment ids use `uuid4`, so they differ between runs. They never influence which slot is chosen. |
@@ -268,5 +282,5 @@ snapshot, the same context (ETA, load, constraints, consignee, `now`) and the sa
 
 ### Reproducing a result
 
-Freeze the clock (the injectable `Clock`), fix the database and fix the structured report: the menu, the hold and the confirmation then repeat exactly,
+Freeze the clock (the injectable `Clock`), fix the database and fix the structured report: the offer, the hold and the confirmation then repeat exactly,
 apart from the generated ids. `scripts/replay_traces.py` is the repo's tool for replaying recorded traces.

@@ -213,7 +213,7 @@ Jaipur Distribution Centre until they approve.*
 
 1. Open `http://localhost:8000/`.
 2. Under **Administrator password**, enter the admin email and the password from B6. This sign-in lasts one hour.
-3. Click **Warehouse** (or open `http://localhost:8000/warehouse`), then **Messages**.
+3. Click **Warehouse** (or open `http://localhost:8000/warehouse`). On the **Dock board** tab, find **Operations** and choose **Requests**.
 4. Find the facility change request and press **Approve** (or **Reject**).
 
 Within a few seconds Telegram receives a message without you writing anything:
@@ -273,5 +273,6 @@ Invoke-RestMethod -Method Post -Uri "https://api.telegram.org/bot$($env:SETUHAUL
 * The stand-in assistant understands only set phrases like those above.
 * The clock is fixed at 4 August 2026 to match the sample data, so holds never expire and a failed send is never retried.
 * No closer-truck offer appears: Telegram sends no location here.
+* Starting the server sets the test database's warehouses to open 24 hours; slots are added only where a crew number is entered.
 * This is a local trial, not a deployment: one server process, an in-memory Redis stand-in and a temporary public address.
 * Settings and server behaviour in detail: [running-and-demonstrating.md](running-and-demonstrating.md#7a-sign-in-roles-and-the-telegram-bot).

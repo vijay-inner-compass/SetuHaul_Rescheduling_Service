@@ -1,6 +1,6 @@
 # FAQ: questions you may be asked in a demonstration
 
-Answers describe the code as of 2026-11-26. Each answer starts with the short reply you can say aloud. Where the answer is
+Answers describe the code as of 2026-11-27. Each answer starts with the short reply you can say aloud. Where the answer is
 "no" or "not built", it says so: that is safer than being caught out. Test names in `backticks` are proof you can run:
 
 ```powershell
@@ -42,8 +42,8 @@ A truck is late and its dock appointment no longer works. Today someone phones a
 feasible slot held, and confirms with "Yes".
 
 **Who uses it?**
-Drivers (Telegram only), warehouse authorities (their facilities, on the web), admins (users, drivers, audit) and coordinators
-(cases the system hands over).
+Drivers (Telegram only), warehouse authorities (their facilities, on the web), gate security (checks trucks in and out), admins
+(users, drivers, audit, settings) and coordinators (cases the system hands over, over the API or CLI).
 
 **What is the end-to-end flow?**
 Driver reports a delay → the service works out the arrival time → finds feasible slots → holds the first for 3 minutes → driver
@@ -54,14 +54,21 @@ Drivers read on a phone, often on the road. One held slot with Yes or No is quic
 "No" releases it and holds the next.
 
 **Can a driver choose a particular time?**
-Not from a list. They can say No to move on. A time window they state is respected by the search.
+Not from a list. They can say No to move on. A time window they state is respected by the search. Operations can book a specific
+slot for them by resolving a case with **Assigned a slot**.
 
 **Can the driver cancel or keep the original?**
 "Keep my original slot" releases the hold and the original stands. Cancelling a confirmed booking is automatic only if the slot is
 at least 120 minutes away and the customer commitment is known and penalty-free; otherwise a person decides.
 
 **What does it not do?**
-Facility-wide optimisation, priority pre-emption, voice calls, a driver app or web screen, and billing.
+Facility-wide optimisation, priority pre-emption, voice calls, a driver app or web screen, billing, parking and dock allocation on
+arrival.
+
+**What happens at the gate?**
+For shipments created on the warehouse screen the driver is sent a Dock Access Pass. A guard types it with the vehicle and licence
+numbers, then checks the truck in and out. See [dock-access-pass.md](dock-access-pass.md).
+`test_the_whole_visit`
 
 ## 2. AI and the model
 
@@ -86,7 +93,8 @@ data. `test_driver_text_cannot_widen_the_tool_allowlist`, `test_no_tool_schema_e
 No. Every tool checks that the shipment belongs to the verified driver. `test_the_model_cannot_name_a_driver_or_reach_a_foreign_shipment`
 
 **Which models are supported?**
-OpenAI and Anthropic adapters behind one gateway. Set `SETUHAUL_MODEL_PROVIDER`, `SETUHAUL_MODEL_ID`, `SETUHAUL_MODEL_API_KEY`.
+OpenAI and Anthropic adapters behind one gateway. Set `SETUHAUL_MODEL_PROVIDER`, `SETUHAUL_MODEL_ID`, `SETUHAUL_MODEL_API_KEY`,
+or change them on **Admin > Configuration** (needs `SETUHAUL_SETTINGS_KEY`).
 
 **Has it run with a real model?**
 Yes, on the earlier numbered-menu design (2026-11-20, a handful of single-scenario runs). Those recordings were retired when the flow
@@ -110,8 +118,9 @@ Dock type and weight limit, unload time fitting one slot, dock blocks, truck abl
 customer commitment. See [scheduling-algorithm.md](scheduling-algorithm.md).
 
 **What if information is missing?**
-It says "cannot confirm", never "assume available". The supplied data has no labour or customer data at all, so on that data alone
-every case goes to a person; the demo adds clearly labelled fixture rows. `test_missing_labour_and_consignee_data_is_incomplete_not_feasible`
+It says "cannot confirm", never "assume available". The supplied data has no labour or customer data at all, so on those supplied
+loads every case goes to a person; the demo adds clearly labelled fixture rows. Loads created on the warehouse screen carry both,
+typed by warehouse staff (crew numbers and the customer's deadline). `test_missing_labour_and_consignee_data_is_incomplete_not_feasible`
 
 | The question: "what if…" | What happens | Proof |
 |---|---|---|
@@ -196,11 +205,11 @@ An admin, or the warehouse authority who onboarded the driver, revokes the link.
 Refused at once. Supplied sample drivers have no licence record, so their expiry is not checked.
 
 **Group chats, photos, voice notes, locations, edited messages?**
-Only private chats and text messages are handled. Anything else from a linked driver is ignored **without a reply**; edits are
+Only private chats and text messages are handled. A linked driver who sends anything else is told it cannot be read; edits are
 ignored. No location is read from Telegram.
 
 **What if the driver sends too many messages?**
-Over the rate limit, nothing is processed and **no reply is sent**.
+Over the rate limit, nothing is processed and the bot asks them to wait before sending it again.
 
 **What if Telegram sends the same update twice?**
 The update id is used as the message id, so it is processed once.
@@ -209,12 +218,13 @@ The update id is used as the message id, so it is processed once.
 Yes: facility change approved or rejected, closer-truck offer, lapsed hold. A sender checks every 5 seconds.
 
 **Do booking confirmations get pushed?**
-The driver gets them as the reply to their "Yes". There is no separate push for bookings, cancellations or case updates, and
-coordinator updates appear only in the stored chat.
+The driver gets them as the reply to their "Yes". Case claimed and resolved, messages written by Operations, and warehouse moves
+or freed slots are also sent to the phone. `test_claim_and_resolve_are_queued_for_the_phone`
 
 **What if Telegram is unreachable?**
-Queued messages get five attempts over about ten minutes (30 s, 1, 3 and 5 minutes), kept in order per driver. A direct reply to a
-driver's own message is attempted once. Messages older than 30 minutes are not sent.
+Queued messages get five attempts over about ten minutes (30 s, 1, 3 and 5 minutes), kept in order per driver. A direct reply that
+fails is queued when the driver has a load. Messages older than 30 minutes are not sent; Operations sees a message the service
+gave up on and can resend it.
 
 **What if our server is down when a driver writes?**
 Telegram keeps retrying the webhook for a while. If the database is unavailable we answer 503 so it retries.
@@ -262,7 +272,8 @@ model**: whatever a driver types, or someone wrote in a note, is sent as written
 
 **How is data protected?**
 * Identity is verified by the channel or session, never taken from the message.
-* Warehouse users see only their facilities, and driver chats only for drivers on their live projects, from the day of allocation.
+* Warehouse users see only their facilities, and driver chats only for messages about loads going to those facilities. Messages not
+  tied to a load are seen by admins only.
 * Phone numbers are masked in the driver lists; licence numbers are never returned by them.
 * Session tokens are stored only as hashes; the backup password is hashed with scrypt.
 * Our structured logs mask phone numbers and secrets; recorded test traces are sanitised.
@@ -289,11 +300,12 @@ No. It holds sample data and generated fixtures. Keys live in a git-ignored `.en
 ## 7. Security and access
 
 **How do staff sign in?**
-Google, by invitation only. An admin may also have a backup password: off by default, locked for 15 minutes after five failures,
+Google, by invitation only, or email and password where `SETUHAUL_PASSWORD_LOGIN=1` (a one-time emailed link sets it; five wrong
+attempts lock it for 15 minutes). An admin may also have a backup password: off by default, locked for 15 minutes after five failures,
 one-hour session, every attempt audited. Google sign-in has **not** been run against real Google.
 
 **What can each role do?**
-Admin: everything. Warehouse authority: their facilities. Drivers: only their own loads, by Telegram. Every route is classified in a
+Admin: everything. Warehouse authority: their facilities. Security: the gate at their facilities. Drivers: only their own loads, by Telegram. Every route is classified in a
 role test, and out-of-scope items answer "not found".
 
 **Web attacks?**
@@ -314,13 +326,15 @@ The database forbids updates and deletes through triggers. Someone with file acc
 
 **Server crashes while processing?** The message claim is taken over after 60 seconds. `test_a_message_still_being_processed_is_reported_and_a_stale_claim_is_taken_over`
 
-**How does a person get involved?** A case with a reference, the reason and the recent messages. A coordinator claims and resolves it
-and the note appears in the driver's chat. No response time is promised, because none has been approved.
+**How does a person get involved?** A case with a reference, the reason and the recent messages. A coordinator or warehouse user claims
+and resolves it; the note reaches the driver's chat and phone, and **Assigned a slot** books the slot. No response time is promised,
+because none has been approved.
 
 **Monitoring and alerting?** Health and readiness endpoints, request ids and structured logs. **No dashboards or alerts.**
 
-**Backups, high availability, deployment?** **Not built.** One server process, one SQLite file, run locally. There is no container image
-or deployment pipeline, and the CI workflow in the repository is not being run.
+**Backups, high availability, deployment?** One server process, one SQLite file. A container image and a ForgeCI deployment to a VPS
+are described in [deployment-hostinger.md](deployment-hostinger.md), but **no deployment has been run through it** (as recorded
+there). No high availability. Checks are run locally; GitHub Actions is not used.
 
 **Can I accidentally damage the sample database?** The server and password script refuse to run on it.
 `test_the_server_does_not_start_on_the_sample_database`
@@ -347,7 +361,7 @@ Pings arrive only over the signed channel.
 ## 10. Testing and evidence
 
 **How much testing is there?**
-1364 automated tests, linting and strict type checks; a 23-check end-to-end scenario; 6 replayed traces with 58 evaluator checks;
+1,972 automated tests, linting and strict type checks; a 23-check end-to-end scenario; 9 replayed traces with 109 evaluator checks;
 concurrency and scale scripts. Run them: [running-and-demonstrating.md](running-and-demonstrating.md).
 
 **What has never been tested?**

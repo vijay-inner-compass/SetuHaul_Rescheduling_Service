@@ -9,7 +9,7 @@ sources:
   - code: src/setuhaul/auth/shipments.py
   - code: src/setuhaul/auth/shipment_routes.py
   - code: src/setuhaul/auth/assets/common.js
-verified_at: f5e477e
+verified_at: b5b462f
 ---
 
 # Refusal messages
@@ -19,7 +19,7 @@ and `problems` (a list of `field` and `problem`).
 
 ## Where the words come from
 
-- Malformed bodies: the handler at `src/setuhaul/api.py:425` turns validation errors into `problems` through
+- Malformed bodies: the handler at `src/setuhaul/api.py:439` turns validation errors into `problems` through
   `src/setuhaul/auth/refusals.py:45`.
 - Hand-written checks raise `InvalidRequest` (`src/setuhaul/auth/refusals.py:28`). The route that catches it
   must add `details_of(exc)` to its answer.

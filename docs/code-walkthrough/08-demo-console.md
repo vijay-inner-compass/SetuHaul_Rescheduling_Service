@@ -4,7 +4,8 @@ Files: `demo_ui.py`, `demo/index.html`, `scripts/run_demo.py`. Decision D64.
 
 ## What it is
 
-A localhost-only web page that drives the **real service**. It has three panels: a driver console (chat), a dock board
+A localhost-only web page that drives the **real service**. It has three panels: a driver console (read only; messages are typed on the
+separate `/demo/driver-login` page), a dock board
 (dock-by-hour grid) and an operations panel (cases, history, notification outbox). It is a demonstration aid, not a
 production surface.
 
@@ -26,8 +27,9 @@ production surface.
 
 ## Routes (`/demo/api/...`)
 
-`config`, `drivers`, `chat`, `driver/{id}/state`, `board`, `planner-booking`, `clock`, `reset`, `cases`,
-`cases/{id}/claim`, `cases/{id}/resolve`, `activity`, `deliver`.
+`config`, `drivers`, `chat`, `driver/{id}/state`, `gps`, `driver/{id}/gps`, `board`, `planner-booking`, `clock`,
+`partner-request`, `partner-mailbox`, `partner-reply`, `partner-sync`, `reset`, `cases`, `cases/{id}/claim`, `cases/{id}/resolve`,
+`activity`, `deliver`.
 
 * **planner-booking** books a slot as the warehouse planner using a spare load, so you can create a real conflict with a driver's
   hold. The shared unique index decides the winner.
@@ -39,7 +41,7 @@ production surface.
 python scripts/run_demo.py
 ```
 
-Opens `http://127.0.0.1:8800/demo`. See the [demonstration guide](../demonstration-guide.md) for what to do on the page.
+Opens `http://127.0.0.1:8800/`: sign in, then go to `/demo` (`--auto-login` skips sign-in). See the [demonstration guide](../demonstration-guide.md) for what to do on the page.
 
 ## Edge cases and failure scenarios
 

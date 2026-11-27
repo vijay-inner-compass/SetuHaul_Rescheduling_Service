@@ -51,7 +51,8 @@ so the service opens a `NO_SLOT` case and changes nothing.
 
 ## What does not work yet
 * No recorded real-model run of the current flow.
-* No labour or consignee data, so on the supplied data alone no otherwise feasible slot can be offered.
+* No labour or consignee feed: on the supplied data alone no otherwise feasible slot can be offered, and screen-created loads rest on
+  figures warehouse staff type.
 * A driver is not told why an earlier slot went to someone else.
 * Hindi and Hinglish wording is unreviewed.
 * No real driver has used it.

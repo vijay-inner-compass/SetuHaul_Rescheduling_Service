@@ -1,7 +1,8 @@
 # Model Contract (Phase 8)
 
 The model **interprets and drafts**. Code **decides and states facts**. Provider, model id and key come from
-the environment (`SETUHAUL_MODEL_PROVIDER`, `SETUHAUL_MODEL_ID`, `SETUHAUL_MODEL_API_KEY`); none is in the repo.
+the environment (`SETUHAUL_MODEL_PROVIDER`, `SETUHAUL_MODEL_ID`, `SETUHAUL_MODEL_API_KEY`) or from values an admin saved on
+**Admin > Configuration**, which override it; none is in the repo. Each call is recorded as numbers and codes only (D98).
 Two provider adapters exist, `anthropic` and `openai`, chosen by `SETUHAUL_MODEL_PROVIDER`. The OpenAI adapter was run live on 2026-11-20 on the
 earlier numbered-menu flow; those recordings are retired and the current flow has no recorded live run. Provider approval is still open (Q9).
 
@@ -37,6 +38,8 @@ Rules enforced in code, not by the prompt:
    only the latest option set can be held (`NOT_LATEST_OPTION_SET`).
 4. The model never supplies an ETA: `compute_eta` / `search_slot_options` derive it from a delay report (planned ETA baseline).
 5. Text from loads, notes or other parties is returned only under `untrusted_text`.
+6. A shipment created on the warehouse screen is invisible to every tool until the driver has sent its Dock Access Pass; pass
+   codes are blanked before a message is saved or sent to the model (D101).
 
 ## What the system words itself
 A committed hold, confirmation, release or cancellation is worded from the committed row in the driver's language
@@ -48,7 +51,7 @@ times the tool returned. A lapsed hold is reported once from the `HOLD_EXPIRED` 
 ## Failures
 | Situation | Driver hears | Recorded |
 |---|---|---|
-| Model fails before any commit | safe status, nothing booked or held | `MODEL_UNAVAILABLE` escalation |
+| Model fails before any commit | safe status, nothing booked or held | `MODEL_UNAVAILABLE` escalation; a refused request's reason goes to the server log (`model_call.refused`) |
 | Model fails after a commit | the deterministic committed-state wording | nothing |
 | Round / tool / deadline / budget limit | hand-off wording with case reference | `MODEL_LOOP_LIMIT` |
 | Database fails mid-turn | temporary-unavailable, nothing promised | `DATABASE_UNAVAILABLE` in the JSONL fallback (a DB outage cannot be recorded in the DB) |

@@ -14,9 +14,11 @@ A hand-off is a **case in a queue owned by coordinators**.
   folded into it as a `DUPLICATE_REQUEST` event instead of creating a second case. The database also enforces one active
   case per key with a partial unique index.
 * `claim_case`: `OPEN` only; two coordinators racing produce one owner; the second is told who holds it. `resolve_case`:
-  only the claiming coordinator, with a known resolution code. `cancel_case_by_driver` and `reopen_case` follow the rules
+  only the claiming coordinator, with a known resolution code. From the web, `ASSIGNED_SLOT` must name a slot, which `assign.py`
+  books in the same transaction; any other outcome may not name one. `cancel_case_by_driver` and `reopen_case` follow the rules
   above.
-* The driver is told in the chat, in their language, when a case is claimed, resolved or cancelled. **No response time is
+* The driver is told in the chat, in their language, when a case is claimed, resolved or cancelled; claim and resolve are also
+  queued for their phone when the case names a load. **No response time is
   promised** unless operations has approved an SLA (`escalation_sla_minutes`).
 * **Fallback:** if the database is down, `JsonlEscalationSink` appends the hand-off to a file and flushes it to disk.
   `ingest_fallback_file` loads it back later, once, and renames it.
@@ -46,7 +48,8 @@ Other routes:
 | `GET /v1/driver/status` | signed, timestamp must be within 5 minutes, read-only |
 | `GET/POST /v1/coordinator/cases...` | list, show, claim, resolve, reopen; bearer token compared in constant time |
 
-Errors are always `{status, reason_code, request_id}`. No stack trace, prompt, SQL or file path leaves the process. Docs
+Errors always carry `{status, reason_code, request_id}`, and may add a `message` and `problems` saying what to fix
+([refusal messages](../subsystems/refusal-messages.md)). The web, admin, warehouse, gate and Telegram routes are registered from `auth/`. No stack trace, prompt, SQL or file path leaves the process. Docs
 and schema endpoints are switched off. `create_app_from_env` builds the app from environment variables only.
 
 ## Edge cases and failure scenarios
