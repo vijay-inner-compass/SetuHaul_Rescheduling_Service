@@ -20,10 +20,13 @@ SECTIONS: dict[str, tuple[str, ...]] = {
     "langsmith": ("SETUHAUL_LANGSMITH_ENABLED", "SETUHAUL_LANGSMITH", "LANGSMITH_API_KEY", "LANGSMITH_PROJECT",
                   "SETUHAUL_LANGSMITH_HIDE_TEXT"),
     "telegram": ("SETUHAUL_TELEGRAM_BOT_TOKEN", "SETUHAUL_TELEGRAM_WEBHOOK_SECRET"),
+    # The mailbox for password links only. Whether they are sent, and the site address in them, stay in .env.
+    "email": ("SETUHAUL_SMTP_HOST", "SETUHAUL_SMTP_PORT", "SETUHAUL_SMTP_USER", "SETUHAUL_SMTP_PASSWORD",
+              "SETUHAUL_SMTP_FROM"),
 }
 EDITABLE = frozenset(name for names in SECTIONS.values() for name in names)
 SECRETS = frozenset({"SETUHAUL_MODEL_API_KEY", "LANGSMITH_API_KEY", "SETUHAUL_TELEGRAM_BOT_TOKEN",
-                     "SETUHAUL_TELEGRAM_WEBHOOK_SECRET"})
+                     "SETUHAUL_TELEGRAM_WEBHOOK_SECRET", "SETUHAUL_SMTP_PASSWORD"})
 
 
 @dataclass(frozen=True)

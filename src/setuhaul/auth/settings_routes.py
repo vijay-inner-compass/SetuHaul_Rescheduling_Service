@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 import secrets
 import sqlite3
 from typing import TYPE_CHECKING, Annotated, Any, Literal
@@ -80,7 +81,21 @@ class TelegramBody(_Body):
     generate_secret: Literal["yes"] | None = None
 
 
-BODIES: dict[str, type[_Body]] = {"model": ModelBody, "langsmith": LangSmithBody, "telegram": TelegramBody}
+class EmailBody(_Body):
+    host: Annotated[str, StringConstraints(strip_whitespace=True, max_length=200, pattern=r"^[A-Za-z0-9.-]+$")] | None = None
+    port: Annotated[str, StringConstraints(strip_whitespace=True, max_length=10)] | None = None
+    user: Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)] | None = None
+    password: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] | None = None
+    # Empty: send as the sending user.
+    sender: Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)] | None = None
+
+
+BODIES: dict[str, type[_Body]] = {"model": ModelBody, "langsmith": LangSmithBody, "telegram": TelegramBody,
+                                  "email": EmailBody}
+# A plain address: no spaces, one @, something on both sides.
+_ADDRESS = re.compile(r"^[^@\s]+@[^@\s]+$")
+# How Google shows an app password; the spaces are not part of it.
+_APP_PASSWORD = re.compile(r"^[a-z]{4}( [a-z]{4}){3}$")
 
 
 def parse_body(model: type[_Body], raw: object) -> Any:
@@ -138,6 +153,28 @@ def _langsmith_changes(body: LangSmithBody, now: app_settings.Effective) -> dict
     return values
 
 
+def _email_changes(body: EmailBody, now: app_settings.Effective) -> dict[str, str]:
+    values: dict[str, str] = {}
+    if body.port is not None and not (body.port.isascii() and body.port.isdigit() and 0 < int(body.port) <= 65535):
+        raise AuthError("INVALID_PORT")
+    for address in (body.user, body.sender):
+        if address and not _ADDRESS.match(address):
+            raise AuthError("INVALID_EMAIL")
+    for field, name in (("host", "SETUHAUL_SMTP_HOST"), ("port", "SETUHAUL_SMTP_PORT"), ("user", "SETUHAUL_SMTP_USER"),
+                        ("sender", "SETUHAUL_SMTP_FROM")):
+        if getattr(body, field) is not None:
+            values[name] = getattr(body, field)
+    if body.password:
+        password = body.password
+        values["SETUHAUL_SMTP_PASSWORD"] = password.replace(" ", "") if _APP_PASSWORD.match(password) else password
+    elif now.env.get("SETUHAUL_SMTP_PASSWORD") and any(
+            name in values and values[name] != now.env.get(name, "")
+            for name in ("SETUHAUL_SMTP_HOST", "SETUHAUL_SMTP_PORT", "SETUHAUL_SMTP_USER")):
+        # A stored password is never sent to a server or account it was not typed for.
+        raise AuthError("SMTP_PASSWORD_REQUIRED")
+    return values
+
+
 def _telegram_changes(body: TelegramBody, now: app_settings.Effective) -> dict[str, str]:
     values: dict[str, str] = {}
     if body.bot_token:
@@ -187,8 +224,8 @@ def _view(now: app_settings.Effective) -> dict[str, dict[str, object]]:
             entry["value"] = value
         else:
             entry["set"] = bool(value)
-            # The webhook secret shows no characters at all; a short key would show most of itself.
-            if name != "SETUHAUL_TELEGRAM_WEBHOOK_SECRET":
+            # A webhook secret or mail password shows no characters at all; a short key would show most of itself.
+            if name not in ("SETUHAUL_TELEGRAM_WEBHOOK_SECRET", "SETUHAUL_SMTP_PASSWORD"):
                 entry["last4"] = value[-4:] if len(value) >= 8 else ""
         out[name] = entry
     return out
@@ -248,6 +285,8 @@ def register_settings_routes(app: FastAPI, deps: AppDeps) -> None:
                 values = _langsmith_changes(body, before)
             elif isinstance(body, TelegramBody):
                 values = _telegram_changes(body, before)
+            elif isinstance(body, EmailBody):
+                values = _email_changes(body, before)
             if any(n in app_settings.SECRETS for n in values) and app_settings.master_key_problem(source.base_env):
                 raise AuthError("SETTINGS_KEY_UNAVAILABLE")
             # Only what was really saved counts as removed.
