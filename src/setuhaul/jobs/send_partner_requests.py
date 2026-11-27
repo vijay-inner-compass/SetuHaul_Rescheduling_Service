@@ -28,8 +28,12 @@ MAX_ATTEMPTS = 5
 
 def send_pending_requests(conn: sqlite3.Connection, clock: Clock, sender: MailSender) -> int:
     """Send every open request whose email is still PENDING. Returns how many were sent."""
-    rows = conn.execute("select request_ref, message_id, email_attempts from partner_requests "
-                        "where email_status='PENDING' and status='PENDING_PARTNER' order by created_at").fetchall()
+    now = clock.now().isoformat()
+    rows = conn.execute(
+        "select request_ref, message_id, email_attempts from partner_requests "
+        "where email_status='PENDING' and status='PENDING_PARTNER' and expires_at > ? order by created_at",
+        (now,),
+    ).fetchall()
     sent = 0
     for row in rows:
         ref = row["request_ref"]

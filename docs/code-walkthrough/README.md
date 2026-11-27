@@ -9,7 +9,7 @@ part is for, how a request travels through it, why it is built that way, and wha
 
 A truck driver messages that they are late. The service works out a new arrival time, finds dock slots that can really
 take the truck, **holds** the first of them for 3 minutes ("No" moves to the next), and **confirms**
-it when the driver says yes in a later message, ending the old appointment and telling the warehouse planner, the
+it when the driver says yes in a later message, ending the old appointment and queuing notices for the warehouse planner, the
 customer and operations. A language model helps with understanding and questions, but it **never decides**: identity,
 timing, capacity, approvals and every statement about a booking come from code and the database.
 

@@ -129,13 +129,15 @@ from setuhaul.identity import (
 from setuhaul.jobs.expire_holds import MaintenanceRunner
 
 # The background sender of queued driver notices.
+from setuhaul.jobs.partner_mail import PartnerMailRunner
 from setuhaul.jobs.send_driver_notifications import DriverNoticeRunner
 
 # The driver's language, for the fixed pass replies.
 from setuhaul.language import LANGS, detect_language, say
 
 # The shape of anything that can send an email.
-from setuhaul.mail_transport import MailSender
+from setuhaul.mail_transport import MailReader, MailSender, build_mail
+from setuhaul.mailcfg import load_mail_settings
 
 # Conversation memory.
 from setuhaul.memory import ConversationMemoryStore
@@ -230,7 +232,18 @@ class AppDeps:
     # Seconds between delivery passes.
     notice_interval_s: float = 5.0
     # Tell Telegram this service's webhook address at start-up (needs settings and public_url).
+    # Tell Telegram this service's webhook address at start-up (needs settings and public_url).
     auto_register_webhook: bool = False
+    # Partner-warehouse email transport (sender, reader); None leaves the partner mail runner off.
+    partner_mail: tuple[MailSender, MailReader] | None = None
+    # Start the background partner-mail runner (send requests, poll replies, expire overdue requests).
+    run_partner_mail: bool = False
+    # Seconds between partner-mail passes.
+    partner_mail_interval_s: float = 30.0
+    # Require Authentication-Results (DMARC/DKIM) on partner replies: true in live mode, false in simulated tests.
+    partner_mail_require_auth: bool = False
+    # Receiving server name checked in Authentication-Results when partner_mail_require_auth is true.
+    partner_mail_auth_serv_id: str = "mx.google.com"
 
     def password_mail(self) -> PasswordMail:
         """The sender for password links in force now: the screen's saved mailbox over the environment's."""
@@ -390,6 +403,18 @@ def create_app(deps: AppDeps) -> FastAPI:
         elif deps.run_driver_notices and deps.telegram is not None:
             notices = DriverNoticeRunner(deps.clock, deps.telegram, lambda: open_connection(path=deps.db_path), deps.notice_interval_s)
             notices.start()
+        # On its own thread, so a slow or unreachable mail server never delays hold expiry or driver notices.
+        partner = None
+        if deps.run_partner_mail and deps.partner_mail is not None:
+            p_sender, p_reader = deps.partner_mail
+            partner = PartnerMailRunner(
+                None, deps.clock, p_sender, p_reader,
+                interval_seconds=deps.partner_mail_interval_s,
+                conn_factory=lambda: open_connection(path=deps.db_path),
+                require_auth=deps.partner_mail_require_auth,
+                auth_serv_id=deps.partner_mail_auth_serv_id,
+            )
+            partner.start()
         # On its own thread, so a slow or unreachable Telegram does not delay start-up.
         registration = None
         if deps.auto_register_webhook:
@@ -404,6 +429,8 @@ def create_app(deps: AppDeps) -> FastAPI:
                 await run_in_threadpool(runner.stop)
             if notices is not None:
                 await run_in_threadpool(notices.stop)
+            if partner is not None:
+                await run_in_threadpool(partner.stop)
             if registration is not None:
                 await run_in_threadpool(registration.join, 25)
 
@@ -1026,6 +1053,18 @@ def telegram_from_env() -> tuple[bytes, TelegramClient | None]:
     return secret.encode(), RealTelegramClient(token, httpx.Client(timeout=10.0))
 
 
+def partner_mail_from_env() -> tuple[tuple[MailSender, MailReader] | None, bool, str]:
+    """Partner-warehouse mail transport for live mode only. Misconfiguration logs a warning and leaves the runner off."""
+    try:
+        mail_settings = load_mail_settings()
+    except ValueError as exc:
+        logging.getLogger(__name__).warning("Partner email runner disabled: %s", exc)
+        return None, False, "mx.google.com"
+    if mail_settings.mode != "live":
+        return None, False, mail_settings.auth_serv_id
+    return build_mail(mail_settings), True, mail_settings.auth_serv_id
+
+
 def create_app_from_env() -> FastAPI:
     """``uvicorn --factory setuhaul.api:create_app_from_env``. Secrets come from the environment only."""
 
@@ -1108,6 +1147,8 @@ def create_app_from_env() -> FastAPI:
     _, unset = account_sender_from_env(os.environ)
     if unset:
         logging.getLogger(__name__).warning("Password sign-in disabled: set %s", ", ".join(unset))
+    # Partner-warehouse email: runs automatically in the background only when configured for live use.
+    p_mail, p_require_auth, p_serv_id = partner_mail_from_env()
     # Assemble the dependencies and build the app.
     return create_app(AppDeps(
         telegram_secret=tg_secret, telegram=tg_client,
@@ -1121,6 +1162,8 @@ def create_app_from_env() -> FastAPI:
         fallback_path=Path(os.environ.get("SETUHAUL_FALLBACK_ESCALATIONS", "escalations-fallback.jsonl")), policy=policy,
         # With a bot, queued notices are sent, and the sweep runs so that lapsed offers are noticed and unbooked moves go back.
         gateway_factory=factory, run_driver_notices=tg_client is not None,
+        partner_mail=p_mail, run_partner_mail=p_mail is not None,
+        partner_mail_require_auth=p_require_auth, partner_mail_auth_serv_id=p_serv_id,
         run_maintenance=os.environ.get("SETUHAUL_RUN_MAINTENANCE") == "1" or tg_client is not None, clock=clock))
 
 

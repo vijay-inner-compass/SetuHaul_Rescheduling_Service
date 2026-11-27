@@ -105,7 +105,8 @@ class FakeIMAP:
     last: FakeIMAP
     mails: ClassVar[dict[str, bytes]] = {"1": RAW, "2": HTML_ONLY, "3": BOGUS}
 
-    def __init__(self, host: str, port: int, ssl_context: object = None) -> None:
+    def __init__(self, host: str, port: int, ssl_context: object = None, timeout: float = 0) -> None:
+        self.timeout = timeout
         self.ssl_context = ssl_context
         self.calls: list[tuple[str, tuple]] = []
         FakeIMAP.last = self
