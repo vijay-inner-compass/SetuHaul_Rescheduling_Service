@@ -39,6 +39,8 @@ Let me find fresh options.
 
 -- 6. Cancellation --
 [09:44:00] DRV001: please cancel my 12:00 appointment for SHP1017
+           SERVICE (REPLIED): Do you want to cancel your appointment at dock D1, 12:00-13:00 on 04 Aug 2026? Reply Yes to cancel it. Nothing has been cancelled yet.
+[09:44:20] DRV001: yes
            SERVICE (REPLIED): Your appointment has been cancelled. Reference APT1017.
 
 -- 7. Escalations --
@@ -66,7 +68,7 @@ Let me find fresh options.
            SHP1006 #4  ORIGINAL_ENDED         APT1006        CONFIRMED -> CANCELLED DRIVER/DRV006  RESCHEDULED
            SHP1006 #5  RESCHEDULE_CONFIRMED   $HOLD1      HELD -> CONFIRMED DRIVER/DRV006  DRIVER_CONFIRMED_OPTION
            SHP1017 #8  APPOINTMENT_CANCELLED  APT1017        CONFIRMED -> CANCELLED DRIVER/DRV001  DRIVER_CANCELLED
-           delivery run 1: sent=7 failed=1 permanent=0
+           delivery run 1: sent=9 failed=1 permanent=0
            delivery run 2: sent=1 failed=0 permanent=0
            outbox  WAREHOUSE_PLANNER  RESCHEDULE_CONFIRMED   SENT       attempts=1
            outbox  CONSIGNEE          RESCHEDULE_CONFIRMED   SENT       attempts=2
@@ -76,6 +78,8 @@ Let me find fresh options.
            outbox  WAREHOUSE_PLANNER  APPOINTMENT_CANCELLED  SENT       attempts=1
            outbox  CONSIGNEE          APPOINTMENT_CANCELLED  SENT       attempts=1
            outbox  OPERATIONS         APPOINTMENT_CANCELLED  SENT       attempts=1
+           outbox  DRIVER             DRIVER_NOTICE          SENT       attempts=1
+           outbox  DRIVER             DRIVER_NOTICE          SENT       attempts=1
 
 -- integrity: check_invariants() -> [] --
 ```
@@ -118,7 +122,7 @@ Let me find fresh options.
 | Zero unauthorised cross-driver reads | 0 succeeded of 1 attempted (1 refused) | one scripted attempt |
 | 100% state-backed confirmations | 1 / 1 | confirmation replies that cite a committed CONFIRMED row |
 | 100% complete no-slot hand-offs | 3 / 3 | all hand-offs, not only no-slot |
-| Evaluator checks | 56 / 56 | {'identity': '6/6', 'tool_order': '13/13', 'explicit_approval': '6/6', 'option_set_ownership': '6/6', 'state_backed_wording': '7/7', 'round_caps': '12/12', 'handoff_complete': '6/6'} |
+| Evaluator checks | 58 / 58 | {'identity': '6/6', 'tool_order': '14/14', 'explicit_approval': '6/6', 'option_set_ownership': '6/6', 'state_backed_wording': '7/7', 'round_caps': '13/13', 'handoff_complete': '6/6'} |
 | Median clarification turns | not judged | one scripted clarification; a script is not a model |
 | >= 80% automatic resolution | 2 / 6 drivers | deliberately a hard morning; not a test of the 80% target; not judged |
 
