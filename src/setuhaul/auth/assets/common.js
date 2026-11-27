@@ -51,6 +51,7 @@
     NOT_BOUND: "That driver has no linked Telegram account.",
     NOT_REVOKED: "That driver's Telegram access is not revoked.",
     UNKNOWN_USER: "That user no longer exists. Reload the page.",
+    NOT_FACILITY_BOUND: "Only warehouse and security users have facilities.",
     UNKNOWN_FACILITY: "That facility does not exist.",
     UNKNOWN_SECTION: "That settings section does not exist.",
     CONFIRMATION_REQUIRED: "This change needs to be confirmed first.",
@@ -239,6 +240,14 @@
     }, 0);
   }
 
+  // True when it is safe to go on: an action reloads the page, which would drop what was typed elsewhere.
+  function keep(source) {
+    var other = Array.prototype.some.call(document.querySelectorAll("form[data-dirty]"), function (form) {
+      return form !== source && !form.contains(source);
+    });
+    return !other || window.confirm("Something you typed in another form on this page will be lost. Continue?");
+  }
+
   // Read a form into a JSON object: multi-selects become arrays, empty fields are left out.
   function collect(form) {
     var body = {};
@@ -246,7 +255,13 @@
       if (!field.name || field.disabled || field.type === "submit" || field.type === "button") {
         return;
       }
-      if (field.multiple) {
+      if (field.type === "checkbox") {
+        // Checkboxes of one name make one list, holding only what is ticked.
+        body[field.name] = body[field.name] || [];
+        if (field.checked) {
+          body[field.name].push(field.value);
+        }
+      } else if (field.multiple) {
         body[field.name] = Array.prototype.filter.call(field.options, function (o) { return o.selected; })
           .map(function (o) { return o.value; });
       } else if (field.value !== "") {
@@ -291,11 +306,20 @@
         return;
       }
       var ask = button.getAttribute("data-confirm");
-      if (ask && !window.confirm(ask)) {
+      if (!keep(button) || (ask && !window.confirm(ask))) {
         return;
       }
       var raw = button.getAttribute("data-body");
       send(button, button, raw ? JSON.parse(raw) : {});
+    });
+    // Only what the user did counts: scripts that adjust a dropdown do not make a form unsaved.
+    ["input", "change"].forEach(function (kind) {
+      document.addEventListener(kind, function (event) {
+        var form = event.target.form;
+        if (event.isTrusted && form && (form.hasAttribute("data-api") || form.hasAttribute("data-settings"))) {
+          form.setAttribute("data-dirty", "true");
+        }
+      });
     });
     flash();
   }
@@ -314,12 +338,12 @@
       return;
     }
     var ask = form.getAttribute("data-confirm");
-    if (ask && !window.confirm(ask)) {
+    if (!keep(form) || (ask && !window.confirm(ask))) {
       return;
     }
     send(form, form.querySelector("button[type=submit]"), collect(form));
   }
 
-  window.SH = { init: init, say: say, reason: reason };
+  window.SH = { init: init, say: say, reason: reason, keep: keep };
   init();
 })();

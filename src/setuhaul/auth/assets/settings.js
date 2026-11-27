@@ -55,6 +55,9 @@
       }
       body.confirm = "SEND_TO_LANGSMITH";
     }
+    if (!window.SH.keep(form)) {
+      return;
+    }
     window.SH.say("Working...");
     post("/v1/admin/settings/" + section, body).then(function (result) {
       if (result.ok) {

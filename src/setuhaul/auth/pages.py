@@ -24,6 +24,7 @@ from setuhaul.auth.settings_routes import settings_view
 from setuhaul.auth.signin_notice import NOTICES
 from setuhaul.auth.users import User
 from setuhaul.auth.warehouse_routes import (
+    MAX_LIMIT,
     case_ids_in_scope,
     driver_chats_in_scope,
     driver_list,
@@ -65,6 +66,8 @@ SECURITY_HEADERS = {
     "Referrer-Policy": "no-referrer",
     "Cache-Control": "no-store",
 }
+# Which facility the warehouse screen was last showing. Not a permission: scope is checked on every request.
+FACILITY_COOKIE = "sh_facility"
 # Statuses a board cell can have, and so the only CSS class suffixes used for them.
 _CELL_CLASSES = {"AVAILABLE": "available", "BOOKED": "booked", "HELD": "held", "BLOCKED": "blocked"}
 
@@ -196,9 +199,20 @@ def _landing(google: bool, local_admin: bool, notice: str = "") -> str:
             '</div></main><script src="/app/assets/common.js" defer></script></body></html>')
 
 
-def _tabs(items: tuple[tuple[str, str], ...]) -> str:
-    # The section switcher shared by the warehouse and admin screens; tabs.js does the switching.
-    links = "".join(f'<a href="#{key}" data-tab="{key}">{esc(label)}</a>' for key, label in items)
+def _checkboxes(name: str, items: list[tuple[str, str]], chosen: tuple[str, ...] = ()) -> str:
+    return "".join(f'<label class="check"><input type="checkbox" name="{name}" value="{esc(value)}"'
+                   f'{" checked" if value in chosen else ""}> {esc(label)}</label>' for value, label in items)
+
+
+def _tabs(items: tuple[tuple[str, str], ...], counts: Mapping[str, int] | None = None) -> str:
+    # The section switcher shared by the warehouse and admin screens; tabs.js does the switching. A tab with a queue
+    # behind it carries the number waiting; the span stays when empty so the live refresh can fill it.
+    def badge(key: str) -> str:
+        if counts is None or key not in counts:
+            return ""
+        return f' <span class="count {key}-count">{counts[key] or ""}</span>'
+
+    links = "".join(f'<a href="#{key}" data-tab="{key}">{esc(label)}{badge(key)}</a>' for key, label in items)
     return f'<nav class="tabs" aria-label="Sections">{links}</nav>'
 
 
@@ -213,15 +227,22 @@ def _users_section(conn: sqlite3.Connection, me: User) -> str:
         if found is None:
             continue
         # Only an active user other than yourself can be disabled.
-        action = (_button("Disable", f"/v1/admin/users/{_segment(found.user_id)}/disable", confirm=f"Disable {found.email}?")
+        base = f"/v1/admin/users/{_segment(found.user_id)}"
+        action = (_button("Disable", f"{base}/disable", confirm=f"Disable {found.email}? Their sessions end at once.")
                   if found.status == "ACTIVE" and found.user_id != me.user_id else "")
+        if found.status == "DISABLED":
+            action = _button("Re-enable", f"{base}/enable", confirm=f"Let {found.email} sign in again?", done="User re-enabled.")
+        if found.role in users.FACILITY_BOUND:
+            action += (f'<details><summary>Change facilities</summary><form data-api="{esc(base)}/facilities" '
+                       f'data-done="Facilities saved.">{_checkboxes("facilities", facilities, found.facilities)}'
+                       '<button type="submit">Save facilities</button></form></details>')
         rows.append([esc(found.email), esc(found.display_name), esc(found.role), esc(found.status),
                      esc(", ".join(found.facilities)), esc(row["last_login_at"] or "never"), action])
     invite = ('<h3>Invite a user</h3><form data-api="/v1/admin/users"><label>Email <input name="email" type="email" required></label>'
               '<label>Display name <input name="display_name" required maxlength="120"></label>'
               '<label>Role <select name="role"><option value="WAREHOUSE_AUTHORITY">Warehouse authority</option>'
               '<option value="SECURITY">Security (gate)</option><option value="ADMIN">Admin</option></select></label>'
-              f'<label>Facilities <select name="facilities" multiple size="4">{_options(facilities)}</select></label>'
+              f'<fieldset data-facilities><legend>Facilities</legend>{_checkboxes("facilities", facilities)}</fieldset>'
               '<button type="submit">Invite</button></form>')
     table = _table(("Email", "Name", "Role", "Status", "Facilities", "Last login", ""), rows)
     return f'<section id="users" data-panel="users"><h2>Users</h2>{table}{invite}</section>'
@@ -457,13 +478,31 @@ def _configuration_section(conn: sqlite3.Connection, deps: AppDeps) -> str:
     return f'<section id="config" data-panel="config"><h2>Configuration</h2>{top}{model}{tracing}{bot}</section>'
 
 
+def _cards(items: list[tuple[str, str, int]]) -> str:
+    cards = "".join(f'<li><a href="{esc(target)}" class="{"hot" if n else "calm"}"><b>{n}</b><span>{label}</span></a></li>'
+                    for target, label, n in items)
+    return f'<ul class="attention" aria-label="Needs attention">{cards}</ul>'
+
+
+def _admin_attention(conn: sqlite3.Connection, me: User, pending: int) -> str:
+    # What is waiting anywhere. A case that names no load has no facility, so only an admin can ever see or work it.
+    unowned = conn.execute("select count(*) from escalation_cases where status in ('OPEN','CLAIMED') and shipment_id is null").fetchone()[0]
+    return _cards([
+        ("#pending", "Drivers awaiting approval", pending),
+        ("/warehouse#messages", "Open cases", len(case_ids_in_scope(conn, me, ("OPEN", "CLAIMED")))),
+        ("/warehouse#messages", "Cases with no load", unowned),
+        ("/warehouse#messages", "Facility requests", len(pending_changes_in_scope(conn, me))),
+    ])
+
+
 def render_admin(conn: sqlite3.Connection, me: User, query: dict[str, str], deps: AppDeps) -> str:
     # The admin screen: users, pending drivers, decided onboarded drivers (suspend / re-approve), audit log.
     nav = '<a href="/admin">Admin</a> <a href="/warehouse">Warehouse</a>'
+    waiting = len(onboarding.pending(conn))
     tabs = _tabs((("users", "Users"), ("pending", "Pending drivers"), ("decided", "Onboarded drivers"), ("audit", "Audit log"), ("model", "Model"),
-                  ("config", "Configuration")))
+                  ("config", "Configuration")), {"pending": waiting})
     # The "wh" class gives the same tab styling as the warehouse screen.
-    body = ('<div class="wh">' + tabs + _users_section(conn, me) + _pending_section(conn) + _decided_section(conn)
+    body = ('<div class="wh">' + _admin_attention(conn, me, waiting) + tabs + _users_section(conn, me) + _pending_section(conn) + _decided_section(conn)
             + _audit_section(conn, query) + _model_section(conn, deps)
             + _configuration_section(conn, deps) + "</div>")
     return _layout("Admin", body, ("common.js", "tabs.js", "admin.js", "model.js", "settings.js"), me, nav)
@@ -668,22 +707,22 @@ def _messages_section(conn: sqlite3.Connection, user: User, now: datetime) -> st
             + "</section>")
 
 
-def _attention(conn: sqlite3.Connection, user: User, today: date, board: dict[str, Any] | None) -> str:
+def _attention(conn: sqlite3.Connection, user: User, today: date) -> str:
     # The supervisor's first question: is anything waiting for me?
     drivers = driver_list(conn, user, today)
     items = [
         ("messages", "Open cases", len(case_ids_in_scope(conn, user, ("OPEN", "CLAIMED")))),
-        ("board", "Waiting for partner", len(board["pending_partner"]) if board else 0),
+        ("messages", "Waiting for partner",
+         sum(1 for r in partner_requests_in_scope(conn, user, MAX_LIMIT) if r["status"] == "PENDING_PARTNER")),
         ("drivers", "Drivers awaiting approval", sum(1 for d in drivers if d["approval_status"] == "PENDING_APPROVAL")),
         ("drivers", "Licences not valid", sum(1 for d in drivers if not d["licence_valid"])),
         ("messages", "Facility requests", len(pending_changes_in_scope(conn, user))),
     ]
-    cards = "".join(f'<li><a href="#{target}" class="{"hot" if n else "calm"}"><b>{n}</b><span>{label}</span></a></li>'
-                    for target, label, n in items)
-    return f'<ul class="attention" aria-label="Needs attention">{cards}</ul>'
+    return _cards([(f"#{target}", label, n) for target, label, n in items])
 
 
-def _projects_section(conn: sqlite3.Connection, user: User, today: date, facility_options: list[tuple[str, str]]) -> str:
+def _projects_section(conn: sqlite3.Connection, user: User, today: date, facility_options: list[tuple[str, str]],
+                      chosen: str | None = None) -> str:
     # Drivers who may be allocated: in the user's scope and eligible to work today.
     eligible = [(r["driver_id"], f"{r['driver_id']} - {r['driver_name']}") for r in drivers_in_scope(conn, user, today)
                 if onboarding.driver_eligible(conn, r["driver_id"], today)]
@@ -702,7 +741,7 @@ def _projects_section(conn: sqlite3.Connection, user: User, today: date, facilit
                      esc(f"{p['starts_on']} - {p['ends_on'] or 'open'}"), drivers + allocate])
     create = ('<h3>New project</h3><form data-api="/v1/projects"><label>Customer <input name="customer_name" required maxlength="120"></label>'
               '<label>Contract reference <input name="contract_ref" required maxlength="64"></label>'
-              f'<label>Facility <select name="facility_id">{_options(facility_options)}</select></label>'
+              f'<label>Facility <select name="facility_id">{_options(facility_options, chosen)}</select></label>'
               f'<label>Starts on <input name="starts_on" type="date" value="{esc(today.isoformat())}" required></label>'
               '<label>Ends on <input name="ends_on" type="date"></label><button type="submit">Create</button></form>')
     table = _table(("Project", "Customer", "Contract", "Facility", "Status", "Dates", "Drivers"), rows, "No projects yet.")
@@ -730,7 +769,7 @@ def _drivers_section(conn: sqlite3.Connection, user: User, today: date) -> str:
     vehicle_options = _options([(v["vehicle_id"], f"{v['vehicle_id']} - {v['registration_number']} ({v['carrier_id']})") for v in vehicles],
                                extra={v["vehicle_id"]: v["carrier_id"] for v in vehicles})
     add = ('<h3>Add a driver</h3><p class="note">New drivers wait for an administrator to approve them.</p>'
-           '<form data-api="/v1/drivers"><label>Name <input name="name" required maxlength="100"></label>'
+           '<form data-api="/v1/drivers" data-limit><label>Name <input name="name" required maxlength="100"></label>'
            '<label>Phone <input name="phone" required maxlength="32" autocomplete="off"></label>'
            '<label>Licence number <input name="licence_number" required maxlength="40" autocomplete="off"></label>'
            '<label>Licence expiry <input name="licence_expiry" type="date" required></label>'
@@ -741,7 +780,8 @@ def _drivers_section(conn: sqlite3.Connection, user: User, today: date) -> str:
     return f'<section id="drivers" data-panel="drivers"><h2>Drivers</h2><p class="note">This tab does not update by itself. Reload the page to see changes.</p>{table}{add}</section>'
 
 
-def render_warehouse(conn: sqlite3.Connection, user: User, now: Any, facility: str | None) -> HTMLResponse:
+def render_warehouse(conn: sqlite3.Connection, user: User, now: Any, facility: str | None,
+                     remembered: str | None = None) -> HTMLResponse:
     # The facilities the user may pick from: an admin all of them, anyone else only their own.
     if user.role == "ADMIN":
         wanted = conn.execute("select facility_id, facility_name from facilities order by facility_id").fetchall()
@@ -750,6 +790,9 @@ def render_warehouse(conn: sqlite3.Connection, user: User, now: Any, facility: s
         wanted = conn.execute(f"select facility_id, facility_name from facilities where facility_id in ({marks}) order by facility_id",
                               user.facilities).fetchall()
     options = [(r["facility_id"], f"{r['facility_id']} - {r['facility_name']}") for r in wanted]
+    # The facility last looked at, but only while it is still one of the user's.
+    if facility is None and remembered in {value for value, _ in options}:
+        facility = remembered
     chosen = facility or (options[0][0] if options else None)
     board = None
     if chosen is not None:
@@ -766,12 +809,13 @@ def render_warehouse(conn: sqlite3.Connection, user: User, now: Any, facility: s
     from setuhaul.auth.shipment_pages import shipments_section
 
     tabs = _tabs((("board", "Dock board"), ("messages", "Messages"), ("projects", "Projects"), ("shipments", "Shipments"),
-                  ("drivers", "Drivers")))
+                  ("drivers", "Drivers")),
+                 {"messages": len(case_ids_in_scope(conn, user, ("OPEN", "CLAIMED"))) + len(pending_changes_in_scope(conn, user))})
     # warehouse.js writes how fresh the live parts are here.
     fresh = '<p class="live" data-live><span data-live-state role="status"></span> <span data-live-time></span></p>'
-    body = ('<div class="wh">' + _attention(conn, user, today, board) + tabs + fresh
+    body = ('<div class="wh">' + _attention(conn, user, today) + tabs + fresh
             + _board_section(board, options, chosen, now) + _messages_section(conn, user, now)
-            + _projects_section(conn, user, today, options) + shipments_section(conn, user, now, options)
+            + _projects_section(conn, user, today, options, chosen) + shipments_section(conn, user, now, options)
             + _drivers_section(conn, user, today) + "</div>")
     nav = '<a href="/warehouse">Warehouse</a>' + (' <a href="/admin">Admin</a>' if user.role == "ADMIN" else "")
     return _respond(_layout("Warehouse", body, ("common.js", "tabs.js", "warehouse.js"), user, nav))
@@ -858,7 +902,12 @@ def register_pages(app: FastAPI, deps: AppDeps) -> None:
         if isinstance(user, Response):
             return user
         facility = request.query_params.get("facility") or None
-        return read_page(user, lambda conn: render_warehouse(conn, user, deps.clock.now(), facility))
+        remembered = request.cookies.get(FACILITY_COOKIE)
+        page = read_page(user, lambda conn: render_warehouse(conn, user, deps.clock.now(), facility, remembered))
+        # Remember a choice the user made and could see; the live refresh asks for the same page and must not move it.
+        if facility and page.status_code == 200 and "x-live" not in request.headers:
+            page.set_cookie(FACILITY_COOKIE, facility, max_age=30 * 86400, path="/warehouse", httponly=True, samesite="lax")
+        return page
 
     @app.get("/gate", response_class=HTMLResponse)
     def gate_page(request: Request) -> Response:

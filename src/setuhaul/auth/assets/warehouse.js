@@ -9,27 +9,13 @@
       facility.form.submit();
     });
   }
-
-  // The add-driver form: a vehicle belongs to one carrier, so choosing it sets the carrier too.
-  var vehicle = document.getElementById("vehicle");
-  var carrier = document.getElementById("carrier");
-  if (vehicle && carrier) {
-    var sync = function () {
-      var chosen = vehicle.options[vehicle.selectedIndex];
-      if (chosen && chosen.getAttribute("data-carrier")) {
-        carrier.value = chosen.getAttribute("data-carrier");
-      }
-    };
-    vehicle.addEventListener("change", sync);
-    sync();
-  }
 })();
 
 // Driver chats and live refresh.
 (function () {
   "use strict";
   // The parts that change on their own. Forms are left alone so nothing being typed is lost.
-  var LIVE = [".wh .attention", "#board .asof", "#board .bays", "#board .scroll", "#board .waiting", "#messages"];
+  var LIVE = [".wh .attention", ".wh .messages-count", "#board .asof", "#board .bays", "#board .scroll", "#board .waiting", "#messages"];
   var EVERY_MS = 3000;
   var seen = {};
   // What the server last sent, taken before any script changes the page.
@@ -101,7 +87,14 @@
     var listTop = chats ? chats.scrollTop : 0;
     return function (fresh) {
       open.forEach(function (mark) { var d = find(fresh, mark); if (d) { d.open = true; } });
-      typed.forEach(function (pair) { var f = find(fresh, pair[0]); if (f) { f.value = pair[1]; } });
+      typed.forEach(function (pair) {
+        var f = find(fresh, pair[0]);
+        if (f) {
+          f.value = pair[1];
+          // Still unsent: leaving it behind should be asked about.
+          if (f.form) { f.form.setAttribute("data-dirty", "true"); }
+        }
+      });
       errors.forEach(function (pair) {
         var holder = find(fresh, pair[0]);
         if (holder) { holder.appendChild(pair[1]); } else { window.SH.say(pair[1].textContent); }
@@ -173,8 +166,13 @@
     }
     busy = true;
     asked = Date.now();
-    fetch(window.location.pathname + window.location.search,
-      { credentials: "same-origin", redirect: "manual", signal: AbortSignal.timeout(2 * STALE_MS) })
+    // Ask for the facility this tab is showing, whatever another tab has chosen since.
+    var address = new URL(window.location.href);
+    var select = document.querySelector("#board select[name=facility]");
+    var shown = select && Array.prototype.filter.call(select.options, function (o) { return o.defaultSelected; })[0];
+    if (shown) { address.searchParams.set("facility", shown.value); }
+    fetch(address.pathname + address.search,
+      { credentials: "same-origin", redirect: "manual", headers: { "X-Live": "1" }, signal: AbortSignal.timeout(2 * STALE_MS) })
       .then(function (response) {
         // Signed out or refused: stop asking and say so.
         if (response.type === "opaqueredirect" || response.status === 401 || response.status === 403) {
@@ -233,6 +231,9 @@
       }
       if (driver && driver.selectedIndex >= 0) {
         limit(form.elements.vehicle_id, "carrier", driver.options[driver.selectedIndex].getAttribute("data-carrier"));
+      }
+      if (form.elements.carrier_id) {
+        limit(form.elements.vehicle_id, "carrier", form.elements.carrier_id.value);
       }
     };
     form.addEventListener("change", sync);
