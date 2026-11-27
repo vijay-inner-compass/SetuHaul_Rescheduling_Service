@@ -288,7 +288,7 @@ def send_waiting(conn: sqlite3.Connection, client: TelegramClient | None, driver
             # Another path (e.g. send_pending) may already have issued a live pass: do not revoke and duplicate it.
             live = conn.execute(
                 f"select 1 from visit_shipments v join dock_access_authorizations p using(truck_visit_id) "
-                f"where v.shipment_id=? and p.status in {LIVE} limit 1", (sid,)
+                f"where v.shipment_id=? and p.status in {LIVE} and p.delivered_at is not null limit 1", (sid,)
             ).fetchone()
             if live is not None:
                 continue

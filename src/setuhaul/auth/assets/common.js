@@ -11,6 +11,7 @@
     BAD_CREDENTIALS: "The email or password is not correct. Repeated failures lock the password for a while.",
     RATE_LIMITED: "Too many attempts. Wait a few minutes and try again.",
     PAYLOAD_TOO_LARGE: "That request is too large.",
+    IN_PROGRESS: "That request is still being processed.",
     UNAUTHORIZED: "Your session has ended.",
     UNAUTHENTICATED: "Your session has ended.",
     FORBIDDEN: "Your account is not allowed to do this.",

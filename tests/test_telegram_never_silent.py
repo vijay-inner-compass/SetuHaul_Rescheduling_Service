@@ -89,4 +89,4 @@ def test_failed_reply_with_nothing_to_queue_on_is_recorded(env) -> None:  # type
     conn.close()
     deps.telegram = _Down()
     post(client, _other("photo", [{"file_id": "f"}]))
-    assert len(_rows(path, "select 1 from audit_log where action='TELEGRAM_REPLY_DROPPED'")) == 1
+    assert len(_rows(path, "select 1 from notification_outbox where recipient_type='DRIVER' and recipient_ref='DRV006'")) == 1

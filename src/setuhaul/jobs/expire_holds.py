@@ -129,6 +129,7 @@ class MaintenanceRunner:
         self._stop = threading.Event()
         # The background thread, once started.
         self._thread: threading.Thread | None = None
+        self._pass_failed = False
 
     def close(self) -> None:
         # Close the connection if this runner owns one.
@@ -172,6 +173,7 @@ class MaintenanceRunner:
         try:
             return work()
         except Exception as exc:  # noqa: BLE001
+            self._pass_failed = True
             self._db().rollback()
             log_failure(logging.getLogger(__name__), f"maintenance: {name}", exc)
             return otherwise
@@ -195,6 +197,7 @@ class MaintenanceRunner:
 
     def run_once(self) -> MaintenanceResult:
         db, clock, fallback = self._db(), self._clock, self._fallback
+        self._pass_failed = False
         # Always expire overdue holds first: that is time-critical.
         expired = self._step("hold expiry", lambda: expire_due_holds(db, clock).expired, 0)
         # Hand-offs written during a database outage join the queue.
@@ -220,7 +223,8 @@ class MaintenanceRunner:
                 "purge_inbound_messages", lambda: retention.purge_inbound_messages(db, now - timedelta(days=p.inbound_days), p.batch_size)), 0)
             self._step("retention: model calls", lambda: self._run_daily_retention(
                 "purge_model_calls", lambda: retention.purge_model_calls(db, now - timedelta(days=p.model_calls_days), p.batch_size)), 0)
-        self._step("record success", lambda: record_runner_success(db, "maintenance_runner", clock.now()), None)
+        if not self._pass_failed:
+            self._step("record success", lambda: record_runner_success(db, "maintenance_runner", clock.now()), None)
         return MaintenanceResult(expired=expired, purged_option_sets=purged)
 
     def run_safely(self) -> None:

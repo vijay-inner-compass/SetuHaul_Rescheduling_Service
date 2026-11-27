@@ -326,7 +326,7 @@
             .then(function (data) {
               if (!data || !Array.isArray(data.slots)) { return; }
               var prev = slotSelect.value;
-              slotSelect.innerHTML = "";
+              slotSelect.textContent = "";
               if (!data.slots.length) {
                 var empty = document.createElement("option");
                 empty.value = "";
