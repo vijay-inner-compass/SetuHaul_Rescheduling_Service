@@ -69,7 +69,8 @@
     PUBLIC_URL_NOT_SET: "The webhook cannot be registered: the server's public address is not set.",
     SERVICE_UNAVAILABLE: "The service is not available. Try again shortly.",
     DRIVER_DELETED_RESTORE: "This phone or licence belongs to a deleted driver. An administrator can restore them from the Admin screen.",
-    DRIVER_DELETED: "That driver is deleted. Restore them first."
+    DRIVER_DELETED: "That driver is deleted. Restore them first.",
+    LINK_INVALID: "This link has been used or has expired. Use Forgot password? to get a new one."
   };
 
   // The form field a refusal is about, so it can be marked and focused.
