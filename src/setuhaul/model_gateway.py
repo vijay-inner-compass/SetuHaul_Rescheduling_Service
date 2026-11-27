@@ -194,6 +194,10 @@ Step = ModelResponse | Exception | Callable[[Sequence[ModelMessage]], ModelRespo
 
 
 # A fake model for tests: each call pops the next scripted step. It never touches the network.
+class ScriptExhausted(BaseException):
+    """A test scripted too few steps. Not an Exception, so the handling of model crashes can never swallow it."""
+
+
 class ScriptedGateway:
     """Deterministic gateway for CI. Each call consumes one scripted step and records what it saw."""
 
@@ -211,7 +215,7 @@ class ScriptedGateway:
             self._on_call()
         # Calling the model more often than scripted is a test bug: fail loudly.
         if not self._steps:
-            raise AssertionError("ScriptedGateway ran out of steps: the loop called the model more than scripted")
+            raise ScriptExhausted("ScriptedGateway ran out of steps: the loop called the model more than scripted")
         # Take the next step.
         step = self._steps.pop(0)
         # An exception step simulates a provider failure.
@@ -338,16 +342,20 @@ class AnthropicAdapter:
         if resp.status_code >= 400:
             raise PermanentModelError(_api_error(resp))
         # Success: decode the body.
-        data = resp.json()
-        # Concatenate all text blocks.
-        text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
-        # Collect tool_use blocks as tool calls.
-        calls = tuple(ToolCall(id=b["id"], name=b["name"], arguments=b.get("input", {}))
-                      for b in data.get("content", []) if b.get("type") == "tool_use")
-        # Token counts, used for the cost estimate.
-        usage = data.get("usage", {})
-        return ModelResponse(text=text, tool_calls=calls, input_tokens=usage.get("input_tokens", 0),
-                             output_tokens=usage.get("output_tokens", 0))
+        # A 200 that is not what the provider promises (a proxy page, a missing field) is a model failure, not a crash.
+        try:
+            data = resp.json()
+            # Concatenate all text blocks.
+            text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
+            # Collect tool_use blocks as tool calls.
+            calls = tuple(ToolCall(id=b["id"], name=b["name"], arguments=b.get("input", {}))
+                          for b in data.get("content", []) if b.get("type") == "tool_use")
+            # Token counts, used for the cost estimate.
+            usage = data.get("usage", {})
+            return ModelResponse(text=text, tool_calls=calls, input_tokens=usage.get("input_tokens", 0),
+                                 output_tokens=usage.get("output_tokens", 0))
+        except (ValueError, KeyError, TypeError, AttributeError, IndexError) as exc:
+            raise PermanentModelError(f"unreadable response ({type(exc).__name__})") from exc
 
 
 # OpenAI Chat Completions client.
@@ -418,27 +426,31 @@ class OpenAIAdapter:
             raise TransientModelError(_api_error(resp))
         if resp.status_code >= 400:
             raise PermanentModelError(_api_error(resp))
-        data = resp.json()
-        # The first choice's message.
-        choice = (data.get("choices") or [{}])[0].get("message", {})
-        # Tool calls decoded from the reply.
-        calls = []
-        # Each requested function call.
-        for c in choice.get("tool_calls") or []:
-            # Arguments arrive as a JSON string.
-            raw = c.get("function", {}).get("arguments", "") or "{}"
-            try:
-                # Decode; they must form an object.
-                args = json.loads(raw)
-                if not isinstance(args, dict):
-                    raise TypeError("tool arguments must be a JSON object")
-            # Malformed arguments are kept as a marker and rejected later by the tool layer, not crashed on.
-            except (ValueError, TypeError):
-                args = {"__unparseable_arguments__": raw[:200]}  # the tool layer rejects this as INVALID_ARGUMENTS
-            calls.append(ToolCall(id=c.get("id", ""), name=c.get("function", {}).get("name", ""), arguments=args))
-        usage = data.get("usage", {})
-        return ModelResponse(text=choice.get("content") or "", tool_calls=tuple(calls),
-                             input_tokens=usage.get("prompt_tokens", 0), output_tokens=usage.get("completion_tokens", 0))
+        # A 200 that is not what the provider promises (a proxy page, a missing field) is a model failure, not a crash.
+        try:
+            data = resp.json()
+            # The first choice's message.
+            choice = (data.get("choices") or [{}])[0].get("message", {})
+            # Tool calls decoded from the reply.
+            calls = []
+            # Each requested function call.
+            for c in choice.get("tool_calls") or []:
+                # Arguments arrive as a JSON string.
+                raw = c.get("function", {}).get("arguments", "") or "{}"
+                try:
+                    # Decode; they must form an object.
+                    args = json.loads(raw)
+                    if not isinstance(args, dict):
+                        raise TypeError("tool arguments must be a JSON object")
+                # Malformed arguments are kept as a marker and rejected later by the tool layer, not crashed on.
+                except (ValueError, TypeError):
+                    args = {"__unparseable_arguments__": raw[:200]}  # the tool layer rejects this as INVALID_ARGUMENTS
+                calls.append(ToolCall(id=c.get("id", ""), name=c.get("function", {}).get("name", ""), arguments=args))
+            usage = data.get("usage", {})
+            return ModelResponse(text=choice.get("content") or "", tool_calls=tuple(calls),
+                                 input_tokens=usage.get("prompt_tokens", 0), output_tokens=usage.get("completion_tokens", 0))
+        except (ValueError, KeyError, TypeError, AttributeError, IndexError) as exc:
+            raise PermanentModelError(f"unreadable response ({type(exc).__name__})") from exc
 
 
 # Choose the adapter named by the policy; anything else is 'not configured'.

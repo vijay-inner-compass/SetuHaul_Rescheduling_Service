@@ -14,8 +14,8 @@ the held slot, confirm the next one. Committed in `250d283`.
   was booked (`tests/test_negated_agreement.py`).
 * **Limits:** one run per language, one model, a cooperative script. No rate, language-quality or adversarial claim follows. This page
   records no human read of the whole traces and no native-speaker review.
-* **Since then:** the prompt, tools and conversation code changed on 2026-11-27 (Dock Access Pass and later work). No live run has been
-  recorded after those changes.
+* **Since then:** the prompt, tools and conversation code changed on 2026-11-27 (Dock Access Pass and later work), and again up to
+  `8a5487e` (confirming needs a clear yes, cancelling takes two messages). No live run has been recorded after those changes.
 
 The sections below are the 2026-11-20 record of the earlier numbered-menu flow. Their recordings are in `tests/traces/retired/`,
 except `live-f9c78531.json`, a rejected request still replayed.

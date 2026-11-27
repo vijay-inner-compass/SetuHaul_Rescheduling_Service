@@ -13,6 +13,9 @@ import json
 # sqlite3 provides the Connection type the writers use.
 import sqlite3
 
+# A unique key for a notice that has no event to name it.
+import uuid
+
 # datetime is the timestamp type of every event.
 from datetime import datetime
 
@@ -69,18 +72,32 @@ def enqueue_notification(
     return cur.rowcount == 1
 
 
-def queue_driver_notice(conn: sqlite3.Connection, driver_id: str, shipment_id: str, text: str, now: datetime,
+def add_driver_notice(conn: sqlite3.Connection, driver_id: str, shipment_id: str | None, text: str, now: datetime,
+                      happened_at: datetime | None = None) -> bool:
+    """Queue a message for the driver's phone inside the caller's transaction: one written outside their turn reaches
+    Telegram only through the outbox."""
+    payload = {"kind": "notice", "text": text}
+    created = happened_at or now
+    row = None
+    if shipment_id is not None:
+        row = conn.execute("select appointment_id from appointments where shipment_id=? order by is_current desc, rowid desc"
+                           " limit 1", (shipment_id,)).fetchone()
+    if shipment_id is not None and row is not None:
+        event_id = append_appointment_event(conn, row[0], shipment_id, "DRIVER_NOTICE", from_status=None, to_status=None,
+                                            actor_type="SYSTEM", actor_id=None, reason=None, occurred_at=now)
+        return enqueue_notification(conn, f"DRIVER_NOTICE:{event_id}", "DRIVER", driver_id, event_id, payload, created)
+    # No load, or a load with no appointment: there is no history to attach to, and the driver is told all the same.
+    cur = conn.execute(
+        "insert into notification_outbox (dedupe_key, recipient_type, recipient_ref, shipment_id, payload_json, created_at) "
+        "values (?, 'DRIVER', ?, ?, ?, ?)",
+        (f"DRIVER_NOTICE:{uuid.uuid4().hex}", driver_id, shipment_id, json.dumps(payload, sort_keys=True), created.isoformat()))
+    return cur.rowcount == 1
+
+
+def queue_driver_notice(conn: sqlite3.Connection, driver_id: str, shipment_id: str | None, text: str, now: datetime,
                         happened_at: datetime | None = None) -> bool:
-    """Queue a message for the driver's phone: one written outside their turn reaches Telegram only through the outbox."""
-    # The outbox hangs off an appointment event; a load with no appointment at all has nothing to hang it on.
-    row = conn.execute("select appointment_id from appointments where shipment_id=? order by is_current desc, rowid desc limit 1",
-                       (shipment_id,)).fetchone()
-    if row is None:
-        return False
-    event_id = append_appointment_event(conn, row[0], shipment_id, "DRIVER_NOTICE", from_status=None, to_status=None,
-                                        actor_type="SYSTEM", actor_id=None, reason=None, occurred_at=now)
-    queued = enqueue_notification(conn, f"DRIVER_NOTICE:{event_id}", "DRIVER", driver_id, event_id, {"kind": "notice", "text": text}, happened_at or now)
-    # Called outside any wider transaction: commit, so the write lock is not left open.
+    """`add_driver_notice` for callers outside any wider transaction: commits, so the write lock is not left open."""
+    queued = add_driver_notice(conn, driver_id, shipment_id, text, now, happened_at)
     conn.commit()
     return queued
 

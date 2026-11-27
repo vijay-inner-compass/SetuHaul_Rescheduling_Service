@@ -31,6 +31,7 @@ None yet.
 - [[passes-and-gate]] -- how a Dock Access Pass stays true as bookings change
 - [[round-the-clock-slots]] -- 24-hour opening and slots created ahead
 - [[sign-in]] -- web sessions and one-time password links
+- [[driver-notices]] -- what reaches a driver's phone, and how to add to it
 
 ## decisions
 

@@ -288,6 +288,26 @@ T: dict[str, dict[str, str]] = {
         "hinglish": "Aapki appointment confirm ho gayi hai: dock {dock}, {date} ko {start}-{end}. Reference {ref}. Warehouse: {facility}.",
     },
     # Told when an appointment was cancelled.
+    # Asked before a confirmed appointment is cancelled. Nothing has changed yet.
+    "cancel_ask": {
+        "en": "Do you want to cancel your appointment at dock {dock}, {start}-{end} on {date}? Reply Yes to cancel it. "
+              "Nothing has been cancelled yet.",
+        "hi": "क्या आप डॉक {dock} पर {date} को {start}-{end} की अपनी अपॉइंटमेंट रद्द करना चाहते हैं? रद्द करने के लिए Yes लिखें। "
+              "अभी कुछ भी रद्द नहीं हुआ है।",
+        "hinglish": "Kya aap dock {dock} par {date} ko {start}-{end} ki apni appointment cancel karna chahte hain? Cancel karne "
+                    "ke liye Yes likhein. Abhi kuch bhi cancel nahi hua hai.",
+    },
+    "cancel_not_done": {
+        "en": "I have not cancelled anything. Your appointment is unchanged.",
+        "hi": "मैंने कुछ भी रद्द नहीं किया है। आपकी अपॉइंटमेंट वैसी ही है।",
+        "hinglish": "Maine kuch cancel nahi kiya hai. Aapki appointment waisi hi hai.",
+    },
+    # The driver's words did not clearly agree to the held slot.
+    "confirm_needs_yes": {
+        "en": "I have not confirmed it yet. Reply Yes to confirm, or No for the next slot.",
+        "hi": "मैंने अभी इसे कन्फर्म नहीं किया है। कन्फर्म करने के लिए Yes लिखें, या अगले स्लॉट के लिए No लिखें।",
+        "hinglish": "Maine abhi ise confirm nahi kiya hai. Confirm karne ke liye Yes likhein, ya agle slot ke liye No likhein.",
+    },
     "cancelled": {
         "en": "Your appointment has been cancelled. Reference {ref}.",
         "hi": "आपकी अपॉइंटमेंट रद्द कर दी गई है। रेफरेंस {ref}।",
@@ -471,7 +491,14 @@ _HOLD_CLAIMS = [re.compile(p, re.IGNORECASE) for p in (
 
 # "Nothing has been booked or held" and "I have not confirmed anything" deny a booking; they must not count as claiming one.
 # A denial such as 'nothing has been booked' or 'I have not confirmed' must not count as a claim, so denials are removed before matching.
-_NEGATED = re.compile(r"\b(nothing|not|never|no|isn't|hasn't|haven't|wasn't)\b[^.!?\n]{0,40}?\b(confirmed|booked|held|holding)\b", re.IGNORECASE)
+# A denial reaches only to the end of its own clause (a comma or a dash ends it), and "no problem" or "not to worry" deny
+# nothing: otherwise "No problem, your booking is confirmed" was read as making no claim at all.
+_NEGATED = re.compile(
+    r"\b(?!(?:no\s+(?:problem|worries|issue|delay)|not\s+(?:a\s+problem|to\s+worry))\b)"
+    r"(nothing|not|never|no|isn't|hasn't|haven't|wasn't)\b"
+    r"(?:(?!\s-\s)[^.!?,;:\n–—]){0,40}?"
+    r"\b(confirmed|booked|held|holding)\b",
+    re.IGNORECASE)
 
 
 # True if the text claims a confirmed or booked appointment (after removing denials).

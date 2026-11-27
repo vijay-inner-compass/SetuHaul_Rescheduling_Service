@@ -151,7 +151,7 @@ from setuhaul.model_gateway import (
 from setuhaul.model_usage import TurnRecorder
 
 # Span exporter type.
-from setuhaul.observability import InMemoryExporter
+from setuhaul.observability import InMemoryExporter, configure_logging
 
 # Per-driver rate limiting.
 # A new truck position: confirmation, hold release and earlier-slot offers.
@@ -377,7 +377,8 @@ def create_app(deps: AppDeps) -> FastAPI:
         if deps.run_maintenance or deps.settings is not None:
             # The runner opens its own connection (SQLite connections cannot cross threads).
             runner = MaintenanceRunner(None, deps.clock, deps.maintenance_interval_s,
-                                       conn_factory=lambda: open_connection(path=deps.db_path))
+                                       conn_factory=lambda: open_connection(path=deps.db_path),
+                                       fallback_path=deps.fallback_path)
             # Start it off the event loop.
             await run_in_threadpool(runner.start)
         # Messages written outside a driver's turn reach their phone only through this sender.
@@ -1029,6 +1030,7 @@ def create_app_from_env() -> FastAPI:
     """``uvicorn --factory setuhaul.api:create_app_from_env``. Secrets come from the environment only."""
 
     # Central settings.
+    configure_logging()
     s = load_settings()
     # Stop before anything opens the sample database: it is the pristine source that working copies are made from.
     problem = sample_database_problem(s.db_path)
@@ -1074,7 +1076,7 @@ def create_app_from_env() -> FastAPI:
         redis: Redis = fakeredis.FakeRedis(decode_responses=True)
     else:
         # The real Redis.
-        redis = Redis.from_url(s.redis_url, decode_responses=True)
+        redis = Redis.from_url(s.redis_url, decode_responses=True, socket_connect_timeout=1.0, socket_timeout=1.0)
     # The real clock by default.
     clock: Clock = SystemClock()
     # Load tests against the dated snapshot only: a fixed time.

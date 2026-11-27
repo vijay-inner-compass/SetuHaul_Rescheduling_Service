@@ -17,6 +17,7 @@ from setuhaul.auth.onboarding import driver_eligible
 from setuhaul.clock import Clock
 from setuhaul.db import TimestampError, parse_operational_timestamp
 from setuhaul.notifications import DeliveryResult, _mark
+from setuhaul.observability import log_failure
 
 # A notice older than this is not sent: it would be about an offer that has long lapsed, and turning delivery on must not flush a backlog.
 NOTICE_MAX_AGE = timedelta(minutes=30)
@@ -149,7 +150,7 @@ class DriverNoticeRunner:
                 conn.close()
         except Exception as exc:  # noqa: BLE001 - a locked database or a client fault is retried on the next pass
             # Only the kind of error: a message or traceback could quote the request URL, which holds the bot token.
-            _LOG.error("driver notice delivery failed: %s", type(exc).__name__)
+            log_failure(_LOG, "driver notice delivery", exc)
             return None
 
     def start(self) -> None:

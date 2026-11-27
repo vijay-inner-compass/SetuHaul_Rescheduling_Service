@@ -157,7 +157,8 @@ def test_cancelling_a_confirmed_appointment_frees_its_slot_on_the_board(tmp_path
     say("my truck is 60 minutes late")
     say("1")
     assert "confirmed" in say("confirm").lower() and "BOOKED" in _board_statuses(client)
-    assert "cancelled" in say("cancel my appointment").lower()
+    assert "reply yes to cancel" in say("cancel my appointment").lower() and "BOOKED" in _board_statuses(client)
+    assert "has been cancelled" in say("yes").lower()
     assert "BOOKED" not in _board_statuses(client) and "HELD" not in _board_statuses(client)
 
 

@@ -90,7 +90,7 @@ If you remember only these, you can predict how almost any new feature should be
 
 ```
 src/setuhaul/    the service (layers in section 6; auth/ holds sign-in, roles, Telegram and the web screens)
-migrations/      001-022, numbered SQL applied in order to working copies
+migrations/      001-023, numbered SQL applied in order to working copies
 tests/           about 1,970 tests; tests/traces/ = recorded conversations; tests/scenario_flow.py = the end-to-end scenario
 scripts/         evidence and demo scripts (audit, replay, scenario, show_phaseN, integrity proof, scale profile, run_demo)
 load/            Locust profile
@@ -139,6 +139,7 @@ Migrations (each file is commented line by line):
 | 020 | one-time account links | email and password sign-in |
 | 021 | which load each chat message is about | what a warehouse user may read |
 | 022 | crew number per warehouse | slots are created only where staff entered one |
+| 023 | driver notices without an appointment event | cases with no load and never-booked loads reach the phone too |
 
 ### 6.2 Identity, memory, limits: `identity.py`, `memory.py`, `rate_limit.py`, `observability.py`
 
@@ -172,7 +173,7 @@ This is the **transactional core**. Read `booking.py` closely.
 
 * `acquire_hold` (one `BEGIN IMMEDIATE`): load the stored option set (proves ownership), pick the rank, lazily clear overdue holds on this shipment/slot, reject option sets older than 15 minutes, return the existing hold if the same slot is requested again, `SHIPMENT_ALREADY_HELD` for a different slot, **re-judge the option against the facility now** (`SLOT_CONFLICT` if someone else took it, `OPTION_CHANGED` otherwise), insert the `HELD` row and metadata, append history. `IntegrityError` from the unique index means a stale read lost a race: `SLOT_CONFLICT`. A busy database is `LOCK_TIMEOUT`, **never** reported as a conflict or a success.
 * `confirm_reschedule` (one transaction, all or nothing): idempotency check, ownership, expiry, **feasibility re-evaluated**, original not already `IN_PROGRESS`, then end the original, promote the hold, append history, queue three notices, store the idempotent answer. A fault at any named step rolls everything back and the original appointment stays.
-* `cancellation.py`: "never mind" releases the hold only. Cancelling a confirmed appointment is automatic only if not in progress, more than 120 minutes out, and a known penalty-free customer commitment; otherwise it **escalates and changes nothing**. Returning to the original slot is a new request, re-judged, never restored.
+* `cancellation.py`: "never mind" releases the hold only. Cancelling a confirmed appointment takes two messages (the system asks, the driver replies Yes) and is automatic only if not in progress, more than 120 minutes out, and a known penalty-free customer commitment; otherwise it **escalates and changes nothing**. Returning to the original slot is a new request, re-judged, never restored.
 * Outbox: notices are queued inside the booking transaction and delivered outside it (`deliver_pending_notifications`), at least once with a stable `dedupe_key`; delivery failure never touches the appointment; transient failures retry up to 3 times.
 * Expiry: `expire_due_holds` is inclusive (`expires <= now`), batched, idempotent. `MaintenanceRunner` runs it every 30 s in a background thread.
 * `integrity.check_invariants` runs 12 queries that must return no rows (no duplicate active slot, one hold per shipment, metadata matches state, history has parents, ...). The concurrency proof runs it after every action.
@@ -248,8 +249,8 @@ If the driver waits more than 3 minutes, the sweep expires the hold, the next me
 | Model claims "confirmed" with nothing committed | text replaced by a safe sentence |
 | Model leaks the prompt (even partly) | reply blocked |
 | Model invents `driver_id` or a quote | `INVALID_ARGUMENTS` / `APPROVAL_NOT_PRESENT`, no write |
-| Database down mid-turn | safe reply, hand-off written to a fallback file, ingested later |
-| Redis lost | rebuilt from SQL |
+| Database down mid-turn | safe reply, hand-off written to a fallback file; the maintenance sweep loads it into the queue (unloadable lines go to `.rejected`) |
+| Redis lost or unreachable | the driver is still served from SQL; message rate limits are not checked meanwhile; web sign-in and the gate still need Redis |
 | Duplicate webhook delivery | stored reply returned, no second model call |
 | Notification delivery fails | appointment untouched; retried (outbox) |
 | No slot fits / contradictory data / missing evidence | hand-off case with context; booking unchanged |

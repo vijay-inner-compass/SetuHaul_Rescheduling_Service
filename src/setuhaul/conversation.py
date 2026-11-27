@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import contextlib
 
+# logging records a crash in the model step.
+import logging
+
 # re finds clock times in model text for the output guard.
 import re
 
@@ -64,7 +67,13 @@ from setuhaul.model_gateway import (
 )
 
 # Request ids, spans and structured logs.
-from setuhaul.observability import InMemoryExporter, RequestContext, log_event, start_span
+from setuhaul.observability import (
+    InMemoryExporter,
+    RequestContext,
+    log_event,
+    log_failure,
+    start_span,
+)
 
 # The system prompt and the leak detector.
 from setuhaul.partner_booking import render_partner_status
@@ -240,6 +249,8 @@ def _facts(ctx: ConversationContext, services: ConversationServices, clock: Cloc
         "selected_shipment_id": state.selected_shipment_id,
         "active_shipment_ids": list(state.active_shipment_ids),
         "latest_option_set_id": state.latest_option_set_id,
+        # "Cancel?" was asked and this message is the answer to it.
+        "cancellation_awaiting_yes": None if state.pending_cancel is None else state.pending_cancel.shipment_id,
         # The facilities a driver can ask to move to (ids and names only).
         "other_facilities": {r["facility_id"]: r["facility_name"] for r in services.conn.execute(
             "select facility_id, facility_name from facilities where active_flag=1 order by facility_id")},
@@ -352,10 +363,19 @@ def _handle(
     # Time the model loop.
     with start_span("model.loop", rctx, exporter=services.exporter) as span:
         # Run the model with its caps: rounds, tool executions, deadline and cost.
-        outcome: LoopOutcome = run_bounded_loop(services.gateway, services.policy, messages, registry.schemas(),
-                                                registry.execute, clock,
-                                                trace_env=services.trace_env)
+        try:
+            outcome: LoopOutcome = run_bounded_loop(services.gateway, services.policy, messages, registry.schemas(),
+                                                    registry.execute, clock,
+                                                    trace_env=services.trace_env)
         # A safety stop: mark the span.
+        # Database and service failures keep their own handling (the caller says nothing was promised).
+        except (sqlite3.Error, ServiceUnavailable):
+            raise
+        # Anything else unforeseen is treated as "the model is unavailable". _finalize still words whatever the tools had
+        # already committed, so a hold placed before the crash is never reported as "nothing happened".
+        except Exception as exc:  # noqa: BLE001
+            log_failure(logging.getLogger(__name__), "model loop", exc)
+            outcome = LoopOutcome(status="MODEL_UNAVAILABLE", error_code=f"UNEXPECTED_{type(exc).__name__}")
         if outcome.status != "DONE":
             span.set_reason(outcome.error_code or outcome.status)
 
@@ -406,6 +426,19 @@ def _finalize(
         partner_text = render_partner_status(conn, turn.partner_shipment_id, lang)
         if partner_text:
             parts.append(partner_text)
+
+    # The system's question or "nothing changed" line, when a confirmation or cancellation was held back.
+    if turn.cancel_question:
+        parts.append(say("cancel_ask", lang, **{k: v for k, v in turn.cancel_question.items() if k != "facility"}))
+    elif turn.cancel_refused and not parts:
+        parts.append(say("cancel_not_done", lang))
+    elif turn.confirm_refused and not parts:
+        parts.append(say("confirm_needs_yes", lang))
+
+    # "Cancel?" waits for one message only: anything older than this turn's question lapses now.
+    waiting = services.memory.load(driver_id, thread_id).state
+    if waiting.pending_cancel is not None and waiting.pending_cancel.asked_message_id != tctx.message_id:
+        services.memory.save_structured_state(driver_id, thread_id, waiting.model_copy(update={"pending_cancel": None}))
 
     # Re-read state, as tools may have changed it.
     mem_state = services.memory.load(driver_id, thread_id).state

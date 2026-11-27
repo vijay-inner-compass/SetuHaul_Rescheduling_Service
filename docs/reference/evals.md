@@ -15,7 +15,7 @@ sources:
   - code: scripts/run_scale_profile.py
   - code: tests/test_trace_replay.py
   - code: tests/traces
-verified_at: 8c1a551
+verified_at: 8a5487e
 ---
 
 # Evals
@@ -76,6 +76,9 @@ Plain functions over a trace, no model grading (`src/setuhaul/evaluation.py:340`
 Planted-fault tests in `tests/test_trace_replay.py` show that evaluators can fail, for example
 `test_committed_write_needs_the_drivers_own_words` and `test_unbacked_booking_claims_are_flagged`.
 
+> ⚠️ No evaluator checks that a confirmation had a clear yes or that a cancellation took two messages. Those rules are
+> covered by `tests/test_write_intent.py` only.
+
 > ⚠️ `state_backed_wording` uses the same claim patterns as the reply guard, so it cannot catch a claim the guard misses.
 
 ## Failure classes
@@ -109,7 +112,7 @@ offline; other tests show it catches a changed ranking rule, checkpoint rule or 
 
 | Eval | Result | When |
 |---|---|---|
-| Trace replay | 9/9 traces clean, 109/109 evaluator checks | run 2026-11-28 at `8c1a551` |
+| Trace replay | 9/9 traces clean, 109/109 evaluator checks | run 2026-11-28 on `main` at `8a5487e` merged with these pages |
 | Other evals | see [readiness-detail.md](../readiness-detail.md) | not re-run for this page |
 
 ## Not evaluated

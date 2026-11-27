@@ -236,7 +236,7 @@ _DRIVERS: tuple[Task, ...] = (
         "Running late: “my truck is 60 minutes late” or “bhai meri gaadi 60 minute late hai”.",
         "One new slot is then held for a few minutes. It is not booked until you reply “Yes”. Reply “No” for the next one.",
         "To keep your old booking: “never mind, keep my original slot”.",
-        "To cancel: “please cancel my appointment”. Close to the slot time, a person decides.",
+        "To cancel: “please cancel my appointment”, then reply “Yes” when asked. Close to the slot time, a person decides.",
         "To deliver elsewhere: “Please change facility to Gurugram”. The warehouse must approve.",
         "If the assistant cannot sort it out you get a case reference, and a person replies in the same chat.",
     )),

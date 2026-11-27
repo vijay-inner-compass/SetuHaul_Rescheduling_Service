@@ -37,3 +37,12 @@ Started in grow mode: one page, [[refusal-messages]].
 ## [2026-11-28] add | [[guardrails]], [[evals]]
 
 - Requested by the user: all guardrails and evals in one lookup pair. Checked against `8c1a551`.
+
+## [2026-11-28] add | [[driver-notices]]
+
+- Written with the change that queues partner answers and no-load case updates. Checked against the work on top of `b6501b0`.
+
+## [2026-11-28] verify | [[guardrails]], [[evals]]
+
+- Rechecked after merging `main` (`8a5487e`): confirm and cancel intent checks, crash and Redis-outage behaviour, moved line
+  citations.
