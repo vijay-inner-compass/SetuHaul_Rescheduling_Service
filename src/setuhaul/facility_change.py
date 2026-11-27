@@ -15,6 +15,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from setuhaul import passes
 from setuhaul.allocation import rank_options
 from setuhaul.auth import audit
 from setuhaul.auth.authz import facility_ids
@@ -63,10 +64,10 @@ def expire_due(conn: sqlite3.Connection, clock: Clock) -> int:
 def request_change(conn: sqlite3.Connection, clock: Clock, *, driver_id: str, shipment_id: str, to_facility_id: str) -> ChangeResult:
     with immediate(conn):
         expire_due(conn, clock)
-        ship = conn.execute("select driver_id, destination_facility_id, current_status from shipments where shipment_id=?",
+        ship = conn.execute("select driver_id, destination_facility_id, current_status from v_driver_shipments where shipment_id=?",
                             (shipment_id,)).fetchone()
         # Another driver's load and an unknown one answer alike.
-        if ship is None or ship["driver_id"] != driver_id or ship["current_status"] in NOT_MOVABLE:
+        if ship is None or ship["driver_id"] != driver_id or ship["current_status"] in NOT_MOVABLE or passes.on_site(conn, shipment_id):
             return ChangeResult(status="NOT_MOVABLE")
         if conn.execute("select 1 from facilities where facility_id=? and active_flag=1", (to_facility_id,)).fetchone() is None:
             return ChangeResult(status="UNKNOWN_FACILITY")
@@ -102,9 +103,11 @@ def decide(conn: sqlite3.Connection, clock: Clock, *, actor: User, request_id: s
             ship = conn.execute("select destination_facility_id, current_status from shipments where shipment_id=?",
                                 (row["shipment_id"],)).fetchone()
             # The load may have moved on since it was asked for.
-            if ship["current_status"] in NOT_MOVABLE or ship["destination_facility_id"] != row["from_facility_id"]:
+            if (ship["current_status"] in NOT_MOVABLE or ship["destination_facility_id"] != row["from_facility_id"]
+                    or passes.on_site(conn, row["shipment_id"])):
                 return ChangeResult(status="NOT_MOVABLE", request_id=request_id)
             conn.execute("update shipments set destination_facility_id=? where shipment_id=?", (row["to_facility_id"], row["shipment_id"]))
+            passes.move_warehouse(conn, row["shipment_id"], clock)
         status: Status = "APPROVED" if approve else "REJECTED"
         conn.execute("update facility_change_requests set status=?, decided_by=?, decided_at=? where request_id=?",
                      (status, actor.user_id, clock.now().isoformat(), request_id))
@@ -179,6 +182,7 @@ def _revert(conn: sqlite3.Connection, clock: Clock, request_id: str, reason: str
         if req is None:
             return False
         conn.execute("update shipments set destination_facility_id=? where shipment_id=?", (req["from_facility_id"], req["shipment_id"]))
+        passes.move_warehouse(conn, req["shipment_id"], clock)
         conn.execute("update facility_change_requests set status='REJECTED', reason=?, follow_up=NULL where request_id=?", (reason, request_id))
         audit.record(conn, actor_user_id=None, actor_email=None, action="FACILITY_CHANGE_REVERTED", target_type="shipment",
                      target_id=req["shipment_id"], outcome="OK", ip=None, detail={"request_id": request_id, "reason": reason}, clock=clock)

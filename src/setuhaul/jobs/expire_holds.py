@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 # The transactional expiry of one hold (releases the slot, writes history, queues the notice).
-from setuhaul import facility_change
+from setuhaul import facility_change, gate
 from setuhaul.booking import expire_hold_in_txn
 
 # The injectable clock.
@@ -126,6 +126,8 @@ class MaintenanceRunner:
         expired = expire_due_holds(self._db(), self._clock).expired
         # An approved facility move whose offer just lapsed goes back to where the booking is.
         facility_change.settle(self._db(), self._clock)
+        # Unused passes expire; a truck still inside after its window is raised with the warehouse.
+        gate.sweep(self._db(), self._clock)
         purged = 0
         # The housekeeping purge only runs once a day.
         if self._purge_due():

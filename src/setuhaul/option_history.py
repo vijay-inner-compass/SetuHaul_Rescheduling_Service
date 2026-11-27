@@ -177,7 +177,7 @@ def record_option_set(
     if thread is None or thread["driver_id"] != ctx.driver_id:
         raise AuthError("FOREIGN_THREAD")
     # The shipment must also belong to that driver.
-    owner = conn.execute("select driver_id from shipments where shipment_id=?", (ctx.shipment_id,)).fetchone()
+    owner = conn.execute("select driver_id from v_driver_shipments where shipment_id=?", (ctx.shipment_id,)).fetchone()
     if owner is None or owner["driver_id"] != ctx.driver_id:
         raise AuthError("FOREIGN_SHIPMENT")
     now = clock.now()

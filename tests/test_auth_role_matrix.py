@@ -22,6 +22,7 @@ from tests.auth_helpers import GURUGRAM, JAIPUR, World, add_user, build_world, s
 
 BOTH = frozenset({"ADMIN", "WAREHOUSE_AUTHORITY"})
 ADMIN = frozenset({"ADMIN"})
+GATE = frozenset({"ADMIN", "SECURITY"})
 
 # Open to anyone: no data, or their own credential check.
 PUBLIC = {
@@ -45,6 +46,19 @@ ROLE_GUARDED: dict[tuple[str, str], frozenset[str]] = {
     ("POST", "/v1/coordinator/cases/{case_id}/resolve"): BOTH,
     ("POST", "/v1/coordinator/cases/{case_id}/reopen"): BOTH,
     ("GET", "/v1/warehouse/partner-requests"): BOTH,
+    ("GET", "/v1/warehouse/shipments"): BOTH,
+    ("POST", "/v1/warehouse/availability"): BOTH,
+    ("POST", "/v1/warehouse/shipments"): BOTH,
+    ("POST", "/v1/warehouse/shipments/{shipment_id}/driver"): BOTH,
+    ("POST", "/v1/warehouse/shipments/{shipment_id}/cancel"): BOTH,
+    ("POST", "/v1/warehouse/shipments/{shipment_id}/unlock"): BOTH,
+    ("POST", "/v1/warehouse/shipments/{shipment_id}/pass"): BOTH,
+    ("POST", "/v1/warehouse/shipments/{shipment_id}/pass/revoke"): BOTH,
+    ("POST", "/v1/warehouse/visits/{truck_visit_id}/unloading-complete"): BOTH,
+    ("POST", "/v1/gate/validate"): GATE,
+    ("POST", "/v1/gate/check-in"): GATE,
+    ("POST", "/v1/gate/check-out"): GATE,
+    ("GET", "/v1/gate/visits"): GATE,
     ("GET", "/v1/warehouse/facility-changes"): BOTH,
     ("POST", "/v1/warehouse/facility-changes/{request_id}/approve"): BOTH,
     ("POST", "/v1/warehouse/facility-changes/{request_id}/reject"): BOTH,
@@ -78,6 +92,7 @@ HTML_GUARDED: dict[tuple[str, str], frozenset[str]] = {
     ("GET", "/admin"): ADMIN,
     ("GET", "/demo"): BOTH,
     ("GET", "/warehouse"): BOTH,
+    ("GET", "/gate"): GATE,
 }
 # The whole demo console (page and API) is one guarded family, so a new demo route is covered the day it is added.
 DEMO_ROLES = BOTH

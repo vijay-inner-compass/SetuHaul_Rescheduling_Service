@@ -124,6 +124,10 @@ Owner setup (Google Cloud client, BotFather, `setWebhook`) and the known limitat
 [running-and-demonstrating.md](docs/running-and-demonstrating.md#7a-sign-in-roles-and-the-telegram-bot). Evidence:
 `docs/verification/auth-roles-run.md` (fake Google and Telegram). Google sign-in has never been run against Google; Telegram was tried once with a real bot.
 
+## Shipments and the Dock Access Pass
+
+On **Warehouse > Shipments**: open availability, then create the shipment with its order number and driver. The bot sends the driver a **Dock Access Pass**, which they send back once before the bot will show or book the shipment. A **Security** user checks the pass, vehicle and licence on the **Gate** screen to check the truck in and out. See [docs/dock-access-pass.md](docs/dock-access-pass.md).
+
 ## Layout
 ```
 src/setuhaul/   config, clock, db, identity, rate_limit, memory, eta, feasibility, capacity, allocation, option_history,

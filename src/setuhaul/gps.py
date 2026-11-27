@@ -54,7 +54,7 @@ def open_shipments_for_driver(conn: sqlite3.Connection, driver_id: str) -> list[
     """All the driver's open shipments, earliest planned ETA first."""
     # Open means neither COMPLETED nor CANCELLED.
     rows = conn.execute(
-        "SELECT shipment_id FROM shipments WHERE driver_id = ? AND current_status NOT IN ('COMPLETED', 'CANCELLED') "
+        "SELECT shipment_id FROM v_driver_shipments WHERE driver_id = ? AND current_status NOT IN ('COMPLETED', 'CANCELLED') "
         "ORDER BY original_eta_ts, shipment_id",
         (driver_id,),
     ).fetchall()

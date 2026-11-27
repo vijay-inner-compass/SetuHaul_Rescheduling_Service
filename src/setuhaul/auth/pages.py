@@ -55,7 +55,7 @@ ASSET_TYPES = {"app.css": "text/css; charset=utf-8", "common.js": "text/javascri
                "admin.js": "text/javascript; charset=utf-8", "tabs.js": "text/javascript; charset=utf-8",
                "model.js": "text/javascript; charset=utf-8",
                "settings.js": "text/javascript; charset=utf-8",
-               "warehouse.js": "text/javascript; charset=utf-8"}
+               "warehouse.js": "text/javascript; charset=utf-8", "gate.js": "text/javascript; charset=utf-8"}
 # Sent with every HTML response: nothing but our own files may run or load, and nothing is cached.
 SECURITY_HEADERS = {
     "Content-Security-Policy": ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
@@ -214,7 +214,7 @@ def _users_section(conn: sqlite3.Connection, me: User) -> str:
     invite = ('<h3>Invite a user</h3><form data-api="/v1/admin/users"><label>Email <input name="email" type="email" required></label>'
               '<label>Display name <input name="display_name" required maxlength="120"></label>'
               '<label>Role <select name="role"><option value="WAREHOUSE_AUTHORITY">Warehouse authority</option>'
-              '<option value="ADMIN">Admin</option></select></label>'
+              '<option value="SECURITY">Security (gate)</option><option value="ADMIN">Admin</option></select></label>'
               f'<label>Facilities <select name="facilities" multiple size="4">{_options(facilities)}</select></label>'
               '<button type="submit">Invite</button></form>')
     table = _table(("Email", "Name", "Role", "Status", "Facilities", "Last login", ""), rows)
@@ -701,10 +701,15 @@ def render_warehouse(conn: sqlite3.Connection, user: User, now: Any, facility: s
         if board is None:
             return _message_page("Not found", "No such facility.", 404, user)
     today = now.date()
-    tabs = _tabs((("board", "Dock board"), ("messages", "Messages"), ("projects", "Projects"), ("drivers", "Drivers")))
+    # Imported here: the tab's module uses this one's page helpers.
+    from setuhaul.auth.shipment_pages import shipments_section
+
+    tabs = _tabs((("board", "Dock board"), ("messages", "Messages"), ("projects", "Projects"), ("shipments", "Shipments"),
+                  ("drivers", "Drivers")))
     body = ('<div class="wh">' + _attention(conn, user, today, board) + tabs
             + _board_section(board, options, chosen, now) + _messages_section(conn, user, now)
-            + _projects_section(conn, user, today, options) + _drivers_section(conn, user, today) + "</div>")
+            + _projects_section(conn, user, today, options) + shipments_section(conn, user, now, options)
+            + _drivers_section(conn, user, today) + "</div>")
     nav = '<a href="/warehouse">Warehouse</a>' + (' <a href="/admin">Admin</a>' if user.role == "ADMIN" else "")
     return _respond(_layout("Warehouse", body, ("common.js", "tabs.js", "warehouse.js"), user, nav))
 
@@ -769,7 +774,7 @@ def register_pages(app: FastAPI, deps: AppDeps) -> None:
             finally:
                 conn.close()
             if user is not None:
-                return _redirect("/admin" if user.role == "ADMIN" else "/warehouse")
+                return _redirect({"ADMIN": "/admin", "SECURITY": "/gate"}.get(user.role, "/warehouse"))
         # The same condition the Google routes use (a client and a signing secret of at least 32 bytes).
         google = deps.google is not None and len(deps.session_secret) >= 32
         # Only a listed category selects a message; the parameter itself is never shown.
@@ -791,6 +796,16 @@ def register_pages(app: FastAPI, deps: AppDeps) -> None:
             return user
         facility = request.query_params.get("facility") or None
         return read_page(user, lambda conn: render_warehouse(conn, user, deps.clock.now(), facility))
+
+    @app.get("/gate", response_class=HTMLResponse)
+    def gate_page(request: Request) -> Response:
+        user = guarded(request, "SECURITY", "ADMIN")
+        if isinstance(user, Response):
+            return user
+        # Imported here: the screen's module uses this one's page helpers.
+        from setuhaul.auth.gate_pages import render_gate
+
+        return read_page(user, lambda conn: render_gate(conn, user, deps.clock))
 
     @app.get("/app/assets/{name}")
     def asset(name: str) -> Response:

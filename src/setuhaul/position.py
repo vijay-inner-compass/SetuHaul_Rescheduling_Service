@@ -95,7 +95,7 @@ def handle_new_position(conn: sqlite3.Connection, shipment_id: str, clock: Clock
     now = clock.now()
     # The shipment's driver and the dock (destination facility) it is heading for.
     ship = conn.execute(
-        "select s.driver_id, f.lat, f.lon from shipments s join facilities f on f.facility_id = s.destination_facility_id "
+        "select s.driver_id, f.lat, f.lon from v_driver_shipments s join facilities f on f.facility_id = s.destination_facility_id "
         "where s.shipment_id=?", (shipment_id,)).fetchone()
     # Unknown shipment, or a dock without coordinates: nothing can be said.
     if ship is None or ship["lat"] is None or ship["lon"] is None:

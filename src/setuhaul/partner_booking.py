@@ -27,6 +27,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 # The injectable clock.
+from setuhaul import passes
 from setuhaul.clock import Clock
 
 # immediate() takes the write lock up front.
@@ -65,9 +66,9 @@ def request_slot(conn: sqlite3.Connection, clock: Clock, *, shipment_id: str, pr
     if proposed_start <= clock.now():
         return PartnerRequestResult(status="START_IN_THE_PAST")
     with immediate(conn):
-        ship = conn.execute("select destination_facility_id, current_status from shipments where shipment_id=?",
+        ship = conn.execute("select destination_facility_id, current_status from v_driver_shipments where shipment_id=?",
                             (shipment_id,)).fetchone()
-        if ship is None or ship["current_status"] in _NOT_RESCHEDULABLE:
+        if ship is None or ship["current_status"] in _NOT_RESCHEDULABLE or passes.on_site(conn, shipment_id):
             return PartnerRequestResult(status="SHIPMENT_NOT_RESCHEDULABLE")
         # Only partner facilities are asked by email; our own docks go through the normal hold flow.
         fac = conn.execute("select is_partner from facilities where facility_id=?",

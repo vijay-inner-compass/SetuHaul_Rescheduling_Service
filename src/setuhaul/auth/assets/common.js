@@ -3,9 +3,9 @@
 (function () {
   "use strict";
 
-  // Show a message on the page's status line.
-  function say(text) {
-    var line = document.getElementById("status");
+  // Show a message on the page's status line, or beside the form that asked when it has a place for it.
+  function say(text, near) {
+    var line = near || document.getElementById("status");
     if (line) {
       line.textContent = text;
     }
@@ -17,6 +17,9 @@
     if (data && data.reason_code === "BAD_CREDENTIALS") {
       return "The email or password is not correct. Repeated failures lock the password for a while.";
     }
+    if (data && typeof data.message === "string") {
+      return data.message;
+    }
     if (data && typeof data.reason_code === "string") {
       return data.reason_code;
     }
@@ -27,8 +30,8 @@
   }
 
   // POST JSON; on success go to `next` (or reload), otherwise say why it failed.
-  function send(url, body, next) {
-    say("Working...");
+  function send(url, body, next, near) {
+    say("Working...", near);
     return fetch(url, {
       method: "POST",
       credentials: "same-origin",
@@ -44,10 +47,10 @@
           }
           return;
         }
-        say(reason(response.status, data));
+        say(reason(response.status, data), near);
       });
     }).catch(function () {
-      say("Network error");
+      say("Network error", near);
     });
   }
 
@@ -85,7 +88,8 @@
     Array.prototype.forEach.call(document.querySelectorAll("form[data-api]"), function (form) {
       form.addEventListener("submit", function (event) {
         event.preventDefault();
-        send(form.getAttribute("data-api"), collect(form), form.getAttribute("data-next"));
+        send(form.getAttribute("data-api"), collect(form), form.getAttribute("data-next"),
+          form.querySelector("[data-form-result]"));
       });
     });
     // One listener on the document, not one per button: the live refresh replaces sections, and their new buttons must work too.

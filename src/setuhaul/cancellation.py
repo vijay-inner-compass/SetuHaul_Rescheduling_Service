@@ -23,6 +23,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 # A ranked option, used to present the original slot as a single option.
+from setuhaul import passes
 from setuhaul.allocation import RankedOption
 
 # Shared helpers from booking: outcome classes, fingerprinting, lock-error detection and in-transaction release.
@@ -66,7 +67,7 @@ _ACTIVE = "('PENDING_CONFIRMATION','CONFIRMED','IN_PROGRESS')"
 
 def _require_shipment(conn: sqlite3.Connection, driver_id: str, shipment_id: str) -> sqlite3.Row:
     # The shipment must exist and belong to the driver; the same error covers both cases so ids cannot be probed.
-    row = conn.execute("select * from shipments where shipment_id=? and driver_id=?", (shipment_id, driver_id)).fetchone()
+    row = conn.execute("select * from v_driver_shipments where shipment_id=? and driver_id=?", (shipment_id, driver_id)).fetchone()
     if row is None:
         raise AuthError("FOREIGN_SHIPMENT")
     assert isinstance(row, sqlite3.Row)
@@ -166,6 +167,9 @@ def cancel_confirmed_appointment(
                 f"join appointment_slots s using(slot_id) where a.shipment_id=? and a.is_current=1 "
                 f"and a.appointment_status in {_ACTIVE}", (shipment_id,),
             ).fetchone()
+            # The truck is through the gate: cancelling here would free a dock it is using.
+            if appt is not None and passes.on_site(conn, shipment_id):
+                return store(_res("NOT_CANCELLABLE", appointment_id=appt["appointment_id"]))
             # Nothing to cancel.
             if appt is None:
                 return store(_res("NOT_FOUND"))

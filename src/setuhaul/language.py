@@ -363,6 +363,32 @@ T: dict[str, dict[str, str]] = {
         "hi": "मैं यह साझा नहीं कर सकता। मैं आपके डिलीवरी स्लॉट में मदद कर सकता हूँ: बताइए क्या हो रहा है।",
         "hinglish": "Main yeh share nahi kar sakta. Main aapke delivery slot mein madad kar sakta hoon: bataiye kya ho raha hai.",
     },
+    # An assigned shipment: the driver confirms it by sending its Dock Access Pass back.
+    "pass_confirmed": {
+        "en": "Pass accepted. Order {order}: deliver to {facility}, planned {when}. How can I help?",
+        "hi": "पास स्वीकार हो गया। ऑर्डर {order}: डिलीवरी {facility} पर, तय समय {when}। मैं कैसे मदद करूँ?",
+        "hinglish": "Pass accept ho gaya. Order {order}: delivery {facility} par, planned {when}. Main kaise madad karun?",
+    },
+    "pass_delivery": {
+        "en": "Your Dock Access Pass for order {order}:\n{code}\nSend it back here to confirm the shipment, and show it at the gate.",
+        "hi": "ऑर्डर {order} के लिए आपका डॉक एक्सेस पास:\n{code}\nशिपमेंट कन्फर्म करने के लिए इसे यहाँ वापस भेजें, और गेट पर दिखाएँ।",
+        "hinglish": "Order {order} ke liye aapka Dock Access Pass:\n{code}\nShipment confirm karne ke liye ise yahan wapas bhejiye, aur gate par dikhaiye.",
+    },
+    "pass_mismatch": {
+        "en": "That pass is not valid. Please check it and send it again.",
+        "hi": "यह पास मान्य नहीं है। कृपया जाँचकर दोबारा भेजें।",
+        "hinglish": "Yeh pass valid nahi hai. Check karke dobara bhejiye.",
+    },
+    "pass_locked": {
+        "en": "I cannot accept that pass. Please contact your warehouse.",
+        "hi": "मैं यह पास स्वीकार नहीं कर सकता। कृपया अपने वेयरहाउस से संपर्क करें।",
+        "hinglish": "Main yeh pass accept nahi kar sakta. Apne warehouse se sampark kijiye.",
+    },
+    "pass_waiting": {
+        "en": "A shipment is waiting for you. Send its Dock Access Pass to confirm it.",
+        "hi": "एक शिपमेंट आपका इंतज़ार कर रही है। कन्फर्म करने के लिए उसका डॉक एक्सेस पास भेजें।",
+        "hinglish": "Ek shipment aapka intezaar kar rahi hai. Confirm karne ke liye uska Dock Access Pass bhejiye.",
+    },
 }
 
 

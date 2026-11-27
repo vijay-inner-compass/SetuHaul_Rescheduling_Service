@@ -112,3 +112,86 @@
       .then(function () { busy = false; });
   }, EVERY_MS);
 })();
+
+// Shipments tab: offer only what belongs to the chosen facility and carrier, and report what opening availability did.
+(function () {
+  "use strict";
+
+  // Disable the options whose data attribute does not match; move off a disabled choice.
+  function limit(select, key, wanted) {
+    if (!select || !wanted) {
+      return;
+    }
+    Array.prototype.forEach.call(select.options, function (option) {
+      var off = option.getAttribute("data-" + key) !== wanted;
+      option.disabled = off;
+      option.hidden = off;
+      if (off) {
+        option.selected = false;
+      }
+    });
+    if (!select.multiple && (select.selectedIndex < 0 || select.options[select.selectedIndex].disabled)) {
+      var first = Array.prototype.filter.call(select.options, function (o) { return !o.disabled; })[0];
+      select.value = first ? first.value : "";
+    }
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll("form[data-limit]"), function (form) {
+    var facility = form.elements.facility_id;
+    var driver = form.elements.driver_id;
+    var sync = function () {
+      if (facility) {
+        limit(form.elements.dock_ids, "facility", facility.value);
+        limit(form.elements.slot_id, "facility", facility.value);
+      }
+      if (driver && driver.selectedIndex >= 0) {
+        limit(form.elements.vehicle_id, "carrier", driver.options[driver.selectedIndex].getAttribute("data-carrier"));
+      }
+    };
+    form.addEventListener("change", sync);
+    sync();
+  });
+
+  // Opening availability reports days it left alone, so the answer is kept across the reload that refreshes the slot list.
+  var form = document.getElementById("availability-form");
+  var line = document.getElementById("availability-result");
+  if (!form || !line) {
+    return;
+  }
+  line.textContent = window.sessionStorage.getItem("availability") || "";
+  window.sessionStorage.removeItem("availability");
+  form.addEventListener("submit", function (event) {
+    event.preventDefault();
+    var body = {};
+    Array.prototype.forEach.call(form.elements, function (field) {
+      if (field.multiple) {
+        body[field.name] = Array.prototype.filter.call(field.options, function (o) { return o.selected; })
+          .map(function (o) { return o.value; });
+      } else if (field.name && field.value !== "") {
+        body[field.name] = field.value;
+      }
+    });
+    line.textContent = "Working...";
+    fetch("/v1/warehouse/availability", {
+      method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+    }).then(function (response) {
+      return response.json().catch(function () { return null; }).then(function (data) {
+        if (!response.ok) {
+          line.textContent = (data && (data.message || data.reason_code)) || "INVALID_REQUEST";
+          return;
+        }
+        var text = data.slots_created + " slots added.";
+        if (data.days_unchanged.length) {
+          text += " Labour already recorded, left as it was: " + data.days_unchanged.join(", ") + ".";
+        }
+        if (data.slots_skipped) {
+          text += " " + data.slots_skipped + " slots not added: no labour is recorded for them.";
+        }
+        window.sessionStorage.setItem("availability", text);
+        window.location.reload();
+      });
+    }).catch(function () {
+      line.textContent = "Network error";
+    });
+  });
+})();

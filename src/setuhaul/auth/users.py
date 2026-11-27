@@ -24,7 +24,9 @@ from setuhaul.db import immediate
 # Reuse the stable-code authorisation error.
 from setuhaul.identity import AuthError
 
-Role = Literal["ADMIN", "WAREHOUSE_AUTHORITY"]
+Role = Literal["ADMIN", "WAREHOUSE_AUTHORITY", "SECURITY"]
+# Roles that act only at the facilities they are bound to.
+FACILITY_BOUND = ("WAREHOUSE_AUTHORITY", "SECURITY")
 
 
 # A web user as the rest of the system may see it.
@@ -106,8 +108,8 @@ def invite(
     # A syntactically empty address is not an invite.
     if "@" not in addr:
         raise AuthError("INVALID_EMAIL")
-    # A warehouse authority must manage at least one facility, and each must exist.
-    if role == "WAREHOUSE_AUTHORITY":
+    # A facility-bound user needs at least one facility, and each must exist.
+    if role in FACILITY_BOUND:
         if not facilities:
             raise AuthError("FACILITY_REQUIRED")
         for fac in facilities:
@@ -124,8 +126,8 @@ def invite(
             "values (?,?,?,'ACTIVE',?,?,?)",
             (uid, addr, role, display_name, actor.user_id, clock.now().isoformat()),
         )
-        # Facilities only apply to warehouse authorities.
-        if role == "WAREHOUSE_AUTHORITY":
+        # Facilities only apply to facility-bound roles.
+        if role in FACILITY_BOUND:
             for fac in facilities:
                 conn.execute("insert into user_facilities(user_id, facility_id) values (?,?)", (uid, fac))
         audit.record(
