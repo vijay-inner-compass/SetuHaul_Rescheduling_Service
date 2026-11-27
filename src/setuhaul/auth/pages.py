@@ -37,6 +37,9 @@ from setuhaul.config import load_settings
 from setuhaul.db import IST, open_connection
 from setuhaul.escalation import CaseView, case_events, get_case
 from setuhaul.identity import AuthError
+from setuhaul.labels import moment as when
+from setuhaul.labels import reason as why
+from setuhaul.labels import word
 from setuhaul.langsmith_trace import tracing_status
 from setuhaul.model_gateway import ModelGateway, ModelPolicy
 from setuhaul.model_report import (
@@ -53,7 +56,7 @@ if TYPE_CHECKING:
 
 # Where the external scripts and styles live, and the only names that may be served from there.
 ASSET_DIR = Path(__file__).parent / "assets"
-ASSET_TYPES = {"app.css": "text/css; charset=utf-8", "common.js": "text/javascript; charset=utf-8",
+ASSET_TYPES = {"tokens.css": "text/css; charset=utf-8", "app.css": "text/css; charset=utf-8", "common.js": "text/javascript; charset=utf-8",
                "admin.js": "text/javascript; charset=utf-8", "tabs.js": "text/javascript; charset=utf-8",
                "model.js": "text/javascript; charset=utf-8",
                "settings.js": "text/javascript; charset=utf-8",
@@ -94,12 +97,13 @@ def _redirect(to: str) -> RedirectResponse:
 
 def _layout(title: str, body: str, scripts: tuple[str, ...], user: User | None = None, nav: str = "") -> str:
     # The common frame: stylesheet, header with who is signed in, one status line the scripts write into, then the page.
-    who = (f'<span class="who">{esc(user.email)} ({esc(user.role)})</span>'
+    who = (f'<span class="who">{esc(user.email)} ({esc(word(user.role))})</span>'
            '<button type="button" data-api="/auth/logout" data-next="/">Sign out</button>') if user else ""
     tags = "".join(f'<script src="/app/assets/{esc(s)}" defer></script>' for s in scripts)
     return ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-            f"<title>{esc(title)}</title><link rel=\"stylesheet\" href=\"/app/assets/app.css\"></head><body>"
+            f"<title>{esc(title)}</title><link rel=\"stylesheet\" href=\"/app/assets/tokens.css\">"
+            "<link rel=\"stylesheet\" href=\"/app/assets/app.css\"></head><body>"
             f"<header><h1>SetuHaul</h1><nav>{nav}</nav><div class=\"session\">{who}</div></header>"
             f"<p id=\"status\" class=\"status\" role=\"alert\"></p><main>{body}</main>{tags}</body></html>")
 
@@ -188,7 +192,8 @@ def _landing(google: bool, local_admin: bool, notice: str = "") -> str:
     lead = "For administrators and warehouse teams." if google else "Administrator access."
     return ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-            "<title>Sign in</title><link rel=\"stylesheet\" href=\"/app/assets/app.css\"></head><body class=\"login\">"
+            "<title>Sign in</title><link rel=\"stylesheet\" href=\"/app/assets/tokens.css\">"
+            "<link rel=\"stylesheet\" href=\"/app/assets/app.css\"></head><body class=\"login\">"
             '<div class="brand"><p class="wordmark">SetuHaul</p>'
             '<div class="pitch"><h1>Dock scheduling and rescheduling</h1>'
             "<p>One place for warehouse teams to see bay bookings, driver messages and changes as they happen.</p></div>"
@@ -236,8 +241,8 @@ def _users_section(conn: sqlite3.Connection, me: User) -> str:
             action += (f'<details><summary>Change facilities</summary><form data-api="{esc(base)}/facilities" '
                        f'data-done="Facilities saved.">{_checkboxes("facilities", facilities, found.facilities)}'
                        '<button type="submit">Save facilities</button></form></details>')
-        rows.append([esc(found.email), esc(found.display_name), esc(found.role), esc(found.status),
-                     esc(", ".join(found.facilities)), esc(row["last_login_at"] or "never"), action])
+        rows.append([esc(found.email), esc(found.display_name), esc(word(found.role)), esc(word(found.status)),
+                     esc(", ".join(found.facilities)), esc(when(row["last_login_at"])), action])
     invite = ('<h3>Invite a user</h3><form data-api="/v1/admin/users"><label>Email <input name="email" type="email" required></label>'
               '<label>Display name <input name="display_name" required maxlength="120"></label>'
               '<label>Role <select name="role"><option value="WAREHOUSE_AUTHORITY">Warehouse authority</option>'
@@ -271,7 +276,7 @@ def _decided_section(conn: sqlite3.Connection) -> str:
         else:
             action = _button("Re-approve", f"/v1/drivers/{_segment(did)}/approve", confirm=f"Re-approve {d['driver_name']}?")
         rows.append([esc(did), esc(d["driver_name"]), esc(mask_phone(d["phone"])), esc(d["carrier_id"]), esc(d["vehicle_id"]),
-                     esc(d["licence_expiry"]), esc(d["approval_status"]), action])
+                     esc(d["licence_expiry"]), esc(word(d["approval_status"])), action])
     table = _table(("Driver", "Name", "Phone", "Carrier", "Vehicle", "Licence expiry", "Approval", ""), rows,
                    "No onboarded drivers have been decided yet.")
     return f'<section id="decided" data-panel="decided"><h2>Onboarded drivers</h2>{table}</section>'
@@ -294,7 +299,7 @@ def _audit_section(conn: sqlite3.Connection, query: dict[str, str]) -> str:
         # Scrubbed again on the way out, then shown as plain escaped text.
         detail = json.dumps(audit.scrub(json.loads(r["detail_json"])), sort_keys=True) if r["detail_json"] else ""
         target = " ".join(x for x in (r["target_type"], r["target_id"]) if x)
-        rows.append([esc(r["ts"]), esc(r["actor_email"] or r["actor_user_id"] or ""), esc(r["action"]), esc(target),
+        rows.append([esc(when(r["ts"])), esc(r["actor_email"] or r["actor_user_id"] or ""), esc(r["action"]), esc(target),
                      esc(r["outcome"]), f'<code>{esc(detail)}</code>'])
     form = ('<form method="get" action="/admin#audit" class="filters">'
             f'<label>Actor <input name="actor" value="{esc(actor)}"></label>'
@@ -344,7 +349,7 @@ def _model_figures(conn: sqlite3.Connection, now: datetime) -> str:
     health = "No model calls recorded yet."
     if calls:
         every = totals[1][1]
-        health = (f"Last call {calls[0]['outcome']} at {calls[0]['ts']}; "
+        health = (f"Last call {calls[0]['outcome']} at {when(calls[0]['ts'])}; "
                   f"{round(100 * every.failed / every.calls)}% of calls failed")
     rows = [[esc(label), esc(t.calls), esc(t.failed), esc(_seconds(t.p50_ms)), esc(_seconds(t.p95_ms)),
              esc(f"{t.input_tokens} / {t.output_tokens}"), esc(_cost(t))] for label, t in totals]
@@ -358,13 +363,13 @@ def _model_figures(conn: sqlite3.Connection, now: datetime) -> str:
         "No model calls recorded yet.")
     turns = _table(
         ("Time", "Status", "Reason", "Handled in", "Calls", "Tokens in / out", "Est. cost"),
-        [[esc(r["ts"]), esc(r["status"]), esc(r["reason_code"] or ""), esc(_seconds(r["duration_ms"])), esc(r["calls"]),
+        [[esc(when(r["ts"])), esc(word(r["status"])), esc(why(r["reason_code"]) if r["reason_code"] else ""), esc(_seconds(r["duration_ms"])), esc(r["calls"]),
           esc(f"{r['input_tokens']} / {r['output_tokens']}"),
           esc("-" if r["cost_usd"] is None else f"${r['cost_usd']:.4f}")] for r in recent_turns(conn)],
         "No model calls recorded yet.")
     each = _table(
         ("Time", "Model", "Result", "Response time", "Tokens in / out", "Est. cost"),
-        [[esc(r["ts"]), esc(f"{r['provider']} / {r['model_id']}"), esc(r["outcome"]), esc(_seconds(r["duration_ms"])),
+        [[esc(when(r["ts"])), esc(f"{r['provider']} / {r['model_id']}"), esc(r["outcome"]), esc(_seconds(r["duration_ms"])),
           esc(f"{r['input_tokens']} / {r['output_tokens']}"),
           esc("-" if r["cost_usd"] is None else f"${r['cost_usd']:.4f}")] for r in calls],
         "No model calls recorded yet.")
@@ -592,6 +597,11 @@ _OUTCOMES = (("ASSIGNED_SLOT", "Assigned a slot"), ("ADVISED_DRIVER", "Advised t
              ("CANCELLED_BY_OPERATIONS", "Cancelled by operations"), ("NO_ACTION_NEEDED", "No action needed"), ("OTHER", "Other"))
 
 
+def _named(name: str, ident: str) -> str:
+    # The name a person knows, with the id beside it for reference.
+    return f'{esc(name)} <span class="id">{esc(ident)}</span>'
+
+
 def _case_actions(c: CaseView, me: str, owner: str) -> str:
     # Only what the service would accept from this user is drawn: claim an open case, resolve your own claim, reopen a resolved one.
     cid = c.case_id
@@ -642,7 +652,7 @@ def _case_cards(conn: sqlite3.Connection, user: User, cases: list[CaseView], emp
                    if c.status == "RESOLVED" else "")
         # The closing comment marks where one card ends, for the tests.
         cards.append(f'<li class="case" data-key="{esc(f"case:{c.case_id}")}" tabindex="-1"><div class="case-head"><b>{esc(c.case_id)}</b>'
-                     f'<span class="pill">{esc(c.status)}</span><span class="reason">{esc(c.reason_code)}</span></div>{note}{outcome}'
+                     f'<span class="pill">{esc(word(c.status))}</span><span class="reason" title="{esc(c.reason_code)}">{esc(why(c.reason_code))}</span></div>{note}{outcome}'
                      f'<div class="meta"><span>Load {esc(c.shipment_id or "none")}</span><span>{esc(claimed)}</span></div>'
                      f"{_case_history(conn, c.case_id)}{_case_actions(c, me, owner)}</li><!--case-->")
     return f'<ul class="cases">{"".join(cards)}</ul>'
@@ -695,8 +705,8 @@ def _facility_requests(conn: sqlite3.Connection, user: User) -> str:
 
 def _messages_section(conn: sqlite3.Connection, user: User, now: datetime) -> str:
     found = [c for c in (get_case(conn, i) for i in case_ids_in_scope(conn, user, ("OPEN", "CLAIMED"))) if c is not None]
-    reqs = [[esc(r["request_ref"]), esc(r["facility_id"]), esc(r["shipment_id"]), esc(r["status"]), esc(r["email_status"]),
-             esc(f"{r['proposed_start']} - {r['proposed_end']}")] for r in partner_requests_in_scope(conn, user)]
+    reqs = [[esc(r["request_ref"]), _named(r["facility_name"], r["facility_id"]), esc(r["shipment_id"]), esc(word(r["status"])),
+             esc(word(r["email_status"])), esc(f"{when(r['proposed_start'])} to {_clock(r['proposed_end'])}")] for r in partner_requests_in_scope(conn, user)]
     note = ('<p class="note">Drivers on projects created by an administrator do not appear in a warehouse authority\'s chats; '
             "only drivers on projects you created are shown.</p>")
     return (f'<section id="messages" data-panel="messages" data-count="{len(found)}"><h2>Messages</h2>' + _facility_requests(conn, user) + '<h3>Open cases</h3>'
@@ -727,17 +737,20 @@ def _projects_section(conn: sqlite3.Connection, user: User, today: date, facilit
     eligible = [(r["driver_id"], f"{r['driver_id']} - {r['driver_name']}") for r in drivers_in_scope(conn, user, today)
                 if onboarding.driver_eligible(conn, r["driver_id"], today)]
     rows = []
+    names = {r["driver_id"]: r["driver_name"] for r in conn.execute("select driver_id, driver_name from drivers")}
+    places = {r["facility_id"]: r["facility_name"] for r in conn.execute("select facility_id, facility_name from facilities")}
     for p in projects.list_projects(conn, user):
         pid = str(p["project_id"])
         active = [str(d) for d in p["driver_ids"]]  # type: ignore[attr-defined]
-        drivers = "".join(f"<div>{esc(d)} " + _button("Release", f"/v1/projects/{_segment(pid)}/release", {"driver_id": d},
-                                                         f"Release {d}?") + "</div>" for d in active)
+        drivers = "".join(f"<div>{_named(names.get(d, d), d)} " + _button("Release", f"/v1/projects/{_segment(pid)}/release", {"driver_id": d},
+                          f"Release {names.get(d, d)} from {p['customer_name']}?") + "</div>" for d in active)
         allocate = ""
         free = [(v, label) for v, label in eligible if v not in active]
         if p["status"] == "ACTIVE" and free:
-            allocate = (f'<form data-api="/v1/projects/{esc(_segment(pid))}/allocate"><select name="driver_id">{_options(free)}</select>'
+            allocate = (f'<form data-api="/v1/projects/{esc(_segment(pid))}/allocate"><select name="driver_id" aria-label="Driver to allocate">{_options(free)}</select>'
                         '<button type="submit">Allocate</button></form>')
-        rows.append([esc(pid), esc(p["customer_name"]), esc(p["contract_ref"]), esc(p["facility_id"]), esc(p["status"]),
+        rows.append([esc(pid), esc(p["customer_name"]), esc(p["contract_ref"]),
+                     _named(places.get(str(p["facility_id"]), str(p["facility_id"])), str(p["facility_id"])), esc(word(p["status"])),
                      esc(f"{p['starts_on']} - {p['ends_on'] or 'open'}"), drivers + allocate])
     create = ('<h3>New project</h3><form data-api="/v1/projects"><label>Customer <input name="customer_name" required maxlength="120"></label>'
               '<label>Contract reference <input name="contract_ref" required maxlength="64"></label>'
@@ -760,8 +773,8 @@ def _drivers_section(conn: sqlite3.Connection, user: User, today: date) -> str:
             elif d["telegram_status"] == "REVOKED":
                 action = _button("Allow re-link", f"{base}/allow-relink",
                                  confirm=f"Let {d['driver_name']} link a Telegram account again?")
-        rows.append([esc(d["driver_id"]), esc(d["driver_name"]), esc(d["phone"]), esc(d["approval_status"]),
-                     "Yes" if d["licence_valid"] else "No", esc(d["telegram_status"]), action])
+        rows.append([esc(d["driver_id"]), esc(d["driver_name"]), esc(d["phone"]), esc(word(d["approval_status"])),
+                     "Yes" if d["licence_valid"] else "No", esc(word(d["telegram_status"])), action])
     carriers = [(r["carrier_id"], f"{r['carrier_id']} - {r['carrier_name']}")
                 for r in conn.execute("select carrier_id, carrier_name from carriers where active_flag=1 order by carrier_id")]
     vehicles = conn.execute("select vehicle_id, carrier_id, registration_number from vehicles where active_flag=1 "

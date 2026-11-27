@@ -69,12 +69,13 @@ def test_tabs_that_do_not_refresh_say_so(world: World, panel: str) -> None:
 # ---- focus outline -----------------------------------------------------------------------------------------
 def test_focus_outline_is_visible_on_light_and_dark_surfaces() -> None:
     css = _asset("app.css")
-    light = re.search(r":root \{ --focus: (#[0-9a-f]{3,6}); \}", css)
-    dark = re.search(r"^header \{ --focus: (#[0-9a-f]{3,6}); \}", css, re.MULTILINE)
+    tokens = dict(re.findall(r"(--sh-[a-z0-9-]+): (#[0-9a-f]{3,6});", _asset("tokens.css")))
+    light = re.search(r":root \{ --focus: var\((--sh-[a-z0-9-]+)\); \}", css)
+    dark = re.search(r"^header \{ --focus: var\((--sh-[a-z0-9-]+)\); \}", css, re.MULTILINE)
     assert light and dark
-    for surface in ("#ffffff", "#f6f7f9", "#f8f9fb"):
-        assert _contrast(light.group(1), surface) >= 3
-    assert _contrast(dark.group(1), "#17324d") >= 3
+    for surface in ("--sh-white", "--sh-bg"):
+        assert _contrast(tokens[light.group(1)], tokens[surface]) >= 3
+    assert _contrast(tokens[dark.group(1)], tokens["--sh-navy"]) >= 3
     assert re.search(r"^:focus-visible \{ outline: 3px solid var\(--focus\); outline-offset: 2px; \}", css, re.MULTILINE)
     # No other rule paints the outline in its own colour.
     outlines = re.findall(r"outline: [^;}]*?(#[0-9a-f]{3,6})", css)
@@ -83,8 +84,9 @@ def test_focus_outline_is_visible_on_light_and_dark_surfaces() -> None:
 
 def test_demo_console_focus_outline_is_visible_on_its_dark_bar() -> None:
     page = (SRC / "demo" / "index.html").read_text(encoding="utf-8")
-    rule = re.search(r"\.appbar :focus-visible\{outline-color:(#[0-9a-f]{6})\}", page)
-    assert rule and _contrast(rule.group(1), "#12355b") >= 3
+    assert ".appbar :focus-visible{outline-color:var(--sh-amber)}" in page
+    tokens = dict(re.findall(r"(--sh-[a-z0-9-]+): (#[0-9a-f]{3,6});", _asset("tokens.css")))
+    assert _contrast(tokens["--sh-amber"], tokens["--sh-navy"]) >= 3
 
 
 # ---- narrow screens ----------------------------------------------------------------------------------------

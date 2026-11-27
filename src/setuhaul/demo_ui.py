@@ -106,6 +106,7 @@ from setuhaul.identity import provision_identities
 from setuhaul.jobs.expire_holds import expire_due_holds
 from setuhaul.jobs.poll_partner_replies import poll_partner_replies
 from setuhaul.jobs.send_partner_requests import send_pending_requests
+from setuhaul.labels import REASON_TEXT  # plain words for why a case was handed over
 from setuhaul.mail_transport import (
     IncomingMail,
     InMemoryMailbox,
@@ -137,19 +138,6 @@ MESSAGE_ADVANCE_SECONDS = 20  # each driver message takes a moment, so holds can
 # The only client addresses the demo accepts.
 LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
 SPARE_SHIPMENTS = ("SHP1018", "SHP1019", "SHP1008", "SHP1001")  # loads the planner can book without touching a driver in the demo
-# Plain-language labels for hand-off reason codes, shown to the coordinator instead of raw codes.
-REASON_TEXT = {
-    "NO_SLOT": "No slot fits this load", "CONTRADICTORY_DATA": "Driver's report contradicts the gate record",
-    "INCOMPLETE_FEASIBILITY_DATA": "Cannot check labour or customer data", "APPROVAL_REQUIRED": "Customer commitment needs approval",
-    "SAFETY": "Safety concern", "REGULATED_LOAD": "Regulated load", "POLICY_CONFLICT": "Policy conflict",
-    "DATABASE_UNAVAILABLE": "System unavailable during the conversation", "MODEL_UNAVAILABLE": "The assistant could not answer",
-    "MODEL_LOOP_LIMIT": "The assistant hit its safety limit", "LANGUAGE_UNSUPPORTED": "Unsupported language",
-    "CANCELLATION_CUTOFF": "Cancellation too close to the slot", "CUSTOMER_COMMITMENT": "Customer commitment at stake",
-    "CUSTOMER_COMMITMENT_UNKNOWN": "Customer commitment unknown", "DRIVER_REQUESTED": "Driver asked for a person",
-    "PASS_CONFIRMATION_LOCKED": "Dock pass not confirmed",
-    "VISIT_OVERSTAY": "Truck still inside after its pass window",
-    "OTHER_UNCERTAINTY": "The assistant was unsure",
-}
 
 
 @dataclass

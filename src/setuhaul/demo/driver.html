@@ -4,8 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>SetuHaul | Demo driver</title>
+<link rel="stylesheet" href="/app/assets/tokens.css">
 <style>
-:root{--bg:#f3f5f8;--surface:#fff;--line:#dde3ea;--ink:#0f1b2d;--ink-3:#6b7a90;--brand:#12355b;--brand-soft:#e8f0fa;--bad:#b42318}
+:root{--bg:#f3f5f8;--surface:#fff;--line:#dde3ea;--ink:#0f1b2d;--ink-3:var(--sh-muted);--brand:var(--sh-navy);--brand-soft:#e8f0fa;--bad:#b42318}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 "Segoe UI",system-ui,sans-serif}
 .phone{max-width:440px;margin:0 auto;height:100vh;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line)}
@@ -31,7 +32,7 @@ footer{border-top:1px solid var(--line);padding:10px 12px}
 button{font:inherit;border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 10px;cursor:pointer}
 button:disabled,input:disabled{opacity:.5;cursor:default}
 form{display:flex;gap:8px}
-input{flex:1;font:inherit;padding:8px;border:1px solid var(--line);border-radius:8px}
+input{flex:1;font:inherit;padding:8px;border:1px solid var(--sh-input-line);border-radius:8px}
 #send{background:var(--brand);color:#fff}
 </style>
 </head>

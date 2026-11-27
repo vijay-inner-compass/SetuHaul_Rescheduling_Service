@@ -344,6 +344,9 @@ curl -X POST "https://api.telegram.org/bot<BOT_TOKEN>/setWebhook" -d "url=<base>
 7. To work a hand-off case: `/warehouse` > **Messages** > **Open cases** > **Claim**, then choose an outcome, write the message the driver will
    receive and **Resolve**. Only the claimant can resolve. **Recently resolved** offers **Reopen** inside the reopen window (24 hours by default).
    A case that names no load is visible to admins only.
+8. Cases that name no load belong to admins: the admin screen counts them under **Cases with no load**; work them on `/warehouse` > **Messages**.
+9. Admins can **Re-enable** a disabled user and **Change facilities** for warehouse and security users; both are audited. A re-enabled
+   user signs in again.
 
 Rules enforced by the server:
 
