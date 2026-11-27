@@ -33,7 +33,7 @@ These were run on test data with a scripted stand-in for the AI model, on one co
 * One facility's schedule is not re-planned as a whole.
 
 ## Open risks
-1. The current flow has no recorded run with a real AI model, so its understanding of drivers is unmeasured.
+1. A real AI model has been recorded only once per language, before the latest changes, so its understanding of drivers is unmeasured.
 2. Hindi and Hinglish wording has not been checked by a native speaker.
 3. No real driver has used it. Privacy, retention and erasure of driver messages are undecided.
 4. The database suits a prototype; it must be replaced before heavy or multi-server use.
