@@ -22,6 +22,9 @@ _MINE = ("select s.shipment_id, s.order_reference, s.original_eta_ts, s.current_
          " a.confirmed_at, a.locked_at, a.failed_attempts, (select p.token_hash from dock_access_authorizations p"
          " join visit_shipments v using(truck_visit_id) where v.shipment_id=s.shipment_id and p.driver_id=s.driver_id"
          f" and p.status in {LIVE}) as live_hash,"
+         " (select p.revocation_reason from dock_access_authorizations p"
+         " join visit_shipments v using(truck_visit_id) where v.shipment_id=s.shipment_id"
+         " order by p.rowid desc limit 1) as last_revocation_reason,"
          # The booked slot, which a reschedule moves; the original plan only if nothing is booked.
          " coalesce((select sl.slot_start_ts from appointments ap join appointment_slots sl using(slot_id)"
          " where ap.shipment_id=s.shipment_id and ap.is_current=1 and ap.appointment_status in"
@@ -41,7 +44,9 @@ class PassReply(BaseModel):
 
 
 def _waiting(row: sqlite3.Row) -> bool:
-    return row["assigned"] is not None and row["confirmed_at"] is None and row["current_status"] != "CANCELLED" and row["live_hash"] is not None
+    if row["assigned"] is None or row["confirmed_at"] is not None or row["current_status"] == "CANCELLED":
+        return False
+    return not (row["live_hash"] is None and row["last_revocation_reason"] == "WAREHOUSE_CHANGED")
 
 
 def has_waiting(conn: sqlite3.Connection, driver_id: str) -> bool:
