@@ -100,7 +100,7 @@ def test_a_booked_future_cell_has_a_cross_with_a_label(tmp_path: Path) -> None:
     assert (cell["appointment_id"], cell["freeable"]) == (appt, True)
 
 
-@pytest.mark.parametrize("change", ["held", "started", "on_site", "unloading"])
+@pytest.mark.parametrize("change", ["held", "on_site", "unloading"])
 def test_no_cross_on_held_started_on_site_or_unloading_cells(tmp_path: Path, change: str) -> None:
     world, shipment_id, appt = booked_world(tmp_path)
     world.clock.advance(timedelta(hours=22))

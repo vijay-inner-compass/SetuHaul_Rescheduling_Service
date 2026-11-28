@@ -53,18 +53,20 @@ def shipments_section(conn: sqlite3.Connection, user: User, now: datetime, facil
         f"select dock_id, facility_id, dock_type from docks where facility_id in ({marks}) order by dock_id", own))
     # Only slots a new shipment could take: ahead of now, open and not booked or held. Asked per facility, so a busy one
     # cannot crowd another off the list.
+    dock_meta = {r["dock_code"]: (r["dock_type"], bool(r["supports_refrigerated"])) for r in conn.execute(
+        f"select dock_code, dock_type, supports_refrigerated from docks where facility_id in ({marks})", own)}
     slots = ""
-    slots_by_facility: dict[str, str] = {}
+    slots_by_facility: dict[str, list[sqlite3.Row]] = {}
     for facility_id in own:
-        free = open_slots(conn, facility_id, now, limit=20)
+        free = open_slots(conn, facility_id, now, limit=200)
+        slots_by_facility[facility_id] = free
         opts = "".join(_option(r["slot_id"], f"{facility_id} {r['dock_code']} {_when(r['slot_start_ts'])}",
-                               facility=facility_id) for r in free)
-        slots_by_facility[facility_id] = opts
+                               facility=facility_id) for r in free[:20])
         slots += opts
         if not free:
             slots += _option("", "No open slots: open availability first", facility=facility_id)
     all_facilities = [(r["facility_id"], f"{r['facility_id']} - {r['facility_name']}") for r in conn.execute(
-        "select facility_id, facility_name from facilities where active_flag=1 order by facility_id")]
+        "select facility_id, facility_name from facilities where active_flag=1 and is_partner=0 order by facility_id")]
     today = now.astimezone(IST).date()
     able = [r for r in drivers_in_scope(conn, user, today) if driver_eligible(conn, r["driver_id"], today)]
     drivers = "".join(_option(r["driver_id"], f"{r['driver_id']} - {r['driver_name']}", carrier=r["carrier_id"]) for r in able)
@@ -104,7 +106,10 @@ def shipments_section(conn: sqlite3.Connection, user: User, now: datetime, facil
         base = f"/v1/warehouse/shipments/{_segment(s['shipment_id'])}"
         actions = ""
         appt = passes.current_appointment(conn, s["shipment_id"])
-        ship_status = conn.execute("select current_status from shipments where shipment_id=?", (s["shipment_id"],)).fetchone()[0]
+        ship_info = conn.execute(
+            "select current_status, required_dock_type, temperature_control_required from shipments where shipment_id=?",
+            (s["shipment_id"],)).fetchone()
+        ship_status = ship_info["current_status"]
         movable = s["state"] != "CANCELLED" and s["visit_state"] in (None, "EXPECTED") and ship_status not in (
             "CANCELLED", "COMPLETED", "AT_GATE", "WAITING", "IN_DOCK")
         if s["state"] in ("WAITING", "LOCKED"):
@@ -119,10 +124,20 @@ def shipments_section(conn: sqlite3.Connection, user: User, now: datetime, facil
                 confirm_msg = esc(f"Change warehouse for {s['order_reference']}? This frees the current slot and revokes the pass.")
                 actions += (f'<form data-api="{esc(base)}/warehouse" data-confirm="{confirm_msg}">' + _select("Warehouse", "facility_id", other_places)
                             + '<button type="submit">Change warehouse</button><span class="note" data-form-result role="alert"></span></form>')
-            facility_slots = slots_by_facility.get(s["facility_id"], "")
+            raw_slots = slots_by_facility.get(s["facility_id"], [])
+            req_type = ship_info["required_dock_type"]
+            need_reefer = bool(ship_info["temperature_control_required"])
+            compat = [r for r in raw_slots if (
+                (req_type == "ANY" or dock_meta.get(r["dock_code"], ("STANDARD", False))[0] == req_type)
+                and (not need_reefer or dock_meta.get(r["dock_code"], ("STANDARD", False))[1])
+            )]
+            facility_slots = "".join(_option(r["slot_id"], f"{s['facility_id']} {r['dock_code']} {_when(r['slot_start_ts'])}") for r in compat)
             if facility_slots:
-                actions += (f'<form data-api="{esc(base)}/slot">' + _select("Slot", "slot_id", facility_slots)
+                slot_confirm = f' data-confirm="{esc(f"Replace the current booked slot for {s['order_reference']}?")}"' if appt is not None else ""
+                actions += (f'<form data-api="{esc(base)}/slot"{slot_confirm}>' + _select("Slot", "slot_id", facility_slots)
                             + '<button type="submit">Allocate slot</button><span class="note" data-form-result role="alert"></span></form>')
+            if s["state"] == "CONFIRMED":
+                actions += _button("Cancel", f"{base}/cancel", confirm=f"Cancel confirmed shipment {s['order_reference']}? This frees its slot and cancels its pass.")
         if s["state"] != "CANCELLED" and s["visit_state"] in (None, "EXPECTED") and appt is not None:
             actions += _button("Send new pass", f"{base}/pass", confirm=f"Replace the pass for {s['order_reference']}?")
         if s["pass_state"] in ("ISSUED", "VALIDATED"):
@@ -140,8 +155,9 @@ def shipments_section(conn: sqlite3.Connection, user: User, now: datetime, facil
             pass_text = "Pass not delivered"
         appt = passes.current_appointment(conn, s["shipment_id"])
         planned_text = "No slot allocated" if s["state"] != "CANCELLED" and appt is None else _when(s["planned_start"])
+        state_text = "Confirmed (no slot)" if s["state"] == "CONFIRMED" and appt is None else _STATES[s["state"]]
         rows.append([esc(s["order_reference"]), esc(f"{s['driver_id']} - {s['driver_name']}"), esc(s["facility_id"]),
-                     esc(planned_text), esc(_STATES[s["state"]]), esc(pass_text), actions])
+                     esc(planned_text), esc(state_text), esc(pass_text), actions])
 
     table = _table(("Order", "Driver", "Destination", "Planned", "State", "Pass", ""), rows, "No shipments have been created here yet.")
     return (f'<section id="shipments" data-panel="shipments"><h2>Shipments</h2><p class="note">This tab does not update by itself. Reload the page to see changes.</p>{table}'

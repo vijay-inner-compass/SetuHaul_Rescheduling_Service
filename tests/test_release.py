@@ -44,9 +44,10 @@ def test_another_warehouse_cannot_see_the_booking(tmp_path: Path) -> None:
 
 def test_a_started_slot_is_refused(tmp_path: Path) -> None:
     world, _, appt = booked_world(tmp_path)
-    # 10:00 on the 27th to 09:05 on the 28th.
+    # 10:00 on the 27th to 09:05 on the 28th: truck has not arrived, so a missed/started slot can be freed.
     world.clock.advance(timedelta(hours=23, minutes=5))
-    assert _refused(world, "wh_a", appt) == "SLOT_STARTED"
+    found = run(world, release.free_slot, actor=world.users["wh_a"], appointment_id=appt)
+    assert found.appointment_id == appt
 
 
 def test_unloading_and_on_site_are_refused(tmp_path: Path) -> None:

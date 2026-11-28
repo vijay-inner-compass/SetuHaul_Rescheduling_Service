@@ -325,7 +325,12 @@ def change_driver(conn: sqlite3.Connection, *, actor: User, shipment_id: str, dr
 def cancel_shipment(conn: sqlite3.Connection, *, actor: User, shipment_id: str, clock: Clock) -> None:
     """Cancel an unconfirmed shipment and free its slot."""
     with immediate(conn):
-        _unconfirmed(conn, actor, shipment_id)
+        _mine(conn, actor, shipment_id)
+        if passes.on_site(conn, shipment_id) or release.truck_inside(conn, shipment_id):
+            raise AuthError("ORIGINAL_IN_PROGRESS")
+        if conn.execute("select 1 from appointments where shipment_id=? and is_current=1 and appointment_status='IN_PROGRESS'",
+                        (shipment_id,)).fetchone():
+            raise AuthError("ORIGINAL_IN_PROGRESS")
         now = clock.now()
         stamp = now.isoformat()
         for held in conn.execute("select appointment_id from appointments where shipment_id=? and appointment_status='HELD'",

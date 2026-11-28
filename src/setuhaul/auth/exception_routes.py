@@ -158,6 +158,13 @@ def register_exception_routes(app: FastAPI, deps: Any) -> None:
 
         def write(conn: sqlite3.Connection) -> Response:
             found = release.free_slot(conn, actor=user, appointment_id=appointment_id, clock=deps.clock)
+            if deps.redis is not None:
+                from setuhaul.config import load_settings
+                from setuhaul.facility_change import _thread_of
+                from setuhaul.memory import ConversationMemoryStore
+                tid = _thread_of(conn, found.driver_id)
+                if tid is not None:
+                    ConversationMemoryStore(conn, deps.redis, deps.clock, load_settings()).invalidate(found.driver_id, tid)
             reached = release.tell_driver(conn, deps.clock, telegram_on(), found, "slot_freed", redis=deps.redis, order=found.order_reference,
                                           dock=found.dock_code, start=f"{found.start:%H:%M}", date=f"{found.start:%d %b %Y}")
             return ok(rid, appointment_id=appointment_id, order_reference=found.order_reference, reached=reached)

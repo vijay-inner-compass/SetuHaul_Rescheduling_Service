@@ -108,9 +108,15 @@ def test_a_supplied_shipment_cannot_be_touched(world: World) -> None:
 
 def test_nothing_changes_after_confirmation(world: World, made: str) -> None:
     assert _send(world, "DRV001", _pass(world, made)) == "CONFIRMED"
-    for name, extra in (("cancel_shipment", {}), ("change_driver", {"driver_id": "DRV001", "vehicle_id": "VEH001"})):
-        with pytest.raises(AuthError, match="ALREADY_CONFIRMED"):
-            _run(world, name, made, **extra)
+    with pytest.raises(AuthError, match="ALREADY_CONFIRMED"):
+        _run(world, "change_driver", made, driver_id="DRV001", vehicle_id="VEH001")
+    # Confirmed shipments not yet on-site can still be cancelled, unless already at gate/in dock.
+    query(world, "update shipments set current_status='IN_DOCK' where shipment_id=?", made)
+    with pytest.raises(AuthError, match="ORIGINAL_IN_PROGRESS"):
+        _run(world, "cancel_shipment", made)
+    query(world, "update shipments set current_status='ASSIGNED' where shipment_id=?", made)
+    _run(world, "cancel_shipment", made)
+    assert query(world, "select current_status from shipments where shipment_id=?", made)[0][0] == "CANCELLED"
 
 
 def test_a_new_driver_takes_over(world: World, made: str) -> None:

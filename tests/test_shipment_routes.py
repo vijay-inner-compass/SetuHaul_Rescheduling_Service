@@ -72,7 +72,7 @@ def test_the_page_shows_the_forms_and_every_state(world: World) -> None:
     for text in ("Waiting for driver", "Locked", "Confirmed"):
         assert text in page
     assert f"/v1/warehouse/shipments/{waiting}/cancel" in page and f"/v1/warehouse/shipments/{locked}/unlock" in page
-    assert f"/v1/warehouse/shipments/{done}/cancel" not in page
+    assert f"/v1/warehouse/shipments/{done}/cancel" in page
     assert "<script>Acme" not in page and "Acme <script>" not in page
     # A taken slot is not offered again; a free one is.
     assert f'value="{slot_at(world, 12)}"' in page and f'value="{slot_at(world, 9)}"' not in page

@@ -41,7 +41,7 @@ class PassReply(BaseModel):
 
 
 def _waiting(row: sqlite3.Row) -> bool:
-    return row["assigned"] is not None and row["confirmed_at"] is None and row["current_status"] != "CANCELLED"
+    return row["assigned"] is not None and row["confirmed_at"] is None and row["current_status"] != "CANCELLED" and row["live_hash"] is not None
 
 
 def has_waiting(conn: sqlite3.Connection, driver_id: str) -> bool:

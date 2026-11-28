@@ -39,7 +39,7 @@ def build_board(conn: sqlite3.Connection, facility_id: str, now: datetime) -> di
             # BLOCKED, HELD, BOOKED or AVAILABLE.
             status = "BLOCKED" if blocked else ("HELD" if occ and occ.status == "HELD" else "BOOKED" if occ else "AVAILABLE")
             # The warehouse may free a booking that has not started; partner bookings are agreed by email.
-            found = booking(conn, occ.appointment_id) if occ and not facility["is_partner"] and slot.start > now else None
+            found = booking(conn, occ.appointment_id) if occ and not facility["is_partner"] else None
             freeable = found is not None and not_freeable(conn, found) is None
             # The occupant's label.
             who = owner.get(slot.slot_id) if occ else None

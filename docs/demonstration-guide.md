@@ -123,6 +123,26 @@ removed, so a first booking has no "original ended" step. The hard rules still a
 
 ### Warehouse exceptions (signed-in warehouse screen, not the demo console)
 
+### I. Allocation, Warehouse Change & Cancellation Lifecycle (Driver + Warehouse Authority)
+
+These scenarios demonstrate the full lifecycle across the **Dock board**, **Operations**, and **Shipments** tabs (covered by `tests/test_lifecycle_scenarios.py`):
+
+1. **Free a booked or missed no-show slot via the Dock Board cross (`×`):**
+   - On `/warehouse`, open the **Dock board** (always displays all 24 hourly columns `00:00`–`23:00`).
+   - Click the **`×`** icon in the top-right corner of any booked cell (including past no-show slots where the truck never checked in).
+   - Confirm the warning prompt. The slot turns **Free**, any live hold is cleared from conversation memory, the driver receives a cancellation notice in chat/Telegram, and the **Shipments** tab shows **`Planned: No slot allocated | State: Confirmed (no slot)`**.
+2. **Resolve an escalation with "Cancelled by operations":**
+   - In **Operations → Cases**, claim a case and resolve it with **Cancelled by operations**.
+   - The active appointment is cancelled and the dock slot is freed immediately (refused if the truck is already on-site or unloading). Clicking **Reopen** warns that the previous slot change is already saved and will not be undone automatically.
+3. **Change warehouse directly in Shipments & allocate a new slot:**
+   - In **Shipments**, choose a new non-partner warehouse on any active shipment not yet on-site and click **Change warehouse** (confirms before proceeding).
+   - The old dock slot is freed immediately, the old gate pass is revoked without locking out an unconfirmed driver, any pending partner/facility-change requests are closed, and the driver is notified.
+   - At the new warehouse, open **Shipments** and use **Allocate slot** (automatically filtered to compatible dock types such as `REEFER`/`HEAVY`, up to 200 upcoming slots, and prompts before replacing an existing booking). Allocating a slot books it, notifies the driver, and sends a fresh Dock Access Pass.
+4. **Cancel a confirmed shipment (before arrival):**
+   - In **Shipments**, click **Cancel** on an active shipment (waiting, locked, or confirmed — as long as the truck is not `AT_GATE`/`IN_DOCK`/`CHECKED_IN`). The shipment is marked `CANCELLED`, its slot is freed, and its pass is cancelled.
+5. **Driver chat cancellation closes pending facility changes:**
+   - If a driver has a pending facility-change request and cancels their confirmed appointment in chat, the pending facility-change request is automatically rejected (`APPOINTMENT_CANCELLED`) so a late warehouse approval cannot move a cancelled booking.
+
 On `/warehouse`, for your own facilities (an admin: all):
 
 * **Layout:** the Dock board tab shows a compact board with an **Operations** panel beside it (Cases, Chats, Requests).

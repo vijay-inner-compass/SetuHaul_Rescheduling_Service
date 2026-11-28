@@ -744,7 +744,7 @@ def _slot_picker(conn: sqlite3.Connection, c: CaseView, now: datetime) -> str:
     # The slot to book with "Assigned a slot": free ones at the load's destination. warehouse.js shows it for that outcome.
     row = None if c.shipment_id is None else conn.execute(
         "select destination_facility_id from shipments where shipment_id=?", (c.shipment_id,)).fetchone()
-    free = [] if row is None else open_slots(conn, row["destination_facility_id"], now)
+    free = [] if row is None else open_slots(conn, row["destination_facility_id"], now, limit=200)
     choices = [(r["slot_id"], f"{r['dock_code']} {_clock(r['slot_start_ts'])}") for r in free]
     if row is None:
         first = "No shipment linked to this case"
@@ -761,7 +761,9 @@ def _case_actions(conn: sqlite3.Connection, c: CaseView, me: str, owner: str, no
     if c.status == "OPEN":
         return _button("Claim", f"{base}/claim", done="Case claimed.", key=f"claim:{cid}")
     if c.status == "RESOLVED":
-        return _button("Reopen", f"{base}/reopen", confirm=f"Reopen case {cid}?", done="Case reopened.", key=f"reopen:{cid}")
+        extra_warn = (f" Note: the previous slot change ({c.resolution_code.replace('_', ' ').lower()}) is already saved and will not be undone."
+                      if c.resolution_code in ("ASSIGNED_SLOT", "CANCELLED_BY_OPERATIONS") else "")
+        return _button("Reopen", f"{base}/reopen", confirm=f"Reopen case {cid}?{extra_warn}", done="Case reopened.", key=f"reopen:{cid}")
     if c.claimed_by != me:
         return f'<p class="note">{esc(owner)} is working this case.</p>'
     # Nothing is preselected or prefilled: the driver receives exactly what the coordinator writes.

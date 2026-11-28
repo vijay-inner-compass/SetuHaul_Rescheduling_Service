@@ -225,6 +225,11 @@ def cancel_confirmed_appointment(
                 "cancellation_reason='DRIVER_CANCELLED', updated_at=? where appointment_id=?",
                 (stamp, stamp, appt["appointment_id"]),
             )
+            conn.execute(
+                "update facility_change_requests set status='REJECTED', reason='APPOINTMENT_CANCELLED', follow_up=NULL "
+                "where shipment_id=? and status='PENDING'",
+                (shipment_id,),
+            )
             # History entry, then notices to planner, consignee and operations, all in this same transaction.
             event_id = append_appointment_event(
                 conn, appt["appointment_id"], shipment_id, "APPOINTMENT_CANCELLED",
