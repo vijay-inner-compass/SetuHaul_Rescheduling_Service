@@ -13,14 +13,14 @@ from pydantic import BaseModel, ConfigDict
 from starlette.concurrency import run_in_threadpool
 
 from setuhaul import assign, facility_change, passes
-from setuhaul.config import load_settings
-from setuhaul.memory import ConversationMemoryStore
 from setuhaul.auth import shipments
 from setuhaul.auth.authz import require_role
 from setuhaul.auth.http import reject
 from setuhaul.auth.users import User
+from setuhaul.config import load_settings
 from setuhaul.db import open_connection
 from setuhaul.identity import AuthError
+from setuhaul.memory import ConversationMemoryStore
 
 _CONFLICT = {"DUPLICATE_ORDER_NUMBER", "SLOT_NOT_AVAILABLE", "ALREADY_CONFIRMED", "NOT_LOCKED", "VISIT_IN_PROGRESS", "VISIT_CLOSED",
              "NO_LIVE_PASS", "SHIPMENT_FINISHED", "ORIGINAL_IN_PROGRESS", "SAME_FACILITY"}
@@ -214,9 +214,9 @@ def register_shipment_routes(app: FastAPI, deps: Any) -> None:
             driver_id = str(row["driver_id"])
             memory = None if deps.redis is None else ConversationMemoryStore(conn, deps.redis, deps.clock, load_settings())
             facility_change._tell(conn, deps.clock, memory, driver_id, facility_change._thread_of(conn, driver_id),
-                                  shipment_id, key, **fields)
+                                  shipment_id, key, happened_at=None, **fields)
             conn.commit()
-        except Exception:
+        except Exception:  # noqa: BLE001 - the notice is best effort; the warehouse change is already saved and must not fail with it
             conn.rollback()
 
     @app.post("/v1/warehouse/shipments/{shipment_id}/warehouse")

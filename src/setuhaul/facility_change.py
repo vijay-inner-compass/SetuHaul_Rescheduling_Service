@@ -28,11 +28,11 @@ from setuhaul.db import IST, immediate, parse_operational_timestamp
 from setuhaul.escalation import HandoffRequest, SqlEscalationSink
 from setuhaul.eta import load_eta_records
 from setuhaul.events import append_appointment_event, queue_driver_notice
-from setuhaul.notifications import enqueue_downstream
 from setuhaul.feasibility import build_context, search_feasible_slots
 from setuhaul.gps import gps_arrival_floor
 from setuhaul.language import say
 from setuhaul.memory import ConversationMemoryStore, HoldRef
+from setuhaul.notifications import enqueue_downstream
 from setuhaul.option_history import record_option_set
 from setuhaul.partner_booking import request_slot
 from setuhaul.schemas import BaselineType, EtaEvidence

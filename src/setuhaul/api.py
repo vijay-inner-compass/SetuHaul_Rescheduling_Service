@@ -68,7 +68,7 @@ from redis import Redis
 from starlette.concurrency import run_in_threadpool
 
 # The Dock Access Pass check that runs before the conversation.
-from setuhaul import assign, passes, chat_loads, pass_check
+from setuhaul import assign, chat_loads, pass_check, passes
 
 # Web sessions, the role guard and the facility scope of cases.
 from setuhaul.auth import refusals, same_origin, sessions
