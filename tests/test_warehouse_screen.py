@@ -190,3 +190,10 @@ def test_attention_cards_still_point_at_messages(tmp_path: Path, clock: FakeCloc
     assert 'href="#messages"' in page
     script = (Path(__file__).resolve().parents[1] / "src/setuhaul/auth/assets/tabs.js").read_text(encoding="utf-8")
     assert '"messages"' in script
+
+
+def test_board_always_shows_all_24_hours() -> None:
+    page = _board_section(BOARD, [("FAC-JAI-01", "Jaipur")], "FAC-JAI-01", NOW)
+    for hour in range(24):
+        assert f">{hour:02d}:00</th>" in page
+    assert "cell-none" in page

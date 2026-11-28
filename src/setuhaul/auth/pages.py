@@ -658,7 +658,7 @@ def _board_section(board: dict[str, Any] | None, options: list[tuple[str, str]],
     today = moment.astimezone(IST).date()
     day = day or today
     shown = [d | {"slots": [s for s in d["slots"] if s["start_ts"].startswith(day.isoformat())]} for d in board["docks"]]
-    hours = sorted({s["hour"] for d in shown for s in d["slots"]})
+    hours = list(range(24))
     current = moment.astimezone(IST).hour if day == today else -1
     picker = (f'<form method="get" action="/warehouse#board" class="filters day"><input type="hidden" name="facility" '
               f'value="{esc(board["facility"])}"><label>Day <input type="date" name="day" value="{esc(day.isoformat())}"></label>'
@@ -679,7 +679,7 @@ def _board_section(board: dict[str, Any] | None, options: list[tuple[str, str]],
         rows.append(f'<tr><th scope="row"><b>{esc(dock["code"])}</b><span>{esc(dock["type"])}</span></th>{"".join(cells)}</tr>')
     table = f'<div class="scroll"><table class="board"><thead><tr>{head}</tr></thead><tbody>{"".join(rows)}</tbody></table></div>'
     legend = "".join(f'<span class="legend-key cell-{c}">{w}</span>' for c, w in
-                     (("available", "Free"), ("booked", "Booked"), ("held", "Held, not yet confirmed"), ("blocked", "Blocked")))
+                     (("available", "Free"), ("booked", "Booked"), ("held", "Held, not yet confirmed"), ("blocked", "Blocked"), ("none", "No slot")))
     bays = "".join(_bay_card(d, moment) for d in board["docks"])
     if not hours:
         table = '<div class="scroll"><p class="empty">No slots on this day.</p></div>'
