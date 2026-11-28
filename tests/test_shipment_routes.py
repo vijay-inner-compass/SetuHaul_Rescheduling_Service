@@ -197,3 +197,18 @@ def test_warehouse_authority_cannot_allocate_slot_at_out_of_scope_target_facilit
     # Transaction rolled back: shipment and old slot remain untouched.
     assert query(world, "select destination_facility_id from shipments where shipment_id=?", sid)[0][0] == "FAC-JAI-01"
     assert query(world, "select appointment_status from appointments where slot_id=?", old_slot)[0][0] == "CONFIRMED"
+
+
+def test_shipments_tab_hides_send_new_pass_when_unallocated_and_hides_move_when_in_dock(world: World) -> None:
+    open_av(world)
+    open_av(world, who="wh_b", facility_id="FAC-GGN-01", dock_ids=["DOCK-GGN-D1"])
+    sid = create(world, slot_at(world, 12))
+    assert world.client("wh_a").post(f"/v1/warehouse/shipments/{sid}/warehouse", json={"facility_id": "FAC-GGN-01"}).status_code == 200
+    page = world.client("wh_b").get("/warehouse").text
+    assert f"/v1/warehouse/shipments/{sid}/pass\"" not in page
+    assert "data-confirm=" in page and f"/v1/warehouse/shipments/{sid}/warehouse" in page
+    # Once IN_DOCK, move and slot allocation forms are hidden.
+    query(world, "update shipments set current_status='IN_DOCK' where shipment_id=?", sid)
+    page_dock = world.client("wh_b").get("/warehouse").text
+    assert f"/v1/warehouse/shipments/{sid}/warehouse" not in page_dock
+    assert f"/v1/warehouse/shipments/{sid}/slot" not in page_dock

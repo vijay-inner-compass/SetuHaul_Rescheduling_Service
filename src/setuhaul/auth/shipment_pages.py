@@ -103,21 +103,27 @@ def shipments_section(conn: sqlite3.Connection, user: User, now: datetime, facil
     for s in list_shipments(conn, user):
         base = f"/v1/warehouse/shipments/{_segment(s['shipment_id'])}"
         actions = ""
+        appt = passes.current_appointment(conn, s["shipment_id"])
+        ship_status = conn.execute("select current_status from shipments where shipment_id=?", (s["shipment_id"],)).fetchone()[0]
+        movable = s["state"] != "CANCELLED" and s["visit_state"] in (None, "EXPECTED") and ship_status not in (
+            "CANCELLED", "COMPLETED", "AT_GATE", "WAITING", "IN_DOCK")
         if s["state"] in ("WAITING", "LOCKED"):
             actions = (f'<form data-api="{esc(base)}/driver" data-limit>' + _select("Driver", "driver_id", drivers)
                        + _select("Vehicle", "vehicle_id", vehicles) + '<button type="submit">Change driver</button><span class="note" data-form-result role="alert"></span></form>'
                        + _button("Cancel", f"{base}/cancel", confirm=f"Cancel {s['order_reference']}?"))
         if s["state"] == "LOCKED":
             actions += _button("Unlock", f"{base}/unlock")
-        if s["state"] != "CANCELLED" and s["visit_state"] in (None, "EXPECTED"):
+        if movable:
             other_places = "".join(_option(fid, label) for fid, label in all_facilities if fid != s["facility_id"])
             if other_places:
-                actions += (f'<form data-api="{esc(base)}/warehouse">' + _select("Warehouse", "facility_id", other_places)
+                confirm_msg = esc(f"Change warehouse for {s['order_reference']}? This frees the current slot and revokes the pass.")
+                actions += (f'<form data-api="{esc(base)}/warehouse" data-confirm="{confirm_msg}">' + _select("Warehouse", "facility_id", other_places)
                             + '<button type="submit">Change warehouse</button><span class="note" data-form-result role="alert"></span></form>')
             facility_slots = slots_by_facility.get(s["facility_id"], "")
             if facility_slots:
                 actions += (f'<form data-api="{esc(base)}/slot">' + _select("Slot", "slot_id", facility_slots)
                             + '<button type="submit">Allocate slot</button><span class="note" data-form-result role="alert"></span></form>')
+        if s["state"] != "CANCELLED" and s["visit_state"] in (None, "EXPECTED") and appt is not None:
             actions += _button("Send new pass", f"{base}/pass", confirm=f"Replace the pass for {s['order_reference']}?")
         if s["pass_state"] in ("ISSUED", "VALIDATED"):
             actions += (f'<form data-api="{esc(base)}/pass/revoke">' + _input("Reason", "reason", extra='required maxlength="200"')
