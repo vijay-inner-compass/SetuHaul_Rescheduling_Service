@@ -147,13 +147,13 @@ def decide(conn: sqlite3.Connection, clock: Clock, *, actor: User, request_id: s
         conn.execute("update facility_change_requests set status=?, decided_by=?, decided_at=? where request_id=?",
                      (status, actor.user_id, clock.now().isoformat(), request_id))
         if approve:
-            # An earlier move that was never booked: "going back" must still mean back to where the booking is.
+            # An earlier approved move that was still waiting for a booking: stop waiting without rewriting history.
             earlier = conn.execute("select request_id, from_facility_id from facility_change_requests "
                                    "where shipment_id=? and follow_up='WAITING'", (row["shipment_id"],)).fetchone()
             if earlier is not None:
-                conn.execute("update facility_change_requests set from_facility_id=? where request_id=?",
-                             (earlier["from_facility_id"], request_id))
-                conn.execute("update facility_change_requests set status='REJECTED', reason='SUPERSEDED', follow_up=NULL "
+
+
+                conn.execute("update facility_change_requests set reason='SUPERSEDED', follow_up=NULL "
                              "where request_id=?", (earlier["request_id"],))
         audit.record(conn, actor_user_id=actor.user_id, actor_email=actor.email, action=f"FACILITY_CHANGE_{status}",
                      target_type="shipment", target_id=row["shipment_id"], outcome="OK", ip=None,

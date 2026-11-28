@@ -109,3 +109,16 @@ def test_trucks_at_gate_or_waiting_cannot_change_facility(world: dict[str, Any],
     world["db"].commit()
     assert _decide(world, "ggn", req.request_id) == "NOT_MOVABLE"
     assert _ask(world).status == "NOT_MOVABLE"
+
+
+def test_second_move_preserves_history_of_first_approved_move(world: dict[str, Any]) -> None:
+    first = _ask(world, GGN)
+    assert _decide(world, "ggn", first.request_id) == "APPROVED"
+    world["db"].execute("update facility_change_requests set follow_up='WAITING' where request_id=?", (first.request_id,))
+    world["db"].commit()
+    second = _ask(world, JAI)
+    assert _decide(world, "admin", second.request_id) == "APPROVED"
+    row1 = world["db"].execute("select status, reason, follow_up from facility_change_requests where request_id=?", (first.request_id,)).fetchone()
+    row2 = world["db"].execute("select from_facility_id, to_facility_id, status from facility_change_requests where request_id=?", (second.request_id,)).fetchone()
+    assert tuple(row1) == ("APPROVED", "SUPERSEDED", None)
+    assert tuple(row2) == (GGN, JAI, "APPROVED")
