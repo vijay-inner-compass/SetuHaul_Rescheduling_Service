@@ -383,12 +383,24 @@ def _eta_payload(eta: EtaEvidence | ClarificationNeeded | EtaConflict) -> dict[s
     return {"status": "ETA_CONFLICT", "code": eta.code}
 
 
+def _infer_shipment(conn: sqlite3.Connection, driver_id: str, selected: str | None) -> str | None:
+    if selected:
+        return selected
+    rows = conn.execute(
+        "select shipment_id from v_driver_shipments where driver_id=? and current_status not in ('CANCELLED','COMPLETED')",
+        (driver_id,),
+    ).fetchall()
+    return str(rows[0]["shipment_id"]) if len(rows) == 1 else None
+
+
 # Record that this turn needs a hand-off to operations. Only the first one raised in a turn is kept.
 def _handoff(ctx: ToolContext, reason: str, shipment_id: str | None, summary: str, **context: Any) -> None:
     # Keep the first hand-off only.
     if ctx.turn.handoff is None:
+        selected = ctx.memory.load(ctx.driver_id, ctx.thread_id).state.selected_shipment_id
+        resolved_shipment = shipment_id or _infer_shipment(ctx.conn, ctx.driver_id, selected)
         ctx.turn.handoff = HandoffRequest(
-            reason_code=reason, driver_id=ctx.driver_id, thread_id=ctx.thread_id, shipment_id=shipment_id,
+            reason_code=reason, driver_id=ctx.driver_id, thread_id=ctx.thread_id, shipment_id=resolved_shipment,
             summary=summary, context=context, created_at=ctx.clock.now())
 
 

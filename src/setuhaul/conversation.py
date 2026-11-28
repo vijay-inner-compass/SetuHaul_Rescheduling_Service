@@ -188,6 +188,16 @@ def handle_message(
 # ---- helpers ----------------------------------------------------------------------------------------
 # Record a hand-off, falling back to the JSONL file if the database queue is down, so a hand-off is never lost.
 def _record(services: ConversationServices, req: HandoffRequest) -> str:
+    if req.shipment_id is None and req.reason_code != "DATABASE_UNAVAILABLE":
+        try:
+            rows = services.conn.execute(
+                "select shipment_id from v_driver_shipments where driver_id=? and current_status not in ('CANCELLED','COMPLETED')",
+                (req.driver_id,),
+            ).fetchall()
+            if len(rows) == 1:
+                req = req.model_copy(update={"shipment_id": str(rows[0]["shipment_id"])})
+        except sqlite3.Error:
+            pass
     try:
         # Normal path: the SQL queue.
         return services.sink.record(req)

@@ -742,10 +742,14 @@ def _named(name: str, ident: str) -> str:
 
 def _slot_picker(conn: sqlite3.Connection, c: CaseView, now: datetime) -> str:
     # The slot to book with "Assigned a slot": free ones at the load's destination. warehouse.js shows it for that outcome.
-    row = conn.execute("select destination_facility_id from shipments where shipment_id=?", (c.shipment_id,)).fetchone()
+    row = None if c.shipment_id is None else conn.execute(
+        "select destination_facility_id from shipments where shipment_id=?", (c.shipment_id,)).fetchone()
     free = [] if row is None else open_slots(conn, row["destination_facility_id"], now)
     choices = [(r["slot_id"], f"{r['dock_code']} {_clock(r['slot_start_ts'])}") for r in free]
-    first = "Choose a slot to book" if choices else "No open slots: open availability first"
+    if row is None:
+        first = "No shipment linked to this case"
+    else:
+        first = "Choose a slot to book" if choices else "No open slots: open availability first"
     return (f'<label class="assign">Slot to book <select name="slot_id" data-key="{esc(f"assign:{c.case_id}")}">'
             f'<option value="" selected disabled>{first}</option>{_options(choices)}</select></label>')
 

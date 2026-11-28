@@ -208,3 +208,14 @@ def test_cancelled_by_operations_refuses_completed_or_partner_shipment(tmp_path:
     r2 = resolve(client, resolution_code="CANCELLED_BY_OPERATIONS", note="cancel")
     assert r2.status_code == 422 and r2.json()["reason_code"] == "PARTNER_FACILITY"
     assert appointment_of(world, shipment_id) == old and case_status(world) == "CLAIMED"
+
+
+def test_case_without_shipment_says_no_shipment_linked(tmp_path: Path) -> None:
+    world, _, _, _ = case_world(tmp_path)
+    none_case = world.cases["NONE"]
+    admin = world.client("admin")
+    assert admin.post(f"/v1/coordinator/cases/{none_case}/claim", json={}).status_code == 200
+    page = admin.get(PAGE).text
+    card = page.split(f'data-key="case:{none_case}"')[1].split("<!--case-->")[0]
+    assert "No shipment linked to this case" in card
+    assert "No open slots: open availability first" not in card
