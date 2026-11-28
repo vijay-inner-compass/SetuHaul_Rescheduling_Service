@@ -169,3 +169,18 @@ def test_warehouse_change_expires_pending_partner_requests(world: World) -> None
     r = world.client("admin").post(f"/v1/warehouse/shipments/{sid}/warehouse", json={"facility_id": "FAC-GGN-01"})
     assert r.status_code == 200, r.text
     assert query(world, "select status from partner_requests where request_ref='PR-TEST-1'")[0][0] == "EXPIRED"
+
+
+def test_warehouse_change_and_slot_allocation_notify_driver(world: World) -> None:
+    open_av(world)
+    open_av(world, who="wh_b", facility_id="FAC-GGN-01", dock_ids=["DOCK-GGN-D1"])
+    sid = create(world, slot_at(world, 12))
+    r = world.client("wh_a").post(f"/v1/warehouse/shipments/{sid}/warehouse", json={"facility_id": "FAC-GGN-01"})
+    assert r.status_code == 200, r.text
+    notices = [r[0] for r in query(world, "select payload_json from notification_outbox where recipient_type='DRIVER' order by outbox_id")]
+    assert any("changed to" in n and "freed" in n for n in notices)
+    new_slot = slot_at(world, 12, "DOCK-GGN-D1")
+    alloc = world.client("wh_b").post(f"/v1/warehouse/shipments/{sid}/slot", json={"slot_id": new_slot})
+    assert alloc.status_code == 200, alloc.text
+    notices = [r[0] for r in query(world, "select payload_json from notification_outbox where recipient_type='DRIVER' order by outbox_id")]
+    assert any("slot is booked" in n and "D1" in n for n in notices)

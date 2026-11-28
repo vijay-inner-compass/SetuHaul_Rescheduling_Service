@@ -12,7 +12,9 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict
 from starlette.concurrency import run_in_threadpool
 
-from setuhaul import assign, passes
+from setuhaul import assign, facility_change, passes
+from setuhaul.config import load_settings
+from setuhaul.memory import ConversationMemoryStore
 from setuhaul.auth import shipments
 from setuhaul.auth.authz import require_role
 from setuhaul.auth.http import reject
@@ -204,16 +206,39 @@ def register_shipment_routes(app: FastAPI, deps: Any) -> None:
 
             return await run_in_threadpool(run, rid, write)
 
+    def notify_driver(conn: sqlite3.Connection, shipment_id: str, key: str, **fields: str) -> None:
+        try:
+            row = conn.execute("select driver_id from shipments where shipment_id=?", (shipment_id,)).fetchone()
+            if row is None:
+                return
+            driver_id = str(row["driver_id"])
+            memory = None if deps.redis is None else ConversationMemoryStore(conn, deps.redis, deps.clock, load_settings())
+            facility_change._tell(conn, deps.clock, memory, driver_id, facility_change._thread_of(conn, driver_id),
+                                  shipment_id, key, **fields)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+
     @app.post("/v1/warehouse/shipments/{shipment_id}/warehouse")
     async def warehouse(request: Request, shipment_id: str, body: WarehouseChange,
                         user: Annotated[User, Depends(require_role("WAREHOUSE_AUTHORITY", "ADMIN"))]) -> Response:
         rid = request.state.request_id
 
         def write(conn: sqlite3.Connection) -> Response:
-            shipments.change_warehouse(conn, actor=user, shipment_id=shipment_id, facility_id=body.facility_id,
-                                       clock=deps.clock, slot_id=body.slot_id)
+            order, facility_name = shipments.change_warehouse(
+                conn, actor=user, shipment_id=shipment_id, facility_id=body.facility_id, clock=deps.clock, slot_id=body.slot_id)
             if body.slot_id:
                 passes.send_pending(conn, client(), deps.clock)
+                appt = passes.current_appointment(conn, shipment_id)
+                if appt is not None:
+                    dock_row = conn.execute("select dock_code from docks where dock_id=?", (appt["dock_id"],)).fetchone()
+                    from setuhaul.db import IST, parse_operational_timestamp
+                    start_ist = parse_operational_timestamp(appt["slot_start_ts"]).astimezone(IST)
+                    notify_driver(conn, shipment_id, "booking_assigned",
+                                  dock=str(dock_row["dock_code"]) if dock_row else "",
+                                  date=f"{start_ist:%d %b %Y}", start=f"{start_ist:%H:%M}")
+            else:
+                notify_driver(conn, shipment_id, "warehouse_changed", order=order, facility=facility_name)
             return ok(rid, shipment_id=shipment_id, facility_id=body.facility_id)
 
         return await run_in_threadpool(run, rid, write)
@@ -227,9 +252,9 @@ def register_shipment_routes(app: FastAPI, deps: Any) -> None:
             dock, start = shipments.allocate_slot(conn, actor=user, shipment_id=shipment_id, slot_id=body.slot_id,
                                                   clock=deps.clock)
             passes.send_pending(conn, client(), deps.clock)
+            notify_driver(conn, shipment_id, "booking_assigned", dock=dock, date=f"{start:%d %b %Y}", start=f"{start:%H:%M}")
             return ok(rid, shipment_id=shipment_id, slot_id=body.slot_id, dock_code=dock, start=start.isoformat())
 
         return await run_in_threadpool(run, rid, write)
-
     action("cancel", shipments.cancel_shipment)
     action("unlock", shipments.unlock)
