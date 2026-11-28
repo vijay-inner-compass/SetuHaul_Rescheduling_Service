@@ -229,7 +229,7 @@ T: dict[str, dict[str, str]] = {
               "Reply here to search for a new slot, or operations will allocate one.",
         "hi": "{facility} में अभी तक कोई स्लॉट बुक नहीं हुआ है। आपका लोड अब भी {facility} के लिए तय है और {origin} का पुराना स्लॉट खाली कर दिया गया है। नया स्लॉट खोजने के लिए यहाँ जवाब दें।",
         "hinglish": "{facility} mein abhi tak koi slot book nahi hua hai. Aapka load abhi bhi {facility} ke liye assigned hai aur {origin} ka purana slot free kar diya gaya hai. "
-                    "Ab bhi badalna ho toh dobara bataiye.",
+                    "Naya slot dhoondhne ke liye yahan reply karein, ya operations allocate karegi.",
     },
     # A dock went out of use and the warehouse moved the booking to another one.
     "dock_moved": {
