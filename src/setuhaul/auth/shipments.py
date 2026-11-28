@@ -15,19 +15,19 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from setuhaul import assign, passes, release
-from setuhaul.booking import release_hold_in_txn
-from setuhaul.notifications import enqueue_downstream
 from setuhaul.auth import audit
 from setuhaul.auth.authz import facility_clause, facility_ids
 from setuhaul.auth.onboarding import driver_eligible
 from setuhaul.auth.users import User
 from setuhaul.auth.warehouse_routes import drivers_in_scope
+from setuhaul.booking import release_hold_in_txn
 from setuhaul.capacity import build_facility_state
 from setuhaul.clock import Clock
 from setuhaul.db import IST, immediate, parse_operational_timestamp
 from setuhaul.events import append_appointment_event
 from setuhaul.feasibility import build_context, evaluate_slot
 from setuhaul.identity import AuthError
+from setuhaul.notifications import enqueue_downstream
 from setuhaul.order_numbers import is_valid, normalise
 from setuhaul.schemas import BaselineType, EtaEvidence
 
