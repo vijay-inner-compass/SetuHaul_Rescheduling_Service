@@ -184,3 +184,16 @@ def test_warehouse_change_and_slot_allocation_notify_driver(world: World) -> Non
     assert alloc.status_code == 200, alloc.text
     notices = [r[0] for r in query(world, "select payload_json from notification_outbox where recipient_type='DRIVER' order by outbox_id")]
     assert any("slot is booked" in n and "D1" in n for n in notices)
+
+
+def test_warehouse_authority_cannot_allocate_slot_at_out_of_scope_target_facility(world: World) -> None:
+    open_av(world)
+    open_av(world, who="wh_b", facility_id="FAC-GGN-01", dock_ids=["DOCK-GGN-D1"])
+    old_slot = slot_at(world, 12)
+    sid = create(world, old_slot)
+    r = world.client("wh_a").post(f"/v1/warehouse/shipments/{sid}/warehouse",
+                                  json={"facility_id": "FAC-GGN-01", "slot_id": slot_at(world, 12, "DOCK-GGN-D1")})
+    assert r.status_code == 404 and r.json()["reason_code"] == "FACILITY_NOT_FOUND"
+    # Transaction rolled back: shipment and old slot remain untouched.
+    assert query(world, "select destination_facility_id from shipments where shipment_id=?", sid)[0][0] == "FAC-JAI-01"
+    assert query(world, "select appointment_status from appointments where slot_id=?", old_slot)[0][0] == "CONFIRMED"

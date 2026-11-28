@@ -391,6 +391,8 @@ def change_warehouse(conn: sqlite3.Connection, *, actor: User, shipment_id: str,
             raise AuthError("FACILITY_NOT_FOUND")
         if facility_id == ship["destination_facility_id"]:
             raise AuthError("SAME_FACILITY")
+        if slot_id and scope is not None and facility_id not in scope:
+            raise AuthError("FACILITY_NOT_FOUND")
         for held in conn.execute("select appointment_id from appointments where shipment_id=? and appointment_status='HELD'",
                                  (shipment_id,)).fetchall():
             release_hold_in_txn(conn, held["appointment_id"], shipment_id, "SYSTEM", now, "WAREHOUSE", actor.user_id,
