@@ -20,6 +20,7 @@ from setuhaul import app_settings
 from setuhaul.auth import audit, refusals
 from setuhaul.auth.authz import require_role
 from setuhaul.auth.http import reject as _reject
+from setuhaul.auth.routes import MIN_SECRET_BYTES
 from setuhaul.auth.users import User
 from setuhaul.db import immediate, open_connection
 from setuhaul.identity import AuthError
@@ -35,6 +36,7 @@ _STATUS = {"UNKNOWN_SECTION": 404, "SETTINGS_NOT_AVAILABLE": 409, "EMAIL_TEST_TO
 # One test email per this many seconds, per admin.
 _TEST_EVERY_S = 60
 LANGSMITH_CONFIRM = "SEND_TO_LANGSMITH"
+_SWITCH = "SETUHAUL_PASSWORD_LOGIN"
 # A key travels in an HTTP header: printable, no spaces.
 _Key = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500, pattern=r"^[\x21-\x7e]*$")]
 _Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
@@ -88,6 +90,7 @@ class TelegramBody(_Body):
 
 
 class EmailBody(_Body):
+    password_login: Literal["on", "off"] | None = None
     host: Annotated[str, StringConstraints(strip_whitespace=True, max_length=200, pattern=r"^[A-Za-z0-9.-]+$")] | None = None
     port: Annotated[str, StringConstraints(strip_whitespace=True, max_length=10)] | None = None
     user: Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)] | None = None
@@ -179,6 +182,29 @@ def _email_changes(body: EmailBody, now: app_settings.Effective) -> dict[str, st
         # A stored password is never sent to a server or account it was not typed for.
         raise AuthError("SMTP_PASSWORD_REQUIRED")
     return values
+
+
+def _switch_change(body: EmailBody, now: app_settings.Effective) -> dict[str, str]:
+    """The sign-in switch, saved only when it is changed, so saving the mailbox does not pin it over .env."""
+    if body.password_login is None or (body.password_login == "on") == (now.env.get(_SWITCH) == "1"):
+        return {}
+    return {_SWITCH: "1" if body.password_login == "on" else "0"}
+
+
+def _check_switch(deps: AppDeps, before: app_settings.Effective, after: app_settings.Effective, resetting: bool) -> None:
+    """Refuse turning email sign-in on before it can work, and any change that would leave nobody able to sign in.
+
+    A reset goes back to what the server owner put in .env, so only the second rule applies to it.
+    """
+    was, now_on = before.env.get(_SWITCH) == "1", after.env.get(_SWITCH) == "1"
+    if now_on and not was and not resetting:
+        if not deps.public_url:
+            raise AuthError("PUBLIC_URL_NOT_SET")
+        if not after.env.get("SETUHAUL_SMTP_USER") or not after.env.get("SETUHAUL_SMTP_PASSWORD"):
+            raise AuthError("EMAIL_NOT_SET_UP")
+    google = deps.google is not None and len(deps.session_secret) >= MIN_SECRET_BYTES
+    if was and not now_on and not google and not deps.local_admin_enabled:
+        raise AuthError("NO_OTHER_SIGN_IN")
 
 
 def _send_test(source: Any, env: dict[str, str], to_addr: str) -> tuple[bool, str]:
@@ -309,13 +335,16 @@ def register_settings_routes(app: FastAPI, deps: AppDeps) -> None:
             elif isinstance(body, TelegramBody):
                 values = _telegram_changes(body, before)
             elif isinstance(body, EmailBody):
-                values = _email_changes(body, before)
+                values = {**_email_changes(body, before), **_switch_change(body, before)}
             if any(n in app_settings.SECRETS for n in values) and app_settings.master_key_problem(source.base_env):
                 raise AuthError("SETTINGS_KEY_UNAVAILABLE")
             # Only what was really saved counts as removed.
             remove = [n for n in remove if before.source[n] == "saved" and n not in values]
             app_settings.reset(conn, remove)
             app_settings.save(conn, values, env=source.base_env, updated_by=user.email, now=deps.clock.now())
+            if section == "email":
+                # Raising here undoes the whole save.
+                _check_switch(deps, before, source.effective(conn), resetting)
             names = sorted([*values, *remove])
             if names:
                 audit.record(conn, actor_user_id=user.user_id, actor_email=user.email,

@@ -108,7 +108,7 @@ def test_warehouse_instructions_describe_the_board_and_operations_panel() -> Non
 def test_wiki_explains_setting_up_email_sign_in() -> None:
     topics = {key: dict(tasks) for key, _, tasks in wiki_pages.TOPICS}
     setup = " ".join(topics["admin"]["Set up invitation and password emails"])
-    for words in ("app password", "2-Step Verification", "Send test email to me", "SETUHAUL_PASSWORD_LOGIN=1",
+    for words in ("app password", "2-Step Verification", "Send test email to me", "Email and password sign-in", "SETUHAUL_PUBLIC_URL",
                   "Sign-in emails are on", "Send password link"):
         assert words in setup, words
     errors = " ".join(topics["admin"][ERRORS])

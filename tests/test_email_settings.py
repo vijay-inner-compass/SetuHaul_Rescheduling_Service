@@ -278,3 +278,83 @@ def test_users_tab_says_emails_are_off(tmp_path: Path) -> None:
     assert sentence in admin_of(world).get("/admin").text
     admin_of(world).post(URL, json=MAILBOX)
     assert sentence not in admin_of(world).get("/admin").text
+
+
+# ---- the on/off switch ----------------------------------------------------------------------------------------
+SWITCH = "SETUHAUL_PASSWORD_LOGIN"
+
+
+def test_the_screen_turns_email_sign_in_on_without_restart(tmp_path: Path) -> None:
+    world, boxes = mail_world(tmp_path, switch="0")
+    admin = admin_of(world)
+    assert save(admin, MAILBOX | {"password_login": "on"}) == (200, "")
+    assert world.deps.password_login_on
+    assert invite(admin).json()["invite_email"] == "SENT" and len(boxes.sent) == 1
+    page = world.client().get("/").text
+    assert "Forgot password?" in page
+
+
+def test_the_screen_turns_it_off_even_when_env_has_it_on(tmp_path: Path) -> None:
+    world, _ = mail_world(tmp_path)
+    world.deps.local_admin_enabled = True
+    admin = admin_of(world)
+    save(admin, MAILBOX)
+    assert save(admin, {"password_login": "off"}) == (200, "")
+    assert not world.deps.password_login_on
+    assert admin.post(f"{URL}/reset", json={}).status_code == 200
+    assert in_force(world)[SWITCH] == "1"
+
+
+@pytest.mark.parametrize("body", [{"password_login": "on"}, MAILBOX | {"password": "", "password_login": "on"}])
+def test_it_cannot_be_turned_on_without_a_mailbox(tmp_path: Path, body: dict[str, str]) -> None:
+    world, _ = mail_world(tmp_path, switch="0")
+    assert save(admin_of(world), body) == (422, "EMAIL_NOT_SET_UP")
+    # The whole save is refused, not just the switch.
+    assert rows(world, "select name from app_settings") == ""
+
+
+def test_it_cannot_be_turned_on_without_the_site_address(tmp_path: Path) -> None:
+    world, _ = mail_world(tmp_path, switch="0")
+    world.deps.public_url = ""
+    assert save(world.client("admin"), MAILBOX | {"password_login": "on"}) == (422, "PUBLIC_URL_NOT_SET")
+
+
+def test_it_cannot_be_turned_off_when_nobody_could_then_sign_in(tmp_path: Path) -> None:
+    world, _ = mail_world(tmp_path, switch="0")
+    world.deps.google = None
+    world.deps.local_admin_enabled = False
+    admin = admin_of(world)
+    save(admin, MAILBOX | {"password_login": "on"})
+    assert save(admin, {"password_login": "off"}) == (422, "NO_OTHER_SIGN_IN")
+    # Reset would take it back to .env, which has it off.
+    assert admin.post(f"{URL}/reset", json={}).json()["reason_code"] == "NO_OTHER_SIGN_IN"
+    assert world.deps.password_login_on
+
+
+def test_saving_the_mailbox_does_not_pin_an_unchanged_switch(tmp_path: Path) -> None:
+    world, _ = mail_world(tmp_path)
+    save(admin_of(world), MAILBOX | {"password_login": "on"})
+    assert SWITCH not in rows(world, "select name from app_settings")
+
+
+def test_a_switch_change_is_audited_and_only_for_admins(tmp_path: Path) -> None:
+    world, _ = mail_world(tmp_path, switch="0")
+    assert world.client("wh_a").post(URL, json={"password_login": "on"}).status_code == 403
+    save(admin_of(world), MAILBOX | {"password_login": "on"})
+    assert f'"{SWITCH}"' in rows(world, "select detail_json from audit_log where target_id='email'")
+
+
+def test_the_test_email_ignores_the_switch(tmp_path: Path) -> None:
+    world, boxes = mail_world(tmp_path, switch="0")
+    r = admin_of(world).post(TEST, json=MAILBOX | {"password_login": "on"})
+    assert r.json()["ok"] is True and len(boxes.sent) == 1
+    assert not world.deps.password_login_on
+
+
+def test_the_screen_shows_the_switch_as_it_is(tmp_path: Path) -> None:
+    world, _ = mail_world(tmp_path, switch="0")
+    block = email_block(admin_of(world).get("/admin").text)
+    assert 'name="password_login"' in block and 'value="off" selected' in block
+    assert "email and password sign-in is switched off" in block
+    save(admin_of(world), MAILBOX | {"password_login": "on"})
+    assert 'value="on" selected' in email_block(admin_of(world).get("/admin").text)

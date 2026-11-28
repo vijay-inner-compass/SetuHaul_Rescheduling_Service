@@ -514,19 +514,24 @@ def _configuration_section(conn: sqlite3.Connection, deps: AppDeps) -> str:
         + check("Test bot", "telegram/test") + check("Register webhook", "telegram/register-webhook"),
         f"{webhook} Each driver has to open a new bot and press Start before it can message them.")
     mail = deps.password_mail()
+    switched_on = value("SETUHAUL_PASSWORD_LOGIN") == "1"
     if deps.password_login_on:
         state = "Sign-in emails are on."
+    elif live and not switched_on:
+        state = "Sign-in emails are off: email and password sign-in is switched off."
     else:
         missing = [*mail.missing] + ([] if deps.public_url else ["SETUHAUL_PUBLIC_URL"])
         # The address is also one of the sender's needs; name it once.
         state = f"Sign-in emails are off. Missing: {', '.join(dict.fromkeys(missing))}."
     email = block("email", "Email", (
-        text("Mail server", "host", "SETUHAUL_SMTP_HOST") + text("Port", "port", "SETUHAUL_SMTP_PORT")
+        choice("Email and password sign-in", "password_login", "SETUHAUL_PASSWORD_LOGIN", [("off", "Off"), ("on", "On")],
+               "on" if switched_on else "off")
+        + text("Mail server", "host", "SETUHAUL_SMTP_HOST") + text("Port", "port", "SETUHAUL_SMTP_PORT")
         + text("Sending user", "user", "SETUHAUL_SMTP_USER") + secret("App password", "password", "SETUHAUL_SMTP_PASSWORD")
         + text("From address", "sender", "SETUHAUL_SMTP_FROM")),
         check("Send test email to me", "email/test"),
-        f"{state} Password links use {deps.public_url or 'no address yet'}. The on/off switch (SETUHAUL_PASSWORD_LOGIN) and "
-        "that address are set in .env. Empty server and port mean smtp.gmail.com and 465. Changing the server, port or user "
+        f"{state} Password links use {deps.public_url or 'no address yet'}. That address is set in .env. Google sign-in is "
+        "not affected by the switch. Empty server and port mean smtp.gmail.com and 465. Changing the server, port or user "
         "needs the password again.")
     top = "".join(f'<p class="note">{esc(n)}</p>' for n in notes)
     return f'<section id="config" data-panel="config"><h2>Configuration</h2>{top}{model}{tracing}{bot}{email}</section>'

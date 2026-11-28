@@ -69,8 +69,9 @@ SETUHAUL_SMTP_FROM=
 ```
 
 - `SETUHAUL_PUBLIC_URL` (above) is required: the links are built from it.
-- The mailbox lines can instead be entered on **Admin > Configuration > Email** (needs `SETUHAUL_SETTINGS_KEY`): only
-  `SETUHAUL_PASSWORD_LOGIN` and `SETUHAUL_PUBLIC_URL` then need to be in `.env`. Use **Send test email to me** there.
+- The mailbox lines and the switch can instead be set on **Admin > Configuration > Email** (needs
+  `SETUHAUL_SETTINGS_KEY`): only `SETUHAUL_PUBLIC_URL` then needs to be in `.env`. Use **Send test email to me** there,
+  set **Email and password sign-in** to **On** and **Save**. A saved value overrides `.env` until **Reset to .env**.
 - Gmail: turn on 2-Step Verification, then create an app password (Google Account > Security > App passwords) and use it as
   `SETUHAUL_SMTP_PASSWORD`. It also opens the mailbox, so use a dedicated account.
 - The server must reach the mail server's port. Some hosts block outgoing mail ports. **Not verified.**

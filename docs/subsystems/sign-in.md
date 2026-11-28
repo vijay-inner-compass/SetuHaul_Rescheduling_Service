@@ -2,7 +2,7 @@
 title: Web sign-in and password links
 type: subsystem
 created: 2026-11-27
-updated: 2026-11-27
+updated: 2026-11-28
 sources:
   - code: src/setuhaul/auth/sessions.py
   - code: src/setuhaul/auth/links.py
@@ -10,6 +10,7 @@ sources:
   - code: src/setuhaul/auth/local_admin.py
   - code: src/setuhaul/auth/account_mail.py
   - code: src/setuhaul/api.py
+  - code: src/setuhaul/auth/settings_routes.py
 verified_at: b5b462f
 ---
 
@@ -27,9 +28,14 @@ and owner set-up steps are in
 | Email and password | public URL and a usable mail sender (`src/setuhaul/api.py:257`) | 8 hours |
 | Break-glass admin password | `SETUHAUL_LOCAL_ADMIN=1` | 1 hour |
 
-The mail sender needs `SETUHAUL_PASSWORD_LOGIN=1`; a mailbox saved on the Configuration tab wins over the environment
-(`src/setuhaul/auth/account_mail.py:19`, `src/setuhaul/api.py:235`). Sessions are server-side, only the token's hash is
+The mail sender needs `SETUHAUL_PASSWORD_LOGIN` to be `1`; that switch and the mailbox, when saved on the Configuration
+tab, win over the environment (`src/setuhaul/auth/account_mail.py:19`, `src/setuhaul/api.py:235`). The site address stays
+in `.env`. Sessions are server-side, only the token's hash is
 stored, and the user is re-read on every request (`src/setuhaul/auth/sessions.py:53`).
+
+> ⚠️ Turning the switch off is refused when neither Google nor the break-glass password is on, a reset included
+> (`_check_switch` in `src/setuhaul/auth/settings_routes.py`). Turning it on is checked on save only, so that a reset can
+> always return to `.env`.
 
 ## Password links
 

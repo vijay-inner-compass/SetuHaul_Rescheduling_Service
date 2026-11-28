@@ -166,8 +166,9 @@ _ADMIN: tuple[Task, ...] = (
          "and from address. Server and port may be left empty for Gmail."),
         "Click “Send test email to me”. It goes to the address you are signed in with; check spam too.",
         "Click “Save”. The app password box should then say it is set. It is never shown again.",
-        ("Whoever runs the server adds SETUHAUL_PASSWORD_LOGIN=1 and the site address (SETUHAUL_PUBLIC_URL) to the "
-         "server's settings file once, and redeploys. These cannot be changed on screen."),
+        "Set “Email and password sign-in” to “On” and click “Save”. Google sign-in keeps working beside it.",
+        ("Whoever runs the server adds the site address (SETUHAUL_PUBLIC_URL) to the server's settings file once, and "
+         "redeploys. It cannot be changed on screen."),
         "When the Email status says “Sign-in emails are on”, new invitations are emailed.",
         "For people invited before that, click “Send password link” on the Users tab. It also re-sends an invitation.",
         "Changing the mail server, port or sending user means typing the app password again.",

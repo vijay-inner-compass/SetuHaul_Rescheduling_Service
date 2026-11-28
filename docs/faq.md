@@ -306,7 +306,7 @@ No. It holds sample data and generated fixtures. Keys live in a git-ignored `.en
 ## 7. Security and access
 
 **How do staff sign in?**
-Google, by invitation only, or email and password where `SETUHAUL_PASSWORD_LOGIN=1` (a one-time emailed link sets it; five wrong
+Google, by invitation only, or email and password where an admin or `.env` switches it on (a one-time emailed link sets it; five wrong
 attempts lock it for 15 minutes). An admin may also have a backup password: off by default, locked for 15 minutes after five failures,
 one-hour session, every attempt audited. Google sign-in has **not** been run against real Google.
 
