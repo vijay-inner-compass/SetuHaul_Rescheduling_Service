@@ -212,3 +212,17 @@ def test_shipments_tab_hides_send_new_pass_when_unallocated_and_hides_move_when_
     page_dock = world.client("wh_b").get("/warehouse").text
     assert f"/v1/warehouse/shipments/{sid}/warehouse" not in page_dock
     assert f"/v1/warehouse/shipments/{sid}/slot" not in page_dock
+
+
+def test_warehouse_change_allows_allocating_earlier_slot_at_new_warehouse(world: World) -> None:
+    open_av(world)
+    open_av(world, who="wh_b", facility_id="FAC-GGN-01", dock_ids=["DOCK-GGN-D1"])
+    # Create shipment at Jaipur for 12:00, then move to Gurugram and allocate an earlier 09:00 slot.
+    sid = create(world, slot_at(world, 12))
+    r = world.client("wh_a").post(f"/v1/warehouse/shipments/{sid}/warehouse", json={"facility_id": "FAC-GGN-01"})
+    assert r.status_code == 200, r.text
+    earlier_slot = slot_at(world, 9, "DOCK-GGN-D1")
+    alloc = world.client("wh_b").post(f"/v1/warehouse/shipments/{sid}/slot", json={"slot_id": earlier_slot})
+    assert alloc.status_code == 200, alloc.text
+    live = query(world, "select slot_id, appointment_status from appointments where shipment_id=? and is_current=1", sid)[0]
+    assert tuple(live) == (earlier_slot, "CONFIRMED")

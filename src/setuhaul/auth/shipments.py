@@ -365,7 +365,7 @@ def change_warehouse(conn: sqlite3.Connection, *, actor: User, shipment_id: str,
         now = clock.now()
         stamp = now.isoformat()
         ship = conn.execute(
-            "select shipment_id, driver_id, order_reference, destination_facility_id, current_status"
+            "select shipment_id, driver_id, order_reference, destination_facility_id, current_status, planned_departure_ts"
             " from shipments where shipment_id=?",
             (shipment_id,),
         ).fetchone()
@@ -414,8 +414,13 @@ def change_warehouse(conn: sqlite3.Connection, *, actor: User, shipment_id: str,
             audit.record(conn, actor_user_id=actor.user_id, actor_email=actor.email, action="BOOKING_FREED",
                          target_type="shipment", target_id=shipment_id, outcome="OK", ip=None,
                          detail={"appointment_id": orig["appointment_id"], "cause": "WAREHOUSE_CHANGED"}, clock=clock)
-        conn.execute("update shipments set destination_facility_id=?, updated_at=? where shipment_id=?",
-                     (facility_id, stamp, shipment_id))
+        has_eta_update = conn.execute("select 1 from eta_updates where shipment_id=? limit 1", (shipment_id,)).fetchone()
+        if has_eta_update is None and ship["planned_departure_ts"]:
+            conn.execute("update shipments set destination_facility_id=?, latest_eta_ts=?, updated_at=? where shipment_id=?",
+                         (facility_id, ship["planned_departure_ts"], stamp, shipment_id))
+        else:
+            conn.execute("update shipments set destination_facility_id=?, updated_at=? where shipment_id=?",
+                         (facility_id, stamp, shipment_id))
         conn.execute(
             "update facility_change_requests set status='REJECTED', reason='SUPERSEDED', follow_up=NULL"
             " where shipment_id=? and (status='PENDING' or follow_up='WAITING')",
