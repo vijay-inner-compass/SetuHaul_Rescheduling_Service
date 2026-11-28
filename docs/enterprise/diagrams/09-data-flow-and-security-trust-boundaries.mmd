@@ -1,0 +1,36 @@
+flowchart LR
+    %% Data Flow & Security Trust Boundaries
+    %% Evidence: src/setuhaul/api.py, auth/same_origin.py, auth/authz.py, prompts.py, app_settings.py [Verified]
+
+    subgraph TB1["Trust Boundary 1: Untrusted Public / External Callers"]
+        U_Driver["Driver via Telegram<br/>(Untrusted text / prompt injection risk)"]
+        U_Browser["Staff Browser<br/>(Cookies, Origin, Sec-Fetch-Site)"]
+        U_Partner["Partner Email Reply<br/>(Spoofing / ambiguous text risk)"]
+        U_Service["Telematics / Coordinator<br/>(HMAC / Bearer)"]
+    end
+
+    subgraph TB2["Trust Boundary 2: Ingress & AuthN/AuthZ Perimeter (FastAPI)"]
+        Ingress["Body Size Caps (16-256 KiB)<br/>HMAC-SHA256 / Telegram Secret<br/>Same-Origin CSRF Middleware<br/>IP Rate Limits & Lockouts"]
+        AuthZ["Server-Side RBAC & Scoping<br/>auth_sessions (SHA-256)<br/>require_role + facility_clause<br/>Out-of-scope -> 404"]
+    end
+
+    subgraph TB3["Trust Boundary 3: Untrusted LLM Sandbox"]
+        LLM["External LLM (OpenAI / Anthropic)<br/>No driver_id, No raw secrets<br/>Bounded: 6 rounds, 4 tools, $0.05<br/>Canary + Output Claim Guard"]
+    end
+
+    subgraph TB4["Trust Boundary 4: Deterministic Core & Encrypted Storage"]
+        Core["ToolRegistry (extra=forbid, driver_quote)<br/>Deterministic Scheduling & Gate Services<br/>System-rendered templates"]
+        Store[("SQLite WAL<br/>Fernet-encrypted app_settings<br/>SHA-256 passes/sessions/tokens<br/>Append-only audit_log")]
+        Redis[("Redis Cache & Auth State")]
+    end
+
+    U_Driver -->|"X-Telegram-Bot-Api-Secret-Token"| Ingress
+    U_Browser -->|"setuhaul_session + CSP"| Ingress
+    U_Service -->|"X-Signature / Bearer"| Ingress
+    U_Partner -->|"IMAP + SPF/DKIM/DMARC check"| Core
+
+    Ingress --> AuthZ --> Core
+    Core <-->|"Scrubbed facts + 14 narrow tools"| LLM
+    Core --> Store
+    Ingress --> Redis
+    AuthZ --> Redis

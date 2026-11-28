@@ -1,0 +1,226 @@
+{
+  "schema_version": "1.0.0",
+  "repository": "SetuHaul_Rescheduling_Service",
+  "commit_ref": "445c7f965e22e7915238cca5631e68b4462d7b7b",
+  "generated_at": "2026-11-28T11:30:00+05:30",
+  "system_status": "Working prototype (verified on Windows; not production-deployed; never used with real drivers)",
+  "classifications": ["Verified", "Inferred", "Unverified", "Missing"],
+  "business_capabilities": [
+    {
+      "id": "BC-01",
+      "name": "Conversational Driver Rescheduling",
+      "classification": "Verified",
+      "description": "Receive driver delay, breakdown, or early-arrival messages in English, Hindi, or Hinglish via Telegram or signed HTTP channel; derive ETA; auto-hold first feasible slot; confirm or decline; cancel appointments.",
+      "evidence": ["src/setuhaul/conversation.py:153-185", "src/setuhaul/tools.py:918-1002", "src/setuhaul/language.py:29,134-465"],
+      "affected_docs": ["DOC-01", "DOC-02", "DOC-03", "DOC-04", "DOC-05", "DOC-07", "DOC-08", "DOC-21"]
+    },
+    {
+      "id": "BC-02",
+      "name": "Deterministic ETA & Feasibility Evaluation",
+      "classification": "Verified",
+      "description": "Derive arrival times from explicit ETA, repair+travel, late-by offset, gate-in, and GPS arrival floor; evaluate slots across 5 gates (snapshot freshness, hard dock/weight/temp/hour rules, labour/consignee completeness, crew/equipment coverage, consignee commitment).",
+      "evidence": ["src/setuhaul/eta.py:101-218", "src/setuhaul/feasibility.py:58,152-283", "src/setuhaul/capacity.py:183-279", "src/setuhaul/gps.py:71-146"],
+      "affected_docs": ["DOC-02", "DOC-03", "DOC-04", "DOC-07", "DOC-08", "DOC-21"]
+    },
+    {
+      "id": "BC-03",
+      "name": "Concurrency-Safe Capacity & Hold Management",
+      "classification": "Verified",
+      "description": "FCFS temporary slot holds sharing database unique constraints with confirmed appointments; atomic confirmation swapping original and replacement; lazy and periodic hold expiry.",
+      "evidence": ["src/setuhaul/booking.py:214-325,519-652", "src/setuhaul/allocation.py:23-68", "migrations/002_appointment_holds.sql:51-66"],
+      "affected_docs": ["DOC-02", "DOC-03", "DOC-04", "DOC-07", "DOC-08", "DOC-10", "DOC-21"]
+    },
+    {
+      "id": "BC-04",
+      "name": "Warehouse Dock & Exception Operations",
+      "classification": "Verified",
+      "description": "24/7 rolling 14-day slot generation from staff-entered crew counts; dock board view; dock blocking with displacement preview/auto-move; freeing slots; direct driver messaging; escalation case resolution with optional slot booking.",
+      "evidence": ["src/setuhaul/round_clock.py:22-114", "src/setuhaul/dock_blocks.py:42-327", "src/setuhaul/board.py:15-68", "src/setuhaul/release.py:33-145", "src/setuhaul/assign.py:138-201"],
+      "affected_docs": ["DOC-02", "DOC-03", "DOC-04", "DOC-05", "DOC-06", "DOC-08", "DOC-19", "DOC-21"]
+    },
+    {
+      "id": "BC-05",
+      "name": "Facility Change & Partner Warehouse Coordination",
+      "classification": "Verified",
+      "description": "Driver-initiated destination facility change requests approved by destination warehouse; asynchronous SMTP/IMAP email approval workflow for partner warehouses with strict reply parsing and SPF/DKIM/DMARC verification.",
+      "evidence": ["src/setuhaul/facility_change.py:39-324", "src/setuhaul/partner_booking.py:46-460", "src/setuhaul/jobs/partner_mail.py:37-93"],
+      "affected_docs": ["DOC-02", "DOC-03", "DOC-04", "DOC-05", "DOC-08", "DOC-09", "DOC-21"]
+    },
+    {
+      "id": "BC-06",
+      "name": "Shipment Assignment, Dock Access Pass & Gate Control",
+      "classification": "Verified",
+      "description": "Warehouse shipment creation with 128-bit hashed Dock Access Pass delivered over Telegram; one-time driver chat confirmation (5-attempt lockout); security guard pass/vehicle/licence validation, check-in, unloading completion, check-out, and overstay sweeps.",
+      "evidence": ["src/setuhaul/dock_pass.py:16-82", "src/setuhaul/passes.py:22-314", "src/setuhaul/pass_check.py:19-111", "src/setuhaul/gate.py:31-303"],
+      "affected_docs": ["DOC-02", "DOC-03", "DOC-04", "DOC-05", "DOC-06", "DOC-08", "DOC-12", "DOC-19", "DOC-21"]
+    },
+    {
+      "id": "BC-07",
+      "name": "Escalation Handoff & Coordinator Workflow",
+      "classification": "Verified",
+      "description": "Safe human handoff with deduplicated cases, 18 reason codes, lifecycle (OPEN/CLAIMED/RESOLVED/CANCELLED + 24h reopen), web & CLI coordinator interfaces, and fsync JSONL fallback on DB outage.",
+      "evidence": ["src/setuhaul/escalation.py:68-78,224-307,415-441", "src/setuhaul/coordinator.py:104-158"],
+      "affected_docs": ["DOC-02", "DOC-03", "DOC-04", "DOC-05", "DOC-08", "DOC-09", "DOC-17", "DOC-21"]
+    },
+    {
+      "id": "BC-08",
+      "name": "Identity, RBAC, Driver Onboarding & Platform Administration",
+      "classification": "Verified",
+      "description": "Invite-only Google OIDC, optional email/password login, break-glass local admin, Telegram phone binding, facility-scoped RBAC, driver onboarding/approval/soft-delete, project allocations, encrypted runtime configuration, model usage reporting, and immutable audit logging.",
+      "evidence": ["src/setuhaul/auth/users.py:27-29,189-263", "src/setuhaul/auth/authz.py:42-107", "src/setuhaul/auth/onboarding.py:207-216", "src/setuhaul/app_settings.py", "src/setuhaul/auth/audit.py"],
+      "affected_docs": ["DOC-02", "DOC-04", "DOC-06", "DOC-09", "DOC-12", "DOC-13", "DOC-16", "DOC-19", "DOC-21"]
+    }
+  ],
+  "actors": [
+    {
+      "id": "ACT-01",
+      "name": "Truck Driver",
+      "role_code": "DRIVER",
+      "channel": "Telegram bot (self-contact phone binding) or HMAC-signed channel",
+      "classification": "Verified",
+      "evidence": ["README.md:119", "src/setuhaul/auth/telegram.py:111-138", "src/setuhaul/identity.py:55-60"]
+    },
+    {
+      "id": "ACT-02",
+      "name": "Warehouse Authority",
+      "role_code": "WAREHOUSE_AUTHORITY",
+      "channel": "Web UI (/warehouse, /wiki) via Google OAuth or email/password",
+      "classification": "Verified",
+      "evidence": ["src/setuhaul/auth/users.py:27-29", "src/setuhaul/auth/pages.py:1105-1118", "src/setuhaul/auth/authz.py:42-107"]
+    },
+    {
+      "id": "ACT-03",
+      "name": "Gate Security Guard",
+      "role_code": "SECURITY",
+      "channel": "Web UI (/gate, /wiki) via Google OAuth or email/password",
+      "classification": "Verified",
+      "evidence": ["migrations/017_security_role.sql:2-15", "src/setuhaul/auth/gate_routes.py:74-100", "src/setuhaul/gate.py:31-303"]
+    },
+    {
+      "id": "ACT-04",
+      "name": "System Administrator",
+      "role_code": "ADMIN",
+      "channel": "Web UI (/admin, /warehouse, /gate, /wiki) via Google OAuth, email/password, or break-glass local admin",
+      "classification": "Verified",
+      "evidence": ["src/setuhaul/auth/users.py:27-29", "src/setuhaul/auth/pages.py:1097-1103", "src/setuhaul/auth/local_admin.py"]
+    },
+    {
+      "id": "ACT-05",
+      "name": "Operations Coordinator (Service/CLI)",
+      "role_code": "COORDINATOR_TOKEN / CLI",
+      "channel": "Bearer token HTTP API (/v1/coordinator/cases/*) or CLI (python -m setuhaul.coordinator)",
+      "classification": "Verified",
+      "evidence": ["src/setuhaul/api.py:929-977", "src/setuhaul/coordinator.py:104-158"]
+    },
+    {
+      "id": "ACT-06",
+      "name": "Telematics / GPS Feed System",
+      "role_code": "HMAC_SERVICE",
+      "channel": "HMAC-SHA256 signed POST /v1/gps/pings",
+      "classification": "Verified",
+      "evidence": ["src/setuhaul/api.py:836-842"]
+    },
+    {
+      "id": "ACT-07",
+      "name": "Partner Warehouse Contact",
+      "role_code": "EXTERNAL_PARTNER",
+      "channel": "SMTP/IMAP email (APPROVE/DECLINE reply)",
+      "classification": "Verified",
+      "evidence": ["src/setuhaul/partner_booking.py:209-232,302-348"]
+    }
+  ],
+  "business_rules": [
+    {"id": "BR-01", "name": "Operational Timezone IST", "rule": "All operational timestamps must carry an explicit offset and are normalized to Asia/Kolkata (IST).", "classification": "Verified", "evidence": ["src/setuhaul/config.py:28", "src/setuhaul/db.py:39-65", "src/setuhaul/schemas.py:23-29"]},
+    {"id": "BR-02", "name": "ETA Late-By Baseline (D6)", "rule": "'N minutes late' defaults to shipments.original_eta_ts unless explicitly referencing current ETA; gate-in + delay report yields CONTRADICTORY_ARRIVAL_STATE.", "classification": "Verified", "evidence": ["src/setuhaul/eta.py:114-129,185-218", "docs/decision-register.md"]},
+    {"id": "BR-03", "name": "GPS Arrival Floor & Freshness", "rule": "GPS pings expire after 15 min; road travel = ceil(haversine * 1.3 / 40 km/h * 60); GPS acts strictly as a lower bound on arrival (never makes ETA earlier) and lowers confidence if gap > 30 min.", "classification": "Verified", "evidence": ["src/setuhaul/config.py:64-72", "src/setuhaul/gps.py:71-146", "src/setuhaul/travel.py:19-79", "src/setuhaul/eta.py:74-98"]},
+    {"id": "BR-04", "name": "Fail-Closed Feasibility Completeness (D10/D18)", "rule": "Missing labour_windows, missing consignee_commitments, or facility snapshot age > 5 min returns INCOMPLETE_FEASIBILITY_DATA; availability is never assumed.", "classification": "Verified", "evidence": ["src/setuhaul/feasibility.py:58,216-267"]},
+    {"id": "BR-05", "name": "Hard Slot Compatibility Rules", "rule": "Slots must be OPEN, in future, on ACTIVE dock without blocking dock events, unoccupied/unheld, within facility hours and LAST_NEW_START_TIME, matching dock type/reefer/heavy/weight limits, fitting expected_unload_min (+0.5m), and after release_time + eta_buffer_minutes.", "classification": "Verified", "evidence": ["src/setuhaul/feasibility.py:152-213"]},
+    {"id": "BR-06", "name": "FCFS Hold Allocation & Contention (D5/D24)", "rule": "Priority never pre-empts an existing hold. Holds live in appointments(status='HELD', is_current=0) sharing ux_active_appointment_per_slot; max 1 live hold per shipment; standard TTL 180s (900s for proactive GPS/facility-change holds).", "classification": "Verified", "evidence": ["src/setuhaul/allocation.py:23-68", "src/setuhaul/booking.py:214-325", "migrations/002_appointment_holds.sql:51-66", "src/setuhaul/position.py:67"]},
+    {"id": "BR-07", "name": "Atomic Confirmation Swap (D28)", "rule": "Confirmation runs inside BEGIN IMMEDIATE, re-validating feasibility and on-site status, ending the original appointment (CANCELLED, is_current=0) and promoting the hold (CONFIRMED, is_current=1) atomically.", "classification": "Verified", "evidence": ["src/setuhaul/booking.py:519-652"]},
+    {"id": "BR-08", "name": "Auto-Hold One-Slot Flow (D93)", "rule": "System auto-holds the rank-1 feasible slot; driver replies Yes to confirm or No to release and auto-hold the next unoffered slot.", "classification": "Verified", "evidence": ["src/setuhaul/tools.py:644,936-1002", "docs/decision-register.md"]},
+    {"id": "BR-09", "name": "Two-Turn Cancellation & 120-Min Cutoff", "rule": "Confirmed cancellation requires a preview turn + explicit Yes within 10 min; refused if truck on site or IN_PROGRESS; escalated if < 120 min before slot start or consignee commitment is unknown/penalty-bearing/exceptional.", "classification": "Verified", "evidence": ["src/setuhaul/cancellation.py:141-250", "src/setuhaul/tools.py:982-990", "src/setuhaul/config.py:56"]},
+    {"id": "BR-10", "name": "LLM Write Checkpoints & System-Worded State", "rule": "Write tools require verbatim driver_quote in current message, max 1 write/message, and cannot confirm a hold created in the same message. Committed state replies are rendered deterministically from DB rows, never by the LLM.", "classification": "Verified", "evidence": ["src/setuhaul/tools.py:288-294,1024-1079", "src/setuhaul/conversation.py:408-523"]},
+    {"id": "BR-11", "name": "24/7 Rolling 14-Day Horizon (D105)", "rule": "Facilities operate 00:00-00:00; 1-hour slots and AUTO labour windows are generated 14 days ahead ONLY for active non-partner facilities where staff entered facility_crews.crews >= 1.", "classification": "Verified", "evidence": ["src/setuhaul/round_clock.py:22-114", "migrations/022_facility_crews.sql:2-9"]},
+    {"id": "BR-12", "name": "Facility Change Approval & Revert", "rule": "Only destination warehouse authority (or Admin) approves facility changes (120m TTL). Approval moves destination_facility_id and auto-holds (15m) or requests partner slot; if unconfirmed/no slot, reverts to original facility.", "classification": "Verified", "evidence": ["src/setuhaul/facility_change.py:39-324"]},
+    {"id": "BR-13", "name": "Partner Warehouse Strict Email Approval (D69)", "rule": "Partner booking requires active facility contact, SPF/DKIM/DMARC authentication in live mode, and bare APPROVE/DECLINE on line 1; anything ambiguous escalates and never books.", "classification": "Verified", "evidence": ["src/setuhaul/partner_booking.py:209-232,302-348,381-460"]},
+    {"id": "BR-14", "name": "Dock Access Pass Issuance, Confirmation & Gate Order", "rule": "128-bit random pass (DAP-...) stored only as SHA-256; valid [slot_start - early_limit(60m), slot_end + 4h]. Driver confirms once in chat (5 failed guesses lock shipment). Gate checks in fixed order: PASS_NOT_VALID -> WRONG_WAREHOUSE -> ALREADY_CHECKED_IN -> TOO_EARLY -> TOO_LATE -> NO_APPOINTMENT -> DRIVER_NOT_ELIGIBLE -> DETAILS_DO_NOT_MATCH.", "classification": "Verified", "evidence": ["src/setuhaul/dock_pass.py:16-82", "src/setuhaul/passes.py:38-44", "src/setuhaul/pass_check.py:19-111", "src/setuhaul/gate.py:90-112"]},
+    {"id": "BR-15", "name": "Driver Eligibility & Invite-Only Web Access", "rule": "Drivers must be ACTIVE/OFF_DUTY, APPROVED (if app-onboarded), with non-expired licence. Web users are invite-only and facility-scoped (except ADMIN); out-of-scope probes return 404.", "classification": "Verified", "evidence": ["src/setuhaul/auth/onboarding.py:207-216", "src/setuhaul/auth/authz.py:42-107"]},
+    {"id": "BR-16", "name": "Seed Database Immutability (D3/D97)", "rule": "data/setuhaul.sqlite3 is SHA-256 pinned; live service and set_admin_password.py refuse to run on it.", "classification": "Verified", "evidence": ["src/setuhaul/config.py:19,75-82", "src/setuhaul/db.py:144-157"]}
+  ],
+  "functional_requirements": [
+    {"id": "FR-01", "capability": "BC-01", "title": "Trilingual Driver Conversational Intake (en/hi/hinglish)", "classification": "Verified", "evidence": ["src/setuhaul/conversation.py:337-368", "src/setuhaul/language.py:29,73-104"], "tests": ["tests/test_language.py", "tests/test_conversation.py"]},
+    {"id": "FR-02", "capability": "BC-02", "title": "Multi-Source ETA Derivation & GPS Cross-Check", "classification": "Verified", "evidence": ["src/setuhaul/eta.py:101-218", "src/setuhaul/gps.py:71-146", "src/setuhaul/position.py:67-196"], "tests": ["tests/test_eta.py", "tests/test_gps.py", "tests/test_travel.py"]},
+    {"id": "FR-03", "capability": "BC-02", "title": "Five-Gate Slot Feasibility & Option History Reconciliation", "classification": "Verified", "evidence": ["src/setuhaul/feasibility.py:152-313", "src/setuhaul/option_history.py:55-346"], "tests": ["tests/test_feasibility.py", "tests/test_option_history.py"]},
+    {"id": "FR-04", "capability": "BC-03", "title": "Auto-Hold Acquisition, Confirmation, Decline & Expiry", "classification": "Verified", "evidence": ["src/setuhaul/booking.py:214-652", "src/setuhaul/jobs/expire_holds.py"], "tests": ["tests/test_holds.py", "tests/test_booking.py", "tests/test_auto_hold.py", "tests/test_expiry.py", "tests/test_concurrency.py"]},
+    {"id": "FR-05", "capability": "BC-01", "title": "Two-Turn Appointment Cancellation & Original-Slot Re-offer", "classification": "Verified", "evidence": ["src/setuhaul/cancellation.py:90-294", "src/setuhaul/tools.py:982-990"], "tests": ["tests/test_cancellation.py", "tests/test_write_intent.py"]},
+    {"id": "FR-06", "capability": "BC-07", "title": "Deduplicated Escalation Lifecycle, Coordinator API/CLI & Fallback JSONL", "classification": "Verified", "evidence": ["src/setuhaul/escalation.py:224-480", "src/setuhaul/coordinator.py", "src/setuhaul/api.py:966-1078"], "tests": ["tests/test_escalation.py", "tests/test_warehouse_cases.py"]},
+    {"id": "FR-07", "capability": "BC-04", "title": "Warehouse Dock Board, 24/7 Slot Top-Up, Dock Blocks & Slot Freeing", "classification": "Verified", "evidence": ["src/setuhaul/board.py", "src/setuhaul/round_clock.py", "src/setuhaul/dock_blocks.py", "src/setuhaul/release.py"], "tests": ["tests/test_board.py", "tests/test_round_clock.py", "tests/test_dock_blocks.py", "tests/test_release.py"]},
+    {"id": "FR-08", "capability": "BC-05", "title": "Facility Change Request, Destination Approval & Auto-Revert", "classification": "Verified", "evidence": ["src/setuhaul/facility_change.py", "src/setuhaul/auth/facility_routes.py"], "tests": ["tests/test_facility_change.py", "tests/test_facility_change_chat.py", "tests/test_facility_follow_up.py"]},
+    {"id": "FR-09", "capability": "BC-05", "title": "Partner Warehouse SMTP/IMAP Email Booking Workflow", "classification": "Verified", "evidence": ["src/setuhaul/partner_booking.py", "src/setuhaul/jobs/partner_mail.py", "src/setuhaul/mail_transport.py"], "tests": ["tests/test_partner_request.py", "tests/test_partner_reply.py", "tests/test_partner_jobs.py", "tests/test_mail_transport.py"]},
+    {"id": "FR-10", "capability": "BC-06", "title": "Shipment Creation, Dock Access Pass Delivery & Chat Confirmation", "classification": "Verified", "evidence": ["src/setuhaul/auth/shipments.py", "src/setuhaul/passes.py", "src/setuhaul/pass_check.py"], "tests": ["tests/test_shipment_create.py", "tests/test_passes.py", "tests/test_pass_check.py", "tests/test_pass_delivery.py"]},
+    {"id": "FR-11", "capability": "BC-06", "title": "Gate Security Validation, Check-In, Unloading Complete, Check-Out & Overstay Sweep", "classification": "Verified", "evidence": ["src/setuhaul/gate.py", "src/setuhaul/auth/gate_routes.py"], "tests": ["tests/test_gate.py", "tests/test_gate_routes.py", "tests/test_security_role.py"]},
+    {"id": "FR-12", "capability": "BC-08", "title": "Multi-Mode Authentication (Google OIDC, Email/Password, Break-Glass Admin, Telegram, HMAC, Bearer)", "classification": "Verified", "evidence": ["src/setuhaul/auth/routes.py", "src/setuhaul/auth/password_routes.py", "src/setuhaul/auth/telegram_routes.py", "src/setuhaul/identity.py"], "tests": ["tests/test_auth_google.py", "tests/test_password_sign_in.py", "tests/test_auth_local_admin.py", "tests/test_telegram_binding.py"]},
+    {"id": "FR-13", "capability": "BC-08", "title": "Admin User/Driver Lifecycle, Runtime Configuration, Audit Log & Model Usage Reporting", "classification": "Verified", "evidence": ["src/setuhaul/auth/admin_api.py", "src/setuhaul/auth/settings_routes.py", "src/setuhaul/model_report.py", "src/setuhaul/auth/driver_removal.py"], "tests": ["tests/test_admin_api.py", "tests/test_user_deletion.py", "tests/test_driver_removal.py", "tests/test_settings_api.py", "tests/test_model_tab.py"]},
+    {"id": "FR-14", "capability": "BC-04", "title": "Warehouse Driver Messaging, Facility-Scoped Chat Visibility & Resend", "classification": "Verified", "evidence": ["src/setuhaul/driver_messages.py", "src/setuhaul/chat_loads.py", "src/setuhaul/jobs/send_driver_notifications.py"], "tests": ["tests/test_tell_driver.py", "tests/test_chat_loads.py", "tests/test_telegram_delivery.py"]},
+    {"id": "FR-15", "capability": "BC-08", "title": "Data Retention Purges & Driver PII Erasure (Opt-In)", "classification": "Verified", "evidence": ["src/setuhaul/retention.py:1-277"], "tests": ["tests/test_retention.py"]}
+  ],
+  "non_functional_requirements": [
+    {"id": "NFR-01", "category": "Concurrency & Integrity", "specification": "Zero double-booked slots and zero invariant violations under concurrent thread/process contention; SQLite WAL + BEGIN IMMEDIATE + 5000ms busy timeout.", "status": "Verified (local proof)", "evidence": ["docs/verification/concurrency-proof.md:3-127", "src/setuhaul/integrity.py", "src/setuhaul/db.py:86-94,160-180"]},
+    {"id": "NFR-02", "category": "Performance & Scalability", "specification": "Capacity search p99 < 500ms (measured 13.4ms on 826 slots); single-writer SQLite saturates at ~244 holds/s (p99 4.2s at 16 writers). Real-LLM latency unmeasured at scale.", "status": "Partially Verified", "evidence": ["docs/verification/scale-test.md:3-53"]},
+    {"id": "NFR-03", "category": "AI Safety & Bounded Execution", "specification": "Max 6 model rounds, 4 executed tool calls, 8s per-call timeout, 1 retry, 30s request deadline, 800 output tokens, $0.05 cost cap; prompt leak and unverified-claim output guards.", "status": "Verified (deterministic/scripted); Unverified on live LLM", "evidence": ["src/setuhaul/config.py:42-50,62", "src/setuhaul/model_gateway.py:551-655", "src/setuhaul/conversation.py:298-318"]},
+    {"id": "NFR-04", "category": "Security & Confidentiality", "specification": "Server-side RBAC + facility scoping, HMAC-SHA256 webhooks, scrypt password hashing, Fernet secret encryption at rest, SameSite=Lax + same-origin CSRF check, strict CSP on HTML, append-only audit log.", "status": "Verified with gaps (see TD/RSK)", "evidence": ["src/setuhaul/auth/authz.py", "src/setuhaul/auth/same_origin.py", "src/setuhaul/app_settings.py", "src/setuhaul/auth/pages.py:68-74"]},
+    {"id": "NFR-05", "category": "Availability & Resilience", "specification": "Single-process container deployment; Redis outage degrades cache/rate-limit (fail-open for driver msgs, fail-closed for OAuth/gate); DB outage falls back to fsync JSONL escalation file.", "status": "Verified in tests; Unverified in production", "evidence": ["src/setuhaul/api.py:564-595", "src/setuhaul/escalation.py:118-135", "docs/deployment-hostinger.md:174"]},
+    {"id": "NFR-06", "category": "Observability & Auditability", "specification": "Structured redacted JSON logs, in-memory spans, immutable appointment_events/escalation_events/audit_log, optional scrubbed LangSmith tracing, model_turns/model_calls telemetry. No OTel export or metrics scraping.", "status": "Verified with gaps", "evidence": ["src/setuhaul/observability.py", "src/setuhaul/langsmith_trace.py", "src/setuhaul/model_usage.py"]},
+    {"id": "NFR-07", "category": "Compliance & Privacy", "specification": "DPDP/GDPR compliance unassessed; opt-in retention disabled by default; no DB encryption at rest; no bot privacy notice/consent flow.", "status": "Missing / Unverified", "evidence": ["docs/faq.md:23,288-301", "src/setuhaul/retention.py:3"]}
+  ],
+  "components": [
+    {"id": "CMP-01", "name": "FastAPI HTTP & Web Application", "paths": ["src/setuhaul/api.py", "src/setuhaul/auth/*_routes.py", "src/setuhaul/auth/*_pages.py", "src/setuhaul/auth/assets/*"], "affected_docs": ["DOC-06", "DOC-07", "DOC-09", "DOC-12"]},
+    {"id": "CMP-02", "name": "Conversational Orchestrator & LangGraph Loop", "paths": ["src/setuhaul/conversation.py", "src/setuhaul/model_gateway.py", "src/setuhaul/prompts.py", "src/setuhaul/tools.py", "src/setuhaul/language.py", "src/setuhaul/memory.py"], "affected_docs": ["DOC-07", "DOC-08", "DOC-09", "DOC-12"]},
+    {"id": "CMP-03", "name": "ETA, GPS & Feasibility Engine", "paths": ["src/setuhaul/eta.py", "src/setuhaul/gps.py", "src/setuhaul/travel.py", "src/setuhaul/position.py", "src/setuhaul/capacity.py", "src/setuhaul/feasibility.py", "src/setuhaul/allocation.py", "src/setuhaul/option_history.py"], "affected_docs": ["DOC-03", "DOC-07", "DOC-08"]},
+    {"id": "CMP-04", "name": "Booking, Holds, Cancellation & Warehouse Operations", "paths": ["src/setuhaul/booking.py", "src/setuhaul/cancellation.py", "src/setuhaul/release.py", "src/setuhaul/assign.py", "src/setuhaul/round_clock.py", "src/setuhaul/dock_blocks.py", "src/setuhaul/board.py"], "affected_docs": ["DOC-03", "DOC-07", "DOC-08", "DOC-10"]},
+    {"id": "CMP-05", "name": "Facility Change & Partner Email Subsystem", "paths": ["src/setuhaul/facility_change.py", "src/setuhaul/partner_booking.py", "src/setuhaul/mail_transport.py", "src/setuhaul/mailcfg.py", "src/setuhaul/jobs/partner_mail.py"], "affected_docs": ["DOC-03", "DOC-07", "DOC-08", "DOC-09"]},
+    {"id": "CMP-06", "name": "Dock Access Pass & Gate Control Subsystem", "paths": ["src/setuhaul/dock_pass.py", "src/setuhaul/passes.py", "src/setuhaul/pass_check.py", "src/setuhaul/gate.py", "src/setuhaul/order_numbers.py"], "affected_docs": ["DOC-03", "DOC-06", "DOC-08", "DOC-12"]},
+    {"id": "CMP-07", "name": "Escalation, Outbox & Notification Subsystem", "paths": ["src/setuhaul/escalation.py", "src/setuhaul/coordinator.py", "src/setuhaul/events.py", "src/setuhaul/notifications.py", "src/setuhaul/driver_messages.py", "src/setuhaul/chat_loads.py"], "affected_docs": ["DOC-07", "DOC-08", "DOC-09", "DOC-17"]},
+    {"id": "CMP-08", "name": "Authentication, RBAC, Settings & Audit Subsystem", "paths": ["src/setuhaul/identity.py", "src/setuhaul/rate_limit.py", "src/setuhaul/app_settings.py", "src/setuhaul/runtime_settings.py", "src/setuhaul/retention.py", "src/setuhaul/auth/"], "affected_docs": ["DOC-07", "DOC-09", "DOC-12", "DOC-13", "DOC-16"]},
+    {"id": "CMP-09", "name": "Background Maintenance & Delivery Runners", "paths": ["src/setuhaul/jobs/expire_holds.py", "src/setuhaul/jobs/send_driver_notifications.py", "src/setuhaul/jobs/partner_mail.py", "src/setuhaul/webhook_startup.py"], "affected_docs": ["DOC-07", "DOC-08", "DOC-16", "DOC-17"]},
+    {"id": "CMP-10", "name": "SQLite Persistence & Migrations Layer", "paths": ["src/setuhaul/db.py", "src/setuhaul/repositories.py", "migrations/"], "affected_docs": ["DOC-07", "DOC-10", "DOC-16", "DOC-20"]},
+    {"id": "CMP-11", "name": "Observability, Evaluation & Integrity Proof Harness", "paths": ["src/setuhaul/observability.py", "src/setuhaul/langsmith_trace.py", "src/setuhaul/model_usage.py", "src/setuhaul/evaluation.py", "src/setuhaul/integrity.py", "src/setuhaul/proof.py"], "affected_docs": ["DOC-07", "DOC-14", "DOC-15", "DOC-17"]}
+  ],
+  "technical_debt": [
+    {"id": "TD-01", "severity": "High", "title": "Single-process SQLite architecture & in-memory runner/rate-limit state", "classification": "Verified", "evidence": ["docs/verification/scale-test.md:45-52", "src/setuhaul/jobs/send_driver_notifications.py:121-134", "src/setuhaul/passes.py:257-267", "src/setuhaul/api.py:554-562"]},
+    {"id": "TD-02", "severity": "High", "title": "Divergent 'truck on site' predicates (passes.on_site vs release.truck_inside) & gap in partner_booking._book", "classification": "Verified", "evidence": ["src/setuhaul/passes.py:66-69", "src/setuhaul/release.py:68-73", "src/setuhaul/partner_booking.py:405-413"]},
+    {"id": "TD-03", "severity": "High", "title": "Downstream notification_outbox rows (WAREHOUSE_PLANNER/CONSIGNEE/OPERATIONS) have no production sender", "classification": "Verified", "evidence": ["src/setuhaul/jobs/deliver_notifications.py:3-6", "docs/deployment-hostinger.md:186"]},
+    {"id": "TD-04", "severity": "Medium", "title": "Unused OpenTelemetry dependencies (opentelemetry-api/sdk) & no metrics/span exporter", "classification": "Verified", "evidence": ["pyproject.toml:18-19", "src/setuhaul/observability.py:59-127"]},
+    {"id": "TD-05", "severity": "Medium", "title": "tools.py writes_done omits 'REQUESTED' status & search_slot_options bypasses ONE_WRITE_PER_MESSAGE; evaluation.WRITE_TOOLS omits 2 tools", "classification": "Verified", "evidence": ["src/setuhaul/tools.py:936-952,1043-1077", "src/setuhaul/evaluation.py:89"]},
+    {"id": "TD-06", "severity": "Medium", "title": "Stale eta_buffer_minutes=15 persisted into option_sets.context_json and re-applied at confirmation", "classification": "Verified", "evidence": ["src/setuhaul/position.py:149", "src/setuhaul/facility_change.py:291", "src/setuhaul/booking.py:571"]},
+    {"id": "TD-07", "severity": "Medium", "title": "CSP inline style violation in gate_pages.py & missing Content-Type/body-cap on /auth/local-admin", "classification": "Verified", "evidence": ["src/setuhaul/auth/gate_pages.py:25", "src/setuhaul/auth/routes.py:247-276"]},
+    {"id": "TD-08", "severity": "Medium", "title": "Expired holds leak into board.py owner map and assign.open_slots_page; KeyError risk in request_original_slot_again", "classification": "Verified", "evidence": ["src/setuhaul/board.py:23-25", "src/setuhaul/assign.py:90", "src/setuhaul/cancellation.py:281"]},
+    {"id": "TD-09", "severity": "Medium", "title": "PartnerMailRunner records runner success even when inner steps fail; MaintenanceRunner ignores SETUHAUL_RUN_MAINTENANCE=0", "classification": "Verified", "evidence": ["src/setuhaul/jobs/partner_mail.py:81-93", "src/setuhaul/api.py:446,1256"]},
+    {"id": "TD-10", "severity": "Medium", "title": "O(N) full-table scans in Python (retention.py, telegram.py, onboarding.py, shipments.py) & string timestamp comparisons in SQL", "classification": "Verified", "evidence": ["src/setuhaul/retention.py:62-135", "src/setuhaul/auth/telegram.py:117-118", "src/setuhaul/round_clock.py:47", "src/setuhaul/partner_booking.py:104-105"]},
+    {"id": "TD-11", "severity": "Low", "title": "Missing client IP in most authenticated audit records; sh_facility cookie missing Secure flag; Admin nav omits /gate", "classification": "Verified", "evidence": ["src/setuhaul/auth/admin_api.py", "src/setuhaul/auth/pages.py:559,1024,1117"]},
+    {"id": "TD-12", "severity": "Low", "title": "Unbounded in-memory dicts (driver_locks, _PASS_LOCKS, langsmith _cache) & unclosed httpx.Client on bot swap", "classification": "Verified", "evidence": ["src/setuhaul/api.py:554-562", "src/setuhaul/passes.py:257-267", "src/setuhaul/langsmith_trace.py:180", "src/setuhaul/runtime_settings.py:46,86-89"]}
+  ],
+  "risks": [
+    {"id": "RSK-01", "severity": "Critical", "title": "Unvalidated live-LLM behavior after 2026-11-27 feature changes & zero live prompt-injection tests", "classification": "Verified", "evidence": ["docs/client-readout.md:36", "docs/readiness-detail.md:10,31,57"]},
+    {"id": "RSK-02", "severity": "Critical", "title": "All 6 BLOCKER operational policy questions (Q3, Q4, Q6, Q9, Q17, Q20) remain unapproved; supplied DB has zero labour/consignee data", "classification": "Verified", "evidence": ["docs/operations-questions.md:5-26", "docs/snapshot-limitations.md:3-11"]},
+    {"id": "RSK-03", "severity": "High", "title": "External integrations (Google OAuth, SMTP/IMAP, real Redis, Hostinger/ForgeCI, Caddy TLS) never verified end-to-end in production", "classification": "Verified", "evidence": ["docs/faq.md:24,373-375", "docs/deployment-hostinger.md:7,77,186"]},
+    {"id": "RSK-04", "severity": "High", "title": "Data protection / DPDP / GDPR compliance unassessed; no DB encryption at rest; retention disabled by default; no consent notice", "classification": "Verified", "evidence": ["docs/faq.md:23,288-301", "src/setuhaul/retention.py:3"]},
+    {"id": "RSK-05", "severity": "High", "title": "Single-node SQLite SPOF & write lock saturation beyond 4 concurrent writers; no executed backup/restore drill", "classification": "Verified", "evidence": ["docs/verification/scale-test.md:45-52", "docs/operations/backup-and-restore.md:1-68"]},
+    {"id": "RSK-06", "severity": "Medium", "title": "Hindi/Hinglish wording unreviewed by native speakers; regex-based language & claim guards", "classification": "Verified", "evidence": ["docs/model-contract.md:66-69", "src/setuhaul/language.py:450"]},
+    {"id": "RSK-07", "severity": "Medium", "title": "Security hardening gaps (no general rate limit on OAuth/Telegram/GPS, fail-open driver rate limit, same-origin allows missing Origin+Sec-Fetch-Site, missing HSTS/API security headers)", "classification": "Verified", "evidence": ["src/setuhaul/auth/same_origin.py:47-49", "src/setuhaul/rate_limit.py:99-101", "src/setuhaul/auth/pages.py:68-74"]}
+  ],
+  "documentation_gaps": [
+    {"id": "GAP-01", "area": "Migration count drift", "existing_claim": "README.md:156 ('001-023'), running-and-demonstrating.md:311 ('022'), deployment-hostinger.md:175 ('023')", "actual": "27 migrations (001 through 027_user_deletions.sql)", "classification": "Verified"},
+    {"id": "GAP-02", "area": "Test & source count drift", "existing_claim": "README.md:70 ('about 1,970'), running-and-demonstrating.md:37 ('1,972 passed')", "actual": "2,127 tests collected across 142 test_*.py files", "classification": "Verified"},
+    {"id": "GAP-03", "area": "Scenario evaluator count mismatch", "existing_claim": "docs/readiness-detail.md:30 ('66/66 evaluator checks')", "actual": "docs/verification/scenario-run.md:125 records 58/58", "classification": "Verified"},
+    {"id": "GAP-04", "area": "Missing ADR for web user soft-deletion", "existing_claim": "docs/decision-register.md ends at D107", "actual": "Commits e430ec3/f8e106f added migrations/027_user_deletions.sql and hybrid user delete", "classification": "Verified"},
+    {"id": "GAP-05", "area": "Contradictory password-login switch docs", "existing_claim": "running-and-demonstrating.md:274 says switch stays in .env", "actual": "Moved to Admin > Configuration > Email (D107, commit 445c7f9)", "classification": "Verified"},
+    {"id": "GAP-06", "area": "Stale chat visibility rule in Known Limitations", "existing_claim": "running-and-demonstrating.md:398-399 describes superseded D86", "actual": "Replaced by per-load message tagging D104 (021_chat_message_loads.sql)", "classification": "Verified"},
+    {"id": "GAP-07", "area": "Stale demo console description", "existing_claim": "running-and-demonstrating.md:67,74-75 claims no Google sign-in and rule-based stand-in", "actual": "Demo supports Google sign-in from .env and has no rule-based stand-in (D92)", "classification": "Verified"},
+    {"id": "GAP-08", "area": "Contradictory backup key-separation policy", "existing_claim": "deployment-hostinger.md:51-52 backs up DB and .env together", "actual": "operations/backup-and-restore.md:23-24 forbids storing SETUHAUL_SETTINGS_KEY with DB", "classification": "Verified"},
+    {"id": "GAP-09", "area": "Outdated retention/erasure & IP-lockout statements", "existing_claim": "readiness-detail.md:57 ('no retention/erasure'); faq.md:319 ('no general web sign-in rate limit')", "actual": "retention.py and 024_auth_ip_lockouts.sql + check_auth_rate_limit exist", "classification": "Verified"},
+    {"id": "GAP-10", "area": "SQL rollback comment column name typo", "existing_claim": "migrations/024, 025, 026 comments reference schema_migrations WHERE version=...", "actual": "Actual column is filename (src/setuhaul/db.py:107)", "classification": "Verified"},
+    {"id": "GAP-11", "area": "Missing business case financials, ROI, & named stakeholders", "existing_claim": "Not present in repository", "actual": "Requires stakeholder input", "classification": "Missing"},
+    {"id": "GAP-12", "area": "Incomplete LLM tool list in model-contract.md", "existing_claim": "docs/model-contract.md:24-31 lists 13 tools", "actual": "src/setuhaul/tools.py:918-1002 registers 14 tools (omits request_facility_change)", "classification": "Verified"}
+  ]
+}

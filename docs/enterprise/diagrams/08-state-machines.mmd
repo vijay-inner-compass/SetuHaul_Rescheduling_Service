@@ -1,0 +1,47 @@
+stateDiagram-v2
+    %% State Diagrams — Appointments, Dock Access Passes & Truck Visits
+    %% Evidence: src/setuhaul/booking.py, cancellation.py, passes.py, gate.py [Verified]
+
+    state "Appointment Lifecycle" as Appt {
+        [*] --> HELD : acquire_hold (is_current=0, TTL 180s/900s)
+        [*] --> CONFIRMED : warehouse / partner / dock_block move
+        HELD --> CONFIRMED : confirm_reschedule (atomic swap, is_current=1)
+        HELD --> CANCELLED : expire_hold / release_hold
+        PENDING_CONFIRMATION --> CANCELLED : rescheduled / freed / cancelled
+        CONFIRMED --> CANCELLED : rescheduled / driver_cancel / slot_freed
+        CONFIRMED --> IN_PROGRESS : unloading started
+        CONFIRMED --> COMPLETED : gate.unloading_complete
+        IN_PROGRESS --> COMPLETED : gate.unloading_complete
+    }
+
+    state "Dock Access Pass Lifecycle" as Pass {
+        [*] --> ISSUED : passes.issue (128-bit SHA-256)
+        ISSUED --> VALIDATED : gate.validate
+        ISSUED --> ACTIVE : gate.check_in
+        VALIDATED --> ACTIVE : gate.check_in
+        ISSUED --> EXPIRED : passes.expire_due
+        VALIDATED --> EXPIRED : passes.expire_due
+        EXPIRED --> ISSUED : passes.sync_window (visit EXPECTED)
+        EXPIRED --> REVOKED : passes.move_warehouse
+        ISSUED --> REVOKED : reissue / warehouse_change / manual revoke
+        ACTIVE --> COMPLETED : gate.unloading_complete
+        COMPLETED --> CLOSED : gate.check_out
+        ISSUED --> CANCELLED : shipment cancelled
+    }
+
+    state "Truck Visit Lifecycle" as Visit {
+        [*] --> EXPECTED : passes.issue
+        EXPECTED --> CANCELLED : passes.cancel
+        EXPECTED --> CHECKED_IN : gate.check_in (AT_GATE)
+        CHECKED_IN --> OPERATIONS_COMPLETE : gate.unloading_complete
+        OPERATIONS_COMPLETE --> CHECKED_OUT : gate.check_out (COMPLETED)
+    }
+
+    state "Escalation Case Lifecycle" as Esc {
+        [*] --> OPEN : create_handoff
+        OPEN --> CLAIMED : claim_case
+        CLAIMED --> RESOLVED : resolve_case (+ optional ASSIGNED_SLOT)
+        OPEN --> CANCELLED : driver_cancel
+        CLAIMED --> CANCELLED : driver_cancel
+        RESOLVED --> OPEN : reopen_case (within 24h)
+    }

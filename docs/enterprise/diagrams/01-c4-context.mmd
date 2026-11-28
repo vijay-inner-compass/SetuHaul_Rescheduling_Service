@@ -1,0 +1,34 @@
+flowchart LR
+    %% C4 System Context — SetuHaul Conversational Rescheduling Service
+    %% Evidence: src/setuhaul/api.py, src/setuhaul/auth/, src/setuhaul/model_gateway.py, src/setuhaul/mail_transport.py [Verified]
+
+    Driver["Truck Driver (ACT-01)<br/>English / Hindi / Hinglish"]
+    WH["Warehouse Authority (ACT-02)<br/>Facility-scoped web user"]
+    Guard["Gate Security Guard (ACT-03)<br/>Facility-scoped web user"]
+    Admin["System Administrator (ACT-04)<br/>Platform & user admin"]
+    Coord["Operations Coordinator (ACT-05)<br/>Bearer API / CLI"]
+    Partner["Partner Warehouse Contact (ACT-07)<br/>External email approver"]
+
+    SetuHaul["SetuHaul Rescheduling Service<br/>(FastAPI + LangGraph + SQLite + Redis)<br/>Deterministic scheduling & conversational rescheduling"]
+
+    Telegram["Telegram Bot API<br/>(Webhook + sendMessage)"]
+    LLM["LLM Provider API<br/>(OpenAI / Anthropic)"]
+    Google["Google OIDC / OAuth2<br/>(Web staff sign-in)"]
+    Mail["SMTP / IMAP Mail Server<br/>(Partner requests & password links)"]
+    Telematics["Telematics / GPS Feed (ACT-06)<br/>(HMAC-signed pings)"]
+    LangSmith["LangSmith (Optional)<br/>(Scrubbed LLM traces)"]
+
+    Driver -->|"Chat, Yes/No, Pass code, Location"| Telegram
+    Telegram <-->|"HTTPS Webhook & Bot API"| SetuHaul
+    Driver -.->|"HMAC Channel (alt/test)"| SetuHaul
+    WH -->|"HTTPS /warehouse, /wiki"| SetuHaul
+    Guard -->|"HTTPS /gate, /wiki"| SetuHaul
+    Admin -->|"HTTPS /admin, /warehouse, /gate"| SetuHaul
+    Coord -->|"Bearer API / CLI"| SetuHaul
+    Telematics -->|"HMAC POST /v1/gps/pings"| SetuHaul
+
+    SetuHaul <-->|"Tool-calling completions"| LLM
+    SetuHaul <-->|"OAuth2 + PKCE"| Google
+    SetuHaul <-->|"SMTP send / IMAP poll"| Mail
+    Mail <-->|"APPROVE / DECLINE email"| Partner
+    SetuHaul -.->|"Opt-in scrubbed traces"| LangSmith

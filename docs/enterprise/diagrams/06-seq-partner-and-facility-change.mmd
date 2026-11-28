@@ -1,0 +1,36 @@
+sequenceDiagram
+    %% Sequence Diagram — Facility Change & Partner Warehouse Email Booking
+    %% Evidence: src/setuhaul/facility_change.py, partner_booking.py, jobs/partner_mail.py [Verified]
+
+    actor Driver
+    participant Service as SetuHaul Service
+    actor DestWH as Destination Warehouse
+    participant MailJob as PartnerMailRunner (30s)
+    participant MailSrv as SMTP / IMAP Server
+    actor Partner as Partner Contact
+
+    Driver->>Service: Request move to Facility B
+    Service->>Service: facility_change.request_change() (PENDING, TTL 120m)
+    DestWH->>Service: POST /v1/warehouse/facility-changes/{id}/approve
+    Service->>Service: Move shipments.destination_facility_id + revoke/move pass
+
+    alt Destination is Own Facility
+        Service->>Service: after_approval() -> search feasible + 15m auto-hold (follow_up=WAITING)
+        Service-->>Driver: "Facility change approved - held slot for 15 min. Reply Yes/No."
+        Note over Service: If hold expires unconfirmed, settle() reverts destination_facility_id
+    else Destination is Partner Facility (is_partner=1)
+        Service->>Service: partner_booking.request_slot() (PENDING_PARTNER, TTL 120m)
+        MailJob->>MailSrv: SMTP send [PR-XXXXXXXX] (no driver PII, ask APPROVE/DECLINE)
+        MailSrv-->>Partner: Email delivered
+        Partner->>MailSrv: Reply "APPROVE" on line 1
+        MailJob->>MailSrv: IMAP BODY.PEEK[] search
+        MailJob->>Service: partner_booking.handle_reply()
+        Service->>Service: Check contact + SPF/DKIM/DMARC + strict bare-word parser
+        alt Verified APPROVE & Free Dock
+            Service->>Service: BEGIN IMMEDIATE: book APT-PR-... (CONFIRMED), cancel old, APPROVED
+            Service-->>Driver: "Partner warehouse approved slot."
+        else DECLINE / AMBIGUOUS / Conflict / Expiry
+            Service->>Service: Mark DECLINED/FAILED/EXPIRED + escalate, then settle() reverts move
+            Service-->>Driver: "Facility change reverted / handed off to operations."
+        end
+    end

@@ -1,0 +1,39 @@
+flowchart TB
+    %% C4 Component Diagram — Core Scheduling & Conversational Engine
+    %% Evidence: src/setuhaul/conversation.py, model_gateway.py, tools.py, feasibility.py, booking.py [Verified]
+
+    Inbound["Channel Ingress<br/>api.py / telegram_routes.py<br/>(HMAC / Telegram Secret + Body Cap + Idempotency + Rate Limit)"]
+    PassPre["Dock Access Pass Pre-Check<br/>pass_check.py (5-attempt lockout)"]
+    Conv["Conversation Orchestrator<br/>conversation.py (handle_message)"]
+    Mem["ConversationMemoryStore<br/>memory.py (SQL truth + Redis cache)"]
+    Lang["Language & Output Guard<br/>language.py + prompts.py<br/>(en/hi/hinglish, canary, claim guard)"]
+    Loop["LangGraph Bounded Loop<br/>model_gateway.py<br/>(6 rounds, 4 tools, 8s/30s, $0.05 cap)"]
+    Reg["ToolRegistry (14 Tools)<br/>tools.py<br/>(Pydantic extra=forbid, driver_quote, 1 write/msg)"]
+
+    subgraph Deterministic["Deterministic Python Services"]
+        ETA["ETA & GPS<br/>eta.py, gps.py, travel.py, position.py"]
+        Feas["Capacity & 5-Gate Feasibility<br/>capacity.py, feasibility.py, allocation.py, option_history.py"]
+        Book["Booking, Holds & Cancel<br/>booking.py, cancellation.py, release.py, assign.py"]
+        FacPart["Facility Change & Partner Mail<br/>facility_change.py, partner_booking.py"]
+        Esc["Escalation & Outbox<br/>escalation.py, events.py, notifications.py"]
+    end
+
+    DB[("SQLite WAL<br/>BEGIN IMMEDIATE")]
+
+    Inbound --> PassPre --> Conv
+    Conv --> Mem
+    Conv --> Lang
+    Conv --> Loop
+    Loop <--> Reg
+    Reg --> ETA
+    Reg --> Feas
+    Reg --> Book
+    Reg --> FacPart
+    Reg --> Esc
+    Conv --> Esc
+    ETA --> DB
+    Feas --> DB
+    Book --> DB
+    FacPart --> DB
+    Esc --> DB
+    Mem --> DB

@@ -1,0 +1,63 @@
+erDiagram
+    %% Entity Relationship Diagram — Core Operational & Auth Schema
+    %% Evidence: data/setuhaul.sqlite3, migrations/001-027 [Verified]
+
+    CARRIERS ||--o{ DRIVERS : employs
+    CARRIERS ||--o{ VEHICLES : owns
+    CARRIERS ||--o{ SHIPMENTS : carries
+    VEHICLE_TYPES ||--o{ VEHICLES : classifies
+
+    FACILITIES ||--o{ DOCKS : contains
+    FACILITIES ||--o{ APPOINTMENT_SLOTS : schedules
+    FACILITIES ||--o{ FACILITY_RULES : enforces
+    FACILITIES ||--o{ FACILITY_CONTACTS : lists
+    FACILITIES ||--o{ LABOUR_WINDOWS : staffs
+    FACILITIES ||--o| FACILITY_CREWS : configures
+    FACILITIES ||--o{ SHIPMENTS : receives
+
+    DOCKS ||--o{ APPOINTMENT_SLOTS : hosts
+    DOCKS ||--o{ DOCK_STATUS_EVENTS : records
+    DOCK_STATUS_EVENTS ||--o| DOCK_BLOCKS : tracked_by
+
+    DRIVERS ||--o{ SHIPMENTS : drives
+    DRIVERS ||--o| CHANNEL_IDENTITIES : maps_phone
+    DRIVERS ||--o| TELEGRAM_IDENTITIES : binds_telegram
+    DRIVERS ||--o| DRIVER_PROFILES : onboarded_as
+    DRIVERS ||--o{ DRIVER_DELETIONS : soft_deleted
+    DRIVERS ||--o{ CHAT_THREADS : opens
+
+    SHIPMENTS ||--o{ APPOINTMENTS : booked_for
+    SHIPMENTS ||--o| CONSIGNEE_COMMITMENTS : committed_to
+    SHIPMENTS ||--o{ ETA_UPDATES : updates
+    SHIPMENTS ||--o{ GPS_PINGS : reports
+    SHIPMENTS ||--o| FACILITY_CHECKINS : checks_in
+    SHIPMENTS ||--o| SHIPMENT_ASSIGNMENTS : assigned_via
+    SHIPMENTS ||--o{ FACILITY_CHANGE_REQUESTS : requests_move
+    SHIPMENTS ||--o{ PARTNER_REQUESTS : requests_partner
+
+    APPOINTMENT_SLOTS ||--o{ APPOINTMENTS : reserves
+    APPOINTMENTS ||--o| APPOINTMENT_HOLD_META : hold_metadata
+    APPOINTMENTS ||--o{ APPOINTMENT_EVENTS : logs_immutable
+    APPOINTMENT_EVENTS ||--o{ NOTIFICATION_OUTBOX : fans_out
+
+    TRUCK_VISITS ||--o{ VISIT_SHIPMENTS : covers
+    SHIPMENTS ||--o{ VISIT_SHIPMENTS : included_in
+    TRUCK_VISITS ||--o{ DOCK_ACCESS_AUTHORIZATIONS : authorizes
+
+    CHAT_THREADS ||--o{ CHAT_MESSAGES : contains
+    CHAT_MESSAGES ||--o| CHAT_MESSAGE_LOADS : scoped_to
+    CHAT_THREADS ||--o{ ESCALATION_CASES : hands_off
+    ESCALATION_CASES ||--o{ ESCALATION_EVENTS : logs_immutable
+    CHAT_THREADS ||--o{ OPTION_SETS : presents
+    OPTION_SETS ||--o{ OPTION_SET_ITEMS : ranks
+
+    USERS ||--o{ USER_FACILITIES : scoped_to
+    FACILITIES ||--o{ USER_FACILITIES : grants
+    USERS ||--o{ AUTH_SESSIONS : authenticates
+    USERS ||--o| ADMIN_CREDENTIALS : password_hash
+    USERS ||--o{ ACCOUNT_LINKS : invite_or_reset
+    USERS ||--o{ AUTH_IP_LOCKOUTS : ip_lockout
+    USERS ||--o| USER_DELETIONS : soft_deleted
+    USERS ||--o{ PROJECTS : creates
+    PROJECTS ||--o{ PROJECT_DRIVERS : allocates
+    DRIVERS ||--o{ PROJECT_DRIVERS : allocated_to

@@ -1,0 +1,42 @@
+sequenceDiagram
+    %% Sequence Diagram — Driver Delay -> Auto-Hold -> Confirmation (D93)
+    %% Evidence: src/setuhaul/api.py, conversation.py, tools.py, feasibility.py, booking.py [Verified]
+
+    actor Driver
+    participant Channel as Telegram / HMAC API
+    participant Conv as conversation.py
+    participant LLM as LangGraph + ModelGateway
+    participant Tools as tools.py
+    participant Domain as eta / feasibility / booking
+    participant DB as SQLite (WAL)
+
+    Driver->>Channel: "Running 60 mins late"
+    Channel->>DB: Verify driver, idempotency (inbound_messages), rate limit
+    Channel->>Conv: handle_message(message, trusted)
+    Conv->>DB: Append DRIVER msg, load memory & reconcile holds
+    Conv->>LLM: Invoke bounded loop (system prompt + facts + history)
+    LLM->>Tools: search_slot_options(shipment_id, late_by=60)
+    Tools->>Domain: derive_eta() + gps_arrival_floor() + search_feasible_slots()
+    Domain->>DB: Read facility state, docks, slots, labour, consignee
+    Domain-->>Tools: Ranked FEASIBLE slots (FCFS)
+    Tools->>DB: Record option_sets + acquire_hold(rank 1, TTL 180s) in BEGIN IMMEDIATE
+    DB-->>Tools: HELD (APT-H-...)
+    Tools-->>LLM: ToolResult(status="HELD")
+    LLM-->>Conv: Loop ends
+    Conv->>Conv: Discard model text and render deterministic hold template (language.say)
+    Conv->>DB: Persist AGENT reply
+    Conv-->>Driver: "Held Dock D2 15:00-16:00 for 3 min. Reply Yes to confirm or No for another."
+
+    Driver->>Channel: "Yes"
+    Channel->>Conv: handle_message("Yes", trusted)
+    Conv->>LLM: Invoke bounded loop (facts include live_hold)
+    LLM->>Tools: confirm_reschedule(hold_id, driver_quote="Yes")
+    Tools->>Tools: Verify quote in msg + agrees_to_confirm() + hold from prior turn
+    Tools->>Domain: confirm_reschedule() in BEGIN IMMEDIATE
+    Domain->>DB: Re-check feasibility + on_site, CANCEL old appt, CONFIRM hold, enqueue outbox, sync pass
+    DB-->>Domain: CONFIRMED
+    Domain-->>Tools: ConfirmationResult(CONFIRMED)
+    Tools-->>LLM: ToolResult(CONFIRMED)
+    LLM-->>Conv: Loop ends
+    Conv->>Conv: Render deterministic confirmation from committed row
+    Conv-->>Driver: "Confirmed: Dock D2 15:00-16:00. Previous slot released."

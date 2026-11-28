@@ -1,0 +1,40 @@
+flowchart TB
+    %% Deployment & Integration Architecture (Hostinger VPS + ForgeCI Target)
+    %% Evidence: Dockerfile, docker-compose.yml, docs/deployment-hostinger.md [Verified / Unverified in prod]
+
+    subgraph DevCI["Build & CI (GitHub Actions / Local ForgeCI)"]
+        Repo["Git Repository<br/>src/, migrations/, data/setuhaul.sqlite3"]
+        CI["CI Gate: ruff + mypy --strict + pytest (2,127 tests)"]
+        Build["Docker 2-Stage Build<br/>python:3.12-slim -> compileall .pyc only"]
+    end
+
+    subgraph VPS["Hostinger VPS (/opt/apps/setuhaul) — Target Only, Not Yet Deployed"]
+        Caddy["Shared Edge Caddy<br/>HTTPS TLS + Proxy Headers"]
+        subgraph Compose["Docker Compose Stack (name: setuhaul)"]
+            App["setuhaul-app (:8000)<br/>deploy/start.pyc + Uvicorn (1 worker)<br/>+ 3 Background Daemon Threads"]
+            Redis["redis:7-alpine (:6379)"]
+            Vol[("Docker Volume: state<br/>/app/state/setuhaul.db<br/>/app/state/escalations-fallback.jsonl")]
+        end
+        EnvFile[".env (chmod 600)<br/>SETUHAUL_SETTINGS_KEY (Fernet)<br/>Secrets & Feature Flags"]
+        Backup["Host Backup Script<br/>sqlite3 online backup + verify"]
+    end
+
+    subgraph Ext["External Services"]
+        E_TG["Telegram Bot API"]
+        E_LLM["OpenAI / Anthropic API"]
+        E_GGL["Google OAuth2"]
+        E_MAIL["Gmail / SMTP + IMAP"]
+        E_LS["LangSmith (Optional)"]
+    end
+
+    Repo --> CI --> Build -->|"ForgeCI SSH image push"| App
+    Caddy --> App
+    App --> Redis
+    App --> Vol
+    EnvFile -.-> App
+    Backup -.-> Vol
+    App <--> E_TG
+    App <--> E_LLM
+    App <--> E_GGL
+    App <--> E_MAIL
+    App -.-> E_LS

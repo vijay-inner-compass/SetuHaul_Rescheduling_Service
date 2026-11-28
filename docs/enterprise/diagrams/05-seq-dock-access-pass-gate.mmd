@@ -1,0 +1,41 @@
+sequenceDiagram
+    %% Sequence Diagram — Shipment Creation, Dock Access Pass & Gate Check-In/Out
+    %% Evidence: src/setuhaul/auth/shipments.py, passes.py, pass_check.py, gate.py [Verified]
+
+    actor WH as Warehouse Authority
+    participant API as FastAPI (/v1/warehouse & /v1/gate)
+    participant PassSvc as passes.py / pass_check.py
+    participant GateSvc as gate.py
+    participant DB as SQLite
+    participant TG as Telegram Bot
+    actor Driver
+    actor Guard as Gate Security
+
+    WH->>API: POST /v1/warehouse/shipments (order_ref, driver, slot)
+    API->>DB: Create shipment + appointment + shipment_assignments + truck_visit (EXPECTED)
+    API->>PassSvc: issue() -> 128-bit DAP-... (store SHA-256 only, ISSUED)
+    API->>TG: deliver() raw pass code to driver (outside DB txn)
+    TG-->>Driver: "New shipment ORD... Dock Access Pass: DAP-..."
+
+    Driver->>TG: Replies with "DAP-..."
+    TG->>PassSvc: pass_check.check() (max 5 failed guesses -> lock + escalate)
+    PassSvc->>DB: Hash match -> set shipment_assignments.confirmed_at
+    PassSvc-->>Driver: "Pass confirmed - shipment is now visible in chat."
+
+    Driver->>Guard: Arrives at gate with DAP code, vehicle & licence
+    Guard->>API: POST /v1/gate/validate (code, reg, licence)
+    API->>GateSvc: validate() (Redis failure limit + 8-step refusal order)
+    GateSvc->>DB: Pass ISSUED -> VALIDATED
+    GateSvc-->>Guard: Validated (shipment, dock, window)
+
+    Guard->>API: POST /v1/gate/check-in (request_key idempotent)
+    API->>GateSvc: check_in() (optimistic row_version)
+    GateSvc->>DB: Pass -> ACTIVE, Visit -> CHECKED_IN, Shipment -> AT_GATE, facility_checkins upsert
+
+    WH->>API: POST /v1/warehouse/visits/{id}/unloading-complete
+    API->>GateSvc: unloading_complete()
+    GateSvc->>DB: Pass -> COMPLETED, Visit -> OPERATIONS_COMPLETE, Appointment -> COMPLETED
+
+    Guard->>API: POST /v1/gate/check-out (request_key idempotent)
+    API->>GateSvc: check_out()
+    GateSvc->>DB: Pass -> CLOSED, Visit -> CHECKED_OUT, Shipment -> COMPLETED, gate_out_ts set

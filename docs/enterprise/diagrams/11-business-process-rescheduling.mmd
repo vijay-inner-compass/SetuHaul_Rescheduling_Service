@@ -1,0 +1,29 @@
+flowchart TD
+    %% Business Process Diagram — End-to-End Exception Rescheduling & Gate Fulfillment
+    %% Evidence: src/setuhaul/conversation.py, feasibility.py, booking.py, facility_change.py, gate.py [Verified]
+
+    Start(["Driver Reports Delay / Breakdown / Early Arrival"]) --> LangCheck{"Supported Language?<br/>(en / hi / hinglish)"}
+    LangCheck -->|"No (2nd turn)"| Escalate["Create Deduplicated Escalation Case<br/>(OPEN -> CLAIMED -> RESOLVED)"]
+    LangCheck -->|"Yes"| PassCheck{"Unconfirmed Dock<br/>Access Pass Waiting?"}
+    PassCheck -->|"Valid DAP code"| ConfirmPass["Mark Shipment Confirmed<br/>(visible in chat)"] --> DeriveETA
+    PassCheck -->|"5 failed guesses"| LockEsc["Lock Shipment + Escalate<br/>PASS_CONFIRMATION_LOCKED"]
+    PassCheck -->|"No waiting pass"| DeriveETA["Derive ETA + GPS Arrival Floor"]
+
+    DeriveETA --> ETACheck{"ETA Complete &<br/>Consistent?"}
+    ETACheck -->|"Missing info"| AskDriver["Ask Single Targeted Clarification"]
+    ETACheck -->|"Gate-in conflict"| Escalate
+    ETACheck -->|"Valid ETA"| FeasCheck["Evaluate Facility Slots (5 Gates)"]
+
+    FeasCheck --> FeasResult{"Feasibility Outcome"}
+    FeasResult -->|"INCOMPLETE_DATA /<br/>REQUIRES_APPROVAL / NO_SLOT"| Escalate
+    FeasResult -->|"FEASIBLE"| AutoHold["Auto-Hold Rank-1 Slot (FCFS, 180s)<br/>Render Deterministic Prompt"]
+
+    AutoHold --> DriverReply{"Driver Reply"}
+    DriverReply -->|"Yes"| AtomicConfirm["Atomic BEGIN IMMEDIATE Swap<br/>Cancel Old + Confirm New + Sync Pass"]
+    DriverReply -->|"No"| DeclineNext["Release Hold & Auto-Hold Next Slot"]
+    DriverReply -->|"Timeout (180s)"| Expire["Expire Hold (Lazy or 30s Sweep)"]
+    DriverReply -->|"Change Facility"| FacReq["Facility Change Request (120m)<br/>Destination Warehouse Approves"]
+
+    AtomicConfirm --> GateFlow["Truck Arrives at Gate<br/>Security Validates Pass + Reg + Licence"]
+    GateFlow --> CheckIn["Check-In -> Unload Complete -> Check-Out"]
+    CheckIn --> End(["Shipment COMPLETED"])

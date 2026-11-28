@@ -1,0 +1,37 @@
+flowchart TB
+    %% C4 Container Diagram — SetuHaul Rescheduling Service
+    %% Evidence: Dockerfile, docker-compose.yml, deploy/start.py, src/setuhaul/api.py [Verified]
+
+    subgraph Edge["Edge / Reverse Proxy (Unverified in prod)"]
+        Caddy["Caddy HTTPS Reverse Proxy<br/>TLS termination + X-Forwarded-*"]
+    end
+
+    subgraph Host["Single-Container Runtime (docker-compose.yml)"]
+        subgraph AppContainer["setuhaul-app Container (python:3.12-slim, non-root 'app', .pyc only)"]
+            Startup["deploy/start.pyc<br/>Seed copy, migrations 001-027,<br/>identity provisioning"]
+            FastAPI["FastAPI / Uvicorn ASGI Server (:8000)<br/>HTTP APIs, HTML SSR, Auth/RBAC, CSRF"]
+            Orchestrator["Conversational Orchestrator<br/>LangGraph bounded loop + 14 Tools"]
+            Domain["Deterministic Domain Services<br/>ETA, Feasibility, Holds, Passes, Gate, Blocks"]
+            MaintRunner["MaintenanceRunner Thread (30s)<br/>Hold expiry, fallback ingest, gate sweep,<br/>24/7 slot top-up, retention"]
+            NoticeRunner["DriverNoticeRunner Thread (5s)<br/>Pending passes + Telegram outbox backoff"]
+            PartnerRunner["PartnerMailRunner Thread (30s, live mode)<br/>SMTP send, IMAP poll, partner expiry"]
+        end
+
+        SQLite[("SQLite DB (/app/state/setuhaul.db)<br/>WAL mode, BEGIN IMMEDIATE, 5s busy_timeout<br/>System of Record")]
+        Fallback[("JSONL Fallback File<br/>/app/state/escalations-fallback.jsonl<br/>fsync on DB outage")]
+        Redis[("Redis 7-Alpine (:6379)<br/>Conv cache (24h), rate limits,<br/>OAuth state (10m), mail throttles")]
+    end
+
+    Caddy -->|"HTTP :8000"| FastAPI
+    Startup --> SQLite
+    FastAPI --> Orchestrator
+    FastAPI --> Domain
+    Orchestrator --> Domain
+    Domain --> SQLite
+    Domain --> Fallback
+    FastAPI --> Redis
+    Orchestrator --> Redis
+    MaintRunner --> SQLite
+    MaintRunner --> Fallback
+    NoticeRunner --> SQLite
+    PartnerRunner --> SQLite
