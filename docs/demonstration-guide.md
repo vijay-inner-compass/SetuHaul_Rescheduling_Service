@@ -127,6 +127,10 @@ removed, so a first booking has no "original ended" step. The hard rules still a
 
 These scenarios demonstrate the full lifecycle across the **Dock board**, **Operations**, and **Shipments** tabs (covered by `tests/test_lifecycle_scenarios.py`):
 
+0. **Create availability and a new shipment (`Shipments` tab):**
+   - **1. Open availability:** Open `/warehouse` → **Shipments** → **1. Open availability**. Choose **Facility**, **First date** and **Last date** (up to 14 days), select one or more **Docks**, enter **From** and **To** times (e.g. `00:00` to `00:00` for all day), **Slot minutes** (default `60`), **Crews**, and **Equipment available** (`Yes`), then click **Open availability**. *(Alternatively, on the **Dock board** tab under **Round-the-clock slots**, save a **Crews** count to auto-create 24/7 1-hour slots for the next 14 days.)*
+   - **2. New shipment:** In **Shipments** → **2. New shipment**, enter an **Order number** (`ORD` followed by at least 6 digits, e.g. `ORD-261129-001`), choose an eligible **Driver** and **Vehicle**, enter **Origin name**, **Origin city**, **Destination facility**, **Customer**, **Product**, **Load (kg)**, **Dock type** (`STANDARD`, `REEFER`, `HEAVY`, or `ANY`), **Refrigerated**, **Priority**, **Unload minutes**, **Planned departure** (before the slot start), and a **Planned dock slot**, then click **Create shipment**. The slot turns **Booked** on the Dock Board and a Dock Access Pass is sent to the driver to confirm.
+
 1. **Free a booked or missed no-show slot via the Dock Board cross (`×`):**
    - On `/warehouse`, open the **Dock board** (always displays all 24 hourly columns `00:00`–`23:00`).
    - Click the **`×`** icon in the top-right corner of any booked cell (including past no-show slots where the truck never checked in).
