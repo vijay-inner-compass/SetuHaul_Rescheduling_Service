@@ -1058,6 +1058,14 @@ def create_app(deps: AppDeps) -> FastAPI:
                                                        clock=deps.clock)
                     language = str(json.loads(case["context_json"]).get("language") or "en")
                     return say("booking_assigned", language, dock=dock, date=f"{start:%d %b %Y}", start=f"{start:%H:%M}")
+            elif body.resolution_code == "CANCELLED_BY_OPERATIONS":
+                def apply(case: sqlite3.Row) -> str:
+                    freed = assign.cancel_in_txn(c, actor=user, actor_id=who, shipment_id=case["shipment_id"], clock=deps.clock)
+                    if freed is None:
+                        return ""
+                    dock, start = freed
+                    language = str(json.loads(case["context_json"]).get("language") or "en")
+                    return say("booking_cancelled_by_ops", language, dock=dock, date=f"{start:%d %b %Y}", start=f"{start:%H:%M}")
             return resolve_case(c, case_id, who, body.resolution_code, body.note, deps.clock, apply=apply)
 
         def go() -> JSONResponse:

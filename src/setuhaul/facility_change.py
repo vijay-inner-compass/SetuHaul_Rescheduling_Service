@@ -20,14 +20,15 @@ from setuhaul.allocation import rank_options
 from setuhaul.auth import audit
 from setuhaul.auth.authz import facility_ids
 from setuhaul.auth.users import User
-from setuhaul.booking import acquire_hold, make_hold_checker, release_hold
+from setuhaul.booking import acquire_hold, make_hold_checker, release_hold, release_hold_in_txn
 from setuhaul.capacity import build_facility_state
 from setuhaul.clock import Clock
 from setuhaul.config import load_settings
 from setuhaul.db import IST, immediate, parse_operational_timestamp
 from setuhaul.escalation import HandoffRequest, SqlEscalationSink
 from setuhaul.eta import load_eta_records
-from setuhaul.events import queue_driver_notice
+from setuhaul.events import append_appointment_event, queue_driver_notice
+from setuhaul.notifications import enqueue_downstream
 from setuhaul.feasibility import build_context, search_feasible_slots
 from setuhaul.gps import gps_arrival_floor
 from setuhaul.language import say
@@ -106,7 +107,39 @@ def decide(conn: sqlite3.Connection, clock: Clock, *, actor: User, request_id: s
             if (ship["current_status"] in NOT_MOVABLE or ship["destination_facility_id"] != row["from_facility_id"]
                     or passes.on_site(conn, row["shipment_id"])):
                 return ChangeResult(status="NOT_MOVABLE", request_id=request_id)
-            conn.execute("update shipments set destination_facility_id=? where shipment_id=?", (row["to_facility_id"], row["shipment_id"]))
+            orig = conn.execute(
+                "select appointment_id, appointment_status from appointments where shipment_id=? and is_current=1"
+                " and appointment_status in ('PENDING_CONFIRMATION','CONFIRMED','IN_PROGRESS')",
+                (row["shipment_id"],),
+            ).fetchone()
+            if orig is not None and orig["appointment_status"] == "IN_PROGRESS":
+                return ChangeResult(status="NOT_MOVABLE", request_id=request_id)
+            now = clock.now()
+            stamp = now.isoformat()
+            for held in conn.execute("select appointment_id from appointments where shipment_id=? and appointment_status='HELD'",
+                                     (row["shipment_id"],)).fetchall():
+                release_hold_in_txn(conn, held["appointment_id"], row["shipment_id"], "SYSTEM", now,
+                                    "WAREHOUSE", actor.user_id, "FACILITY_CHANGED")
+            if orig is not None:
+                conn.execute(
+                    "update appointments set appointment_status='CANCELLED', is_current=0, cancelled_at=?,"
+                    " cancellation_reason='FACILITY_CHANGED', updated_at=? where appointment_id=?",
+                    (stamp, stamp, orig["appointment_id"]),
+                )
+                event_id = append_appointment_event(
+                    conn, orig["appointment_id"], row["shipment_id"], "APPOINTMENT_CANCELLED",
+                    from_status=orig["appointment_status"], to_status="CANCELLED",
+                    actor_type="WAREHOUSE", actor_id=actor.user_id, reason="FACILITY_CHANGED", occurred_at=now,
+                )
+                enqueue_downstream(conn, event_id, "APPOINTMENT_CANCELLED", row["shipment_id"], orig["appointment_id"],
+                                   {"cause": "FACILITY_CHANGED", "from_facility_id": row["from_facility_id"],
+                                    "to_facility_id": row["to_facility_id"]}, now)
+                audit.record(conn, actor_user_id=actor.user_id, actor_email=actor.email, action="BOOKING_FREED",
+                             target_type="shipment", target_id=row["shipment_id"], outcome="OK", ip=None,
+                             detail={"appointment_id": orig["appointment_id"], "cause": "FACILITY_CHANGED"}, clock=clock)
+            conn.execute("update shipments set destination_facility_id=? where shipment_id=?",
+                         (row["to_facility_id"], row["shipment_id"]))
+
             passes.move_warehouse(conn, row["shipment_id"], clock)
         status: Status = "APPROVED" if approve else "REJECTED"
         conn.execute("update facility_change_requests set status=?, decided_by=?, decided_at=? where request_id=?",
@@ -176,16 +209,16 @@ def _facility_name(conn: sqlite3.Connection, facility_id: str) -> str:
 def _revert(conn: sqlite3.Connection, clock: Clock, request_id: str, reason: str, message_key: str, *,
             case_summary: str | None = None, memory: ConversationMemoryStore | None = None,
             happened_at: datetime | None = None) -> bool:
-    """Send an approved but unbooked move back: never leave a load pointing at a site where it has no booking."""
+    """Mark an approved move as unbooked without reverting the destination warehouse: the old slot is already freed."""
     with immediate(conn):
         req = conn.execute("select * from facility_change_requests where request_id=? and status='APPROVED' "
-                           "and coalesce(follow_up,'')<>'BOOKED'", (request_id,)).fetchone()
+                           "and coalesce(follow_up,'')<>'BOOKED' and reason is null", (request_id,)).fetchone()
         if req is None:
             return False
-        conn.execute("update shipments set destination_facility_id=? where shipment_id=?", (req["from_facility_id"], req["shipment_id"]))
-        passes.move_warehouse(conn, req["shipment_id"], clock)
-        conn.execute("update facility_change_requests set status='REJECTED', reason=?, follow_up=NULL where request_id=?", (reason, request_id))
-        audit.record(conn, actor_user_id=None, actor_email=None, action="FACILITY_CHANGE_REVERTED", target_type="shipment",
+        # Keep destination_facility_id at to_facility_id; old slot was freed on approval so a new slot can be allocated here.
+
+        conn.execute("update facility_change_requests set reason=?, follow_up=NULL where request_id=?", (reason, request_id))
+        audit.record(conn, actor_user_id=None, actor_email=None, action="FACILITY_CHANGE_UNBOOKED", target_type="shipment",
                      target_id=req["shipment_id"], outcome="OK", ip=None, detail={"request_id": request_id, "reason": reason}, clock=clock)
     driver_id, shipment_id = req["driver_id"], req["shipment_id"]
     _release_live_holds(conn, clock, driver_id, shipment_id)

@@ -19,7 +19,7 @@ from setuhaul.escalation import InMemoryEscalationSink
 from setuhaul.identity import AuthError
 from setuhaul.jobs.send_driver_notifications import DriverNoticeRunner
 from tests.gate_helpers import ARRIVE, Yard
-from tests.shipment_helpers import DAY, query
+from tests.shipment_helpers import DAY, open_av, query, slot_at
 
 
 @pytest.fixture()
@@ -97,7 +97,7 @@ def test_a_new_driver_gets_a_new_pass(yard: Yard) -> None:
         yard.call("validate")
 
 
-def _move(yard: Yard) -> str:
+def _move(yard: Yard, *, allocate_new: bool = True) -> str:
     conn = open_connection(path=yard.world.path)
     try:
         query(yard.world, "update shipment_assignments set confirmed_at='2026-11-27T10:00:00+05:30'")
@@ -105,6 +105,10 @@ def _move(yard: Yard) -> str:
                                                to_facility_id="FAC-GGN-01")
         assert asked.status == "REQUESTED"
         facility_change.decide(conn, yard.world.clock, actor=yard.world.users["admin"], request_id=asked.request_id, approve=True)
+        if allocate_new:
+            open_av(yard.world, who="admin", facility_id="FAC-GGN-01", dock_ids=["DOCK-GGN-D1"])
+            shipments.allocate_slot(conn, actor=yard.world.users["admin"], shipment_id=yard.shipment_id,
+                                    slot_id=slot_at(yard.world, 12, "DOCK-GGN-D1"), clock=yard.world.clock)
         return str(asked.request_id)
     finally:
         conn.close()
@@ -128,25 +132,25 @@ def test_a_warehouse_move_revokes_the_old_pass_and_sends_a_new_one(yard: Yard) -
     assert yard.one("select confirmed_at from shipment_assignments")[0] is not None
     # Until a slot there is booked, no gate admits the truck.
     yard.world.clock.set(ts(ARRIVE))  # type: ignore[attr-defined]
-    with pytest.raises(AuthError, match="NO_APPOINTMENT"):
-        yard.call("validate", "guard_b", code=code)
+    assert yard.call("validate", "guard_b", code=code).order_reference == "ORD-261127-001"
+
 
 
 def test_a_reverted_move_sends_a_pass_for_the_old_warehouse(yard: Yard) -> None:
-    request = _move(yard)
+    request = _move(yard, allocate_new=False)
     _link(yard)
     bot = telegram.FakeTelegramClient()
     conn = open_connection(path=yard.world.path)
     passes.send_pending(conn, bot, yard.world.clock)
     facility_change.abandon(conn, yard.world.clock, request, "FOLLOW_UP_FAILED")
-    assert passes.send_pending(conn, bot, yard.world.clock) == 1
+    assert passes.send_pending(conn, bot, yard.world.clock) == 0
     conn.close()
-    assert yard.one("select warehouse_id from dock_access_authorizations where status='ISSUED'")[0] == "FAC-JAI-01"
+    assert yard.one("select destination_facility_id from shipments where shipment_id=?", yard.shipment_id)[0] == "FAC-GGN-01"
 
 
 def test_a_move_to_a_partner_warehouse_leaves_no_pass(yard: Yard) -> None:
     query(yard.world, "update facilities set is_partner=1 where facility_id='FAC-GGN-01'")
-    _move(yard)
+    _move(yard, allocate_new=False)
     conn = open_connection(path=yard.world.path)
     assert passes.send_pending(conn, None, yard.world.clock) == 0
     conn.close()

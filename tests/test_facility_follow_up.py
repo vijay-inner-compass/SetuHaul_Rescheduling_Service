@@ -43,7 +43,10 @@ def _last_message(chat: Chat) -> str:
 def test_confirm_across_facilities_ends_the_old_one_atomically(chat: Chat) -> None:
     old = chat.current()
     outcome, _ = _approve(chat, "Gurugram")
-    assert outcome == "HELD" and chat.current() == old  # held, original still in place
+    # Approving frees the old slot immediately and holds a slot at Gurugram.
+    assert outcome == "HELD"
+    assert tuple(chat.rows(f"select appointment_status, is_current from appointments where slot_id='{old}'")[0]) == ("CANCELLED", 0)
+    assert chat.rows("select count(*) from appointments where shipment_id='SHP1006' and is_current=1")[0][0] == 0
     reply = chat.say("Yes, confirm")
     assert reply.startswith("Your appointment is confirmed") and "Gurugram" in reply
     assert chat.current().startswith("SLOT-GGN")
@@ -65,9 +68,10 @@ def test_no_slot_there_sends_the_load_back_and_opens_a_case(chat: Chat) -> None:
     conn.commit()
     conn.close()
     outcome, _ = _approve(chat, "Gurugram")
-    assert outcome == "NO_SLOT" and _dest(chat) == JAI and chat.current() == old and chat.held() == []
+    assert outcome == "NO_SLOT" and _dest(chat) == GGN and chat.held() == []
+    assert tuple(chat.rows(f"select appointment_status, is_current from appointments where slot_id='{old}'")[0]) == ("CANCELLED", 0)
     row = chat.rows("select status, reason from facility_change_requests")[0]
-    assert tuple(row) == ("REJECTED", "NO_SLOT") and "still" in _last_message(chat)
+    assert tuple(row) == ("APPROVED", "NO_SLOT") and "freed" in _last_message(chat)
     assert chat.rows("select count(*) from escalation_cases where shipment_id='SHP1006'")[0][0] >= 1
 
 
@@ -84,11 +88,12 @@ def test_a_partner_move_drops_the_hold_at_the_old_facility_so_yes_cannot_book_it
     assert len(chat.held()) == 1
     outcome, _ = _approve(chat, "the partner")
     assert outcome == "PARTNER_REQUESTED" and chat.held() == []
-    assert not chat.say("Yes, confirm").startswith("Your appointment is confirmed") and chat.current() == old
+    assert not chat.say("Yes, confirm").startswith("Your appointment is confirmed")
+    assert tuple(chat.rows(f"select appointment_status, is_current from appointments where slot_id='{old}'")[0]) == ("CANCELLED", 0)
 
 
 def test_the_driver_card_names_the_warehouse_of_the_old_booking_after_a_move(tmp_path: Path) -> None:
     chat = Chat(tmp_path)
     _approve(chat, "Gurugram")
     card = chat.client.get("/demo/driver/api/state").json()["booking"]
-    assert "Gurugram" in card["facility"] and "Dock D4" in card["booked"] and "Jaipur" in card["booked"]
+    assert "Gurugram" in card["facility"] and card["booked"] is None

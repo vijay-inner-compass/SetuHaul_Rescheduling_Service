@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict
 from starlette.concurrency import run_in_threadpool
 
-from setuhaul import passes
+from setuhaul import assign, passes
 from setuhaul.auth import shipments
 from setuhaul.auth.authz import require_role
 from setuhaul.auth.http import reject
@@ -21,7 +21,8 @@ from setuhaul.db import open_connection
 from setuhaul.identity import AuthError
 
 _CONFLICT = {"DUPLICATE_ORDER_NUMBER", "SLOT_NOT_AVAILABLE", "ALREADY_CONFIRMED", "NOT_LOCKED", "VISIT_IN_PROGRESS", "VISIT_CLOSED",
-             "NO_LIVE_PASS"}
+             "NO_LIVE_PASS", "SHIPMENT_FINISHED", "ORIGINAL_IN_PROGRESS", "SAME_FACILITY"}
+
 
 
 # What the person at the screen is told for each refusal.
@@ -46,6 +47,9 @@ _MESSAGES = {
     "NO_LIVE_PASS": "There is no pass to revoke.",
     "NO_APPOINTMENT": "The shipment has no booked slot. Book one first.",
     "REASON_REQUIRED": "Say why the pass is being revoked.",
+    "SAME_FACILITY": "The shipment is already assigned to that warehouse.",
+    "SHIPMENT_FINISHED": "That shipment is already finished or cancelled.",
+    "ORIGINAL_IN_PROGRESS": "The truck is already at the facility, so its booking cannot be changed.",
 }
 # Why the booking rules refused a slot.
 _WHY = {
@@ -55,6 +59,7 @@ _WHY = {
     "EQUIPMENT_UNAVAILABLE": "no equipment is available then", "labour_availability": "no labour is recorded for that day",
     "AFTER_LAST_NEW_START": "it starts after the facility's last start time", "OUTSIDE_FACILITY_HOURS": "it is outside opening hours",
     "DOCK_UNAVAILABLE": "the dock is out of service", "DOCK_EVENT_BLOCK": "the dock is blocked then",
+    "RELEASE_AFTER_SLOT_START": "the truck cannot arrive by then",
 }
 
 
@@ -62,7 +67,7 @@ def _message(exc: AuthError) -> str | None:
     if isinstance(exc, shipments.BadDates):
         return exc.message
     text = _MESSAGES.get(exc.code)
-    if text is None or not isinstance(exc, shipments.DoesNotFit):
+    if text is None or not isinstance(exc, (shipments.DoesNotFit, assign.Refused)):
         return text
     return f"{text}: {'; '.join(_WHY.get(r, r) for r in exc.reasons)}."
 
@@ -78,6 +83,19 @@ class DriverChange(BaseModel):
 
     driver_id: str
     vehicle_id: str
+
+
+class WarehouseChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    facility_id: str
+    slot_id: str | None = None
+
+
+class SlotAllocation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    slot_id: str
 
 
 def _status(code: str) -> int:
@@ -185,6 +203,33 @@ def register_shipment_routes(app: FastAPI, deps: Any) -> None:
                 return ok(rid, shipment_id=shipment_id)
 
             return await run_in_threadpool(run, rid, write)
+
+    @app.post("/v1/warehouse/shipments/{shipment_id}/warehouse")
+    async def warehouse(request: Request, shipment_id: str, body: WarehouseChange,
+                        user: Annotated[User, Depends(require_role("WAREHOUSE_AUTHORITY", "ADMIN"))]) -> Response:
+        rid = request.state.request_id
+
+        def write(conn: sqlite3.Connection) -> Response:
+            shipments.change_warehouse(conn, actor=user, shipment_id=shipment_id, facility_id=body.facility_id,
+                                       clock=deps.clock, slot_id=body.slot_id)
+            if body.slot_id:
+                passes.send_pending(conn, client(), deps.clock)
+            return ok(rid, shipment_id=shipment_id, facility_id=body.facility_id)
+
+        return await run_in_threadpool(run, rid, write)
+
+    @app.post("/v1/warehouse/shipments/{shipment_id}/slot")
+    async def slot(request: Request, shipment_id: str, body: SlotAllocation,
+                   user: Annotated[User, Depends(require_role("WAREHOUSE_AUTHORITY", "ADMIN"))]) -> Response:
+        rid = request.state.request_id
+
+        def write(conn: sqlite3.Connection) -> Response:
+            dock, start = shipments.allocate_slot(conn, actor=user, shipment_id=shipment_id, slot_id=body.slot_id,
+                                                  clock=deps.clock)
+            passes.send_pending(conn, client(), deps.clock)
+            return ok(rid, shipment_id=shipment_id, slot_id=body.slot_id, dock_code=dock, start=start.isoformat())
+
+        return await run_in_threadpool(run, rid, write)
 
     action("cancel", shipments.cancel_shipment)
     action("unlock", shipments.unlock)

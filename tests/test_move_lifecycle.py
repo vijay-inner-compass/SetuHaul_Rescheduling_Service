@@ -62,8 +62,9 @@ def test_a_lapsed_offer_sends_the_load_back_at_the_next_sweep(chat: Chat) -> Non
     assert _dest(chat) == GGN  # still waiting for the driver
     chat.deps.clock.advance(timedelta(minutes=16))
     _sweep(chat)
-    assert _dest(chat) == JAI and chat.current() == old and _request(chat) == ("REJECTED", "NOT_CONFIRMED")
-    assert "still going to SetuHaul Jaipur" in _last_message(chat)
+    assert _dest(chat) == GGN and _request(chat) == ("APPROVED", "NOT_CONFIRMED")
+    assert tuple(chat.rows(f"select appointment_status, is_current from appointments where slot_id='{old}'")[0]) == ("CANCELLED", 0)
+    assert "assigned to SetuHaul Gurugram" in _last_message(chat)
 
 
 def test_a_late_yes_sends_the_load_back_without_waiting_for_a_sweep(chat: Chat) -> None:
@@ -71,7 +72,8 @@ def test_a_late_yes_sends_the_load_back_without_waiting_for_a_sweep(chat: Chat) 
     _approve(chat, "Gurugram")
     chat.deps.clock.advance(timedelta(minutes=16))
     assert not chat.say("Yes").startswith("Your appointment is confirmed")
-    assert _dest(chat) == JAI and chat.current() == old
+    assert _dest(chat) == GGN
+    assert tuple(chat.rows(f"select appointment_status, is_current from appointments where slot_id='{old}'")[0]) == ("CANCELLED", 0)
 
 
 def test_declining_every_slot_at_the_new_site_sends_the_load_back(chat: Chat) -> None:
@@ -81,7 +83,8 @@ def test_declining_every_slot_at_the_new_site_sends_the_load_back(chat: Chat) ->
         if not chat.held():
             break
         chat.say("No")
-    assert chat.held() == [] and _dest(chat) == JAI and chat.current() == old
+    assert chat.held() == [] and _dest(chat) == GGN
+    assert tuple(chat.rows(f"select appointment_status, is_current from appointments where slot_id='{old}'")[0]) == ("CANCELLED", 0)
 
 
 def test_a_confirmed_move_stays_moved(chat: Chat) -> None:
@@ -102,7 +105,7 @@ def test_an_unanswered_partner_request_sends_the_load_back_when_it_expires(chat:
         run_expiry_once(conn, chat.deps.clock)
     finally:
         conn.close()
-    assert _dest(chat) == JAI and _request(chat) == ("REJECTED", "NOT_CONFIRMED")
+    assert _dest(chat) == PARTNER and _request(chat) == ("APPROVED", "NOT_CONFIRMED")
 
 
 def test_a_hold_for_the_old_site_cannot_be_confirmed_once_the_destination_changed(chat: Chat) -> None:
@@ -116,7 +119,8 @@ def test_a_hold_for_the_old_site_cannot_be_confirmed_once_the_destination_change
     fc.decide(conn, chat.deps.clock, actor=admin, request_id=rid, approve=True)  # the follow-up has not run yet
     conn.close()
     assert not chat.say("Yes, confirm").startswith("Your appointment is confirmed")
-    assert chat.current() == old and chat.held() == []
+    assert chat.held() == []
+    assert tuple(chat.rows(f"select appointment_status, is_current from appointments where slot_id='{old}'")[0]) == ("CANCELLED", 0)
 
 
 def test_a_follow_up_that_crashes_puts_the_load_back_and_opens_a_case(chat: Chat, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -133,9 +137,9 @@ def test_a_follow_up_that_crashes_puts_the_load_back_and_opens_a_case(chat: Chat
     rid = web.get("/v1/warehouse/facility-changes").json()["requests"][0]["request_id"]
     r = web.post(f"/v1/warehouse/facility-changes/{rid}/approve", json={})
     assert r.status_code == 200 and r.json()["outcome"] == "NO_SLOT"
-    assert _dest(chat) == JAI and _request(chat) == ("REJECTED", "FOLLOW_UP_FAILED")
+    assert _dest(chat) == GGN and _request(chat) == ("APPROVED", "FOLLOW_UP_FAILED")
     assert chat.rows("select count(*) from escalation_cases where shipment_id='SHP1006'")[0][0] == 1
-    assert "still going to" in _last_message(chat)
+    assert "freed" in _last_message(chat)
 
 
 # -- Telegram drivers only receive what is queued --------------------------------------------------------

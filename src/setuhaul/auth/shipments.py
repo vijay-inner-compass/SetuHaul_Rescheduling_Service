@@ -14,7 +14,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from setuhaul import passes
+from setuhaul import assign, passes, release
+from setuhaul.booking import release_hold_in_txn
+from setuhaul.notifications import enqueue_downstream
 from setuhaul.auth import audit
 from setuhaul.auth.authz import facility_clause, facility_ids
 from setuhaul.auth.onboarding import driver_eligible
@@ -326,6 +328,10 @@ def cancel_shipment(conn: sqlite3.Connection, *, actor: User, shipment_id: str, 
         _unconfirmed(conn, actor, shipment_id)
         now = clock.now()
         stamp = now.isoformat()
+        for held in conn.execute("select appointment_id from appointments where shipment_id=? and appointment_status='HELD'",
+                                 (shipment_id,)).fetchall():
+            release_hold_in_txn(conn, held["appointment_id"], shipment_id, "SYSTEM", now, "WAREHOUSE", actor.user_id,
+                                "SHIPMENT_CANCELLED")
         appts = conn.execute("select appointment_id, appointment_status from appointments where shipment_id=? and is_current=1",
                              (shipment_id,)).fetchall()
         for appt in appts:
@@ -346,3 +352,82 @@ def unlock(conn: sqlite3.Connection, *, actor: User, shipment_id: str, clock: Cl
             raise AuthError("NOT_LOCKED")
         conn.execute("update shipment_assignments set failed_attempts=0, locked_at=null where shipment_id=?", (shipment_id,))
         _record(conn, actor, "SHIPMENT_UNLOCKED", shipment_id, clock)
+
+
+def change_warehouse(conn: sqlite3.Connection, *, actor: User, shipment_id: str, facility_id: str, clock: Clock,
+                     slot_id: str | None = None) -> tuple[str, str]:
+    """Move an active shipment not yet on-site to another warehouse, freeing its old dock slot immediately.
+
+    If `slot_id` is also given, allocates that slot at the new warehouse in the same transaction.
+    Returns `(order_reference, new_facility_name)`.
+    """
+    with immediate(conn):
+        now = clock.now()
+        stamp = now.isoformat()
+        ship = conn.execute(
+            "select shipment_id, driver_id, order_reference, destination_facility_id, current_status"
+            " from shipments where shipment_id=?",
+            (shipment_id,),
+        ).fetchone()
+        scope = facility_ids(actor)
+        if actor.status != "ACTIVE" or ship is None or (scope is not None and ship["destination_facility_id"] not in scope):
+            raise AuthError("SHIPMENT_NOT_FOUND")
+        if ship["current_status"] in ("CANCELLED", "COMPLETED"):
+            raise AuthError("SHIPMENT_FINISHED")
+        orig = conn.execute(
+            "select appointment_id, appointment_status from appointments where shipment_id=? and is_current=1"
+            " and appointment_status in ('PENDING_CONFIRMATION','CONFIRMED','IN_PROGRESS')",
+            (shipment_id,),
+        ).fetchone()
+        if passes.on_site(conn, shipment_id) or release.truck_inside(conn, shipment_id) or (
+            orig is not None and orig["appointment_status"] == "IN_PROGRESS"
+        ):
+            raise AuthError("ORIGINAL_IN_PROGRESS")
+        target = conn.execute(
+            "select facility_id, facility_name, is_partner from facilities where facility_id=? and active_flag=1",
+            (facility_id,),
+        ).fetchone()
+        if target is None:
+            raise AuthError("FACILITY_NOT_FOUND")
+        if facility_id == ship["destination_facility_id"]:
+            raise AuthError("SAME_FACILITY")
+        for held in conn.execute("select appointment_id from appointments where shipment_id=? and appointment_status='HELD'",
+                                 (shipment_id,)).fetchall():
+            release_hold_in_txn(conn, held["appointment_id"], shipment_id, "SYSTEM", now, "WAREHOUSE", actor.user_id,
+                                "WAREHOUSE_CHANGED")
+        if orig is not None:
+            conn.execute(
+                "update appointments set appointment_status='CANCELLED', is_current=0, cancelled_at=?,"
+                " cancellation_reason='WAREHOUSE_CHANGED', updated_at=? where appointment_id=?",
+                (stamp, stamp, orig["appointment_id"]),
+            )
+            event_id = append_appointment_event(
+                conn, orig["appointment_id"], shipment_id, "APPOINTMENT_CANCELLED", from_status=orig["appointment_status"],
+                to_status="CANCELLED", actor_type="WAREHOUSE", actor_id=actor.user_id, reason="WAREHOUSE_CHANGED",
+                occurred_at=now,
+            )
+            enqueue_downstream(conn, event_id, "APPOINTMENT_CANCELLED", shipment_id, orig["appointment_id"],
+                               {"cause": "WAREHOUSE_CHANGED", "from_facility_id": ship["destination_facility_id"],
+                                "to_facility_id": facility_id}, now)
+            audit.record(conn, actor_user_id=actor.user_id, actor_email=actor.email, action="BOOKING_FREED",
+                         target_type="shipment", target_id=shipment_id, outcome="OK", ip=None,
+                         detail={"appointment_id": orig["appointment_id"], "cause": "WAREHOUSE_CHANGED"}, clock=clock)
+        conn.execute("update shipments set destination_facility_id=?, updated_at=? where shipment_id=?",
+                     (facility_id, stamp, shipment_id))
+        conn.execute(
+            "update facility_change_requests set status='REJECTED', reason='SUPERSEDED', follow_up=NULL"
+            " where shipment_id=? and (status='PENDING' or follow_up='WAITING')",
+            (shipment_id,),
+        )
+        passes.move_warehouse(conn, shipment_id, clock)
+        _record(conn, actor, "SHIPMENT_WAREHOUSE_CHANGED", shipment_id, clock,
+                {"from_facility_id": ship["destination_facility_id"], "to_facility_id": facility_id})
+        if slot_id:
+            assign.assign_in_txn(conn, actor=actor, shipment_id=shipment_id, slot_id=slot_id, clock=clock)
+        return str(ship["order_reference"]), str(target["facility_name"])
+
+
+def allocate_slot(conn: sqlite3.Connection, *, actor: User, shipment_id: str, slot_id: str, clock: Clock) -> tuple[str, datetime]:
+    """Allocate a dock slot to an active shipment at its current destination warehouse."""
+    with immediate(conn):
+        return assign.assign_in_txn(conn, actor=actor, shipment_id=shipment_id, slot_id=slot_id, clock=clock)

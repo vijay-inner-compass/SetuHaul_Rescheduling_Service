@@ -199,3 +199,45 @@ def assign_in_txn(conn: sqlite3.Connection, *, actor: User, shipment_id: str | N
                  target_id=shipment_id, outcome="OK", ip=None, detail={"appointment_id": appointment_id, "slot_id": slot_id},
                  clock=clock)
     return str(slot["dock_code"]), start.astimezone(IST)
+
+
+def cancel_in_txn(conn: sqlite3.Connection, *, actor: User | None, actor_id: str, shipment_id: str | None,
+                  clock: Clock) -> tuple[str, datetime] | None:
+    """Cancel the shipment's live booking and holds when Operations resolves with CANCELLED_BY_OPERATIONS.
+
+    Call inside a transaction. Returns the freed dock code and slot start (IST), or None if no booking was active.
+    """
+    if shipment_id is None:
+        return None
+    now = clock.now()
+    stamp = now.isoformat()
+    orig = conn.execute(
+        "select a.appointment_id, a.appointment_status, a.slot_id, s.slot_start_ts, d.dock_code"
+        " from appointments a join appointment_slots s on s.slot_id=a.slot_id join docks d on d.dock_id=s.dock_id"
+        " where a.shipment_id=? and a.is_current=1 and a.appointment_status in ('PENDING_CONFIRMATION','CONFIRMED','IN_PROGRESS')",
+        (shipment_id,),
+    ).fetchone()
+    if release.truck_inside(conn, shipment_id) or (orig is not None and orig["appointment_status"] == "IN_PROGRESS"):
+        raise AuthError("ORIGINAL_IN_PROGRESS")
+    for held in conn.execute("select appointment_id from appointments where shipment_id=? and appointment_status='HELD'",
+                             (shipment_id,)).fetchall():
+        release_hold_in_txn(conn, held["appointment_id"], shipment_id, "SYSTEM", now, "WAREHOUSE", actor_id,
+                            "CANCELLED_BY_OPERATIONS")
+    if orig is None:
+        return None
+    conn.execute(
+        "update appointments set appointment_status='CANCELLED', is_current=0, cancelled_at=?,"
+        " cancellation_reason='CANCELLED_BY_OPERATIONS', updated_at=? where appointment_id=?",
+        (stamp, stamp, orig["appointment_id"]),
+    )
+    event_id = append_appointment_event(
+        conn, orig["appointment_id"], shipment_id, "APPOINTMENT_CANCELLED", from_status=orig["appointment_status"],
+        to_status="CANCELLED", actor_type="WAREHOUSE", actor_id=actor_id, reason="CANCELLED_BY_OPERATIONS", occurred_at=now,
+    )
+    enqueue_downstream(conn, event_id, "APPOINTMENT_CANCELLED", shipment_id, orig["appointment_id"],
+                       {"cause": "CANCELLED_BY_OPERATIONS"}, now)
+    if actor is not None:
+        audit.record(conn, actor_user_id=actor.user_id, actor_email=actor.email, action="BOOKING_FREED",
+                     target_type="shipment", target_id=shipment_id, outcome="OK", ip=None,
+                     detail={"appointment_id": orig["appointment_id"], "cause": "CANCELLED_BY_OPERATIONS"}, clock=clock)
+    return str(orig["dock_code"]), parse_operational_timestamp(orig["slot_start_ts"]).astimezone(IST)

@@ -107,3 +107,51 @@ def test_every_facility_keeps_its_own_slots_in_the_picker(world: World) -> None:
 def test_the_picker_says_when_nothing_is_open(world: World) -> None:
     page = world.client("wh_a").get("/warehouse").text
     assert "No open slots: open availability first" in page and "data-form-result" in page
+
+
+def test_changing_warehouse_frees_slot_and_allows_allocating_at_new_warehouse(world: World) -> None:
+    open_av(world)
+    open_av(world, who="wh_b", facility_id="FAC-GGN-01", dock_ids=["DOCK-GGN-D1"])
+    old_slot = slot_at(world, 12)
+    sid = create(world, old_slot)
+    # Even a confirmed shipment (not yet on-site) can have its warehouse changed.
+    query(world, "update shipment_assignments set confirmed_at=? where shipment_id=?", NOW, sid)
+    r = world.client("wh_a").post(f"/v1/warehouse/shipments/{sid}/warehouse", json={"facility_id": "FAC-GGN-01"})
+    assert r.status_code == 200, r.text
+    assert query(world, "select destination_facility_id from shipments where shipment_id=?", sid)[0][0] == "FAC-GGN-01"
+    old_appt = query(world, "select appointment_status, is_current, cancellation_reason from appointments where slot_id=?", old_slot)[0]
+    assert tuple(old_appt) == ("CANCELLED", 0, "WAREHOUSE_CHANGED")
+    # Old slot at Jaipur is now free for another shipment.
+    assert create(world, old_slot, order_number="ORD-261127-002")
+    # Gurugram now sees the shipment as unallocated and can allocate a slot there.
+    page = world.client("wh_b").get("/warehouse").text
+    assert "ORD-261127-001" in page and "No slot allocated" in page and f"/v1/warehouse/shipments/{sid}/slot" in page
+    new_slot = slot_at(world, 12, "DOCK-GGN-D1")
+    alloc = world.client("wh_b").post(f"/v1/warehouse/shipments/{sid}/slot", json={"slot_id": new_slot})
+    assert alloc.status_code == 200, alloc.text
+    live = query(world, "select slot_id, appointment_status, is_current from appointments where shipment_id=? and is_current=1", sid)[0]
+    assert tuple(live) == (new_slot, "CONFIRMED", 1)
+
+
+def test_admin_can_change_warehouse_and_allocate_slot_in_one_step(world: World) -> None:
+    open_av(world)
+    open_av(world, who="admin", facility_id="FAC-GGN-01", dock_ids=["DOCK-GGN-D1"])
+    old_slot = slot_at(world, 12)
+    new_slot = slot_at(world, 12, "DOCK-GGN-D1")
+    sid = create(world, old_slot)
+    r = world.client("admin").post(f"/v1/warehouse/shipments/{sid}/warehouse",
+                                   json={"facility_id": "FAC-GGN-01", "slot_id": new_slot})
+    assert r.status_code == 200, r.text
+    assert tuple(query(world, "select appointment_status, is_current from appointments where slot_id=?", old_slot)[0]) == ("CANCELLED", 0)
+    live = query(world, "select slot_id, appointment_status from appointments where shipment_id=? and is_current=1", sid)[0]
+    assert tuple(live) == (new_slot, "CONFIRMED")
+
+
+def test_warehouse_change_refuses_same_facility_or_on_site_truck(world: World) -> None:
+    open_av(world)
+    sid = create(world, slot_at(world, 12))
+    same = world.client("wh_a").post(f"/v1/warehouse/shipments/{sid}/warehouse", json={"facility_id": "FAC-JAI-01"})
+    assert same.status_code == 409 and same.json()["reason_code"] == "SAME_FACILITY"
+    query(world, "update shipments set current_status='IN_DOCK' where shipment_id=?", sid)
+    onsite = world.client("wh_a").post(f"/v1/warehouse/shipments/{sid}/warehouse", json={"facility_id": "FAC-GGN-01"})
+    assert onsite.status_code == 409 and onsite.json()["reason_code"] == "ORIGINAL_IN_PROGRESS"

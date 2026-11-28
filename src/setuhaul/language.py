@@ -211,10 +211,10 @@ T: dict[str, dict[str, str]] = {
     },
     # Approved, but nothing could be offered there.
     "move_no_slot": {
-        "en": "There is no free slot at {facility}, so your load is still going to {origin}. Your booking there is unchanged. "
-              "The operations team will help.",
-        "hi": "{facility} में कोई खाली स्लॉट नहीं है, इसलिए आपका लोड {origin} ही जाएगा। वहां की आपकी बुकिंग वैसी ही है। ऑपरेशन टीम मदद करेगी।",
-        "hinglish": "{facility} mein koi free slot nahi hai, isliye aapka load {origin} hi jayega. Wahan ki aapki booking waisi hi hai. "
+        "en": "The move to {facility} is approved and your old slot at {origin} has been freed. There is no free slot at {facility} right now. "
+              "The operations team will help allocate a slot.",
+        "hi": "{facility} में जाना मंज़ूर हो गया है और {origin} का आपका पुराना स्लॉट खाली कर दिया गया है। अभी {facility} में कोई खाली स्लॉट नहीं है। ऑपरेशन टीम मदद करेगी।",
+        "hinglish": "{facility} mein jaana manzoor ho gaya hai aur {origin} ka aapka purana slot free kar diya gaya hai. Abhi {facility} mein koi free slot nahi hai. "
                     "Operations team madad karegi.",
     },
     # The warehouse refused the move.
@@ -225,10 +225,10 @@ T: dict[str, dict[str, str]] = {
     },
     # Approved, but no booking came of it (not confirmed, every slot declined, or the partner did not accept).
     "move_lapsed": {
-        "en": "No slot was booked at {facility}, so your load is still going to {origin}; your booking is unchanged. "
-              "Ask again if you still want to move.",
-        "hi": "{facility} में कोई स्लॉट बुक नहीं हुआ, इसलिए आपका लोड {origin} ही जाएगा; आपकी बुकिंग वैसी ही है। अब भी बदलना हो तो दोबारा कहें।",
-        "hinglish": "{facility} mein koi slot book nahi hua, isliye aapka load {origin} hi jayega; aapki booking waisi hi hai. "
+        "en": "No slot was booked at {facility} yet. Your load is still assigned to {facility} and your old slot at {origin} has been freed. "
+              "Reply here to search for a new slot, or operations will allocate one.",
+        "hi": "{facility} में अभी तक कोई स्लॉट बुक नहीं हुआ है। आपका लोड अब भी {facility} के लिए तय है और {origin} का पुराना स्लॉट खाली कर दिया गया है। नया स्लॉट खोजने के लिए यहाँ जवाब दें।",
+        "hinglish": "{facility} mein abhi tak koi slot book nahi hua hai. Aapka load abhi bhi {facility} ke liye assigned hai aur {origin} ka purana slot free kar diya gaya hai. "
                     "Ab bhi badalna ho toh dobara bataiye.",
     },
     # A dock went out of use and the warehouse moved the booking to another one.
@@ -361,6 +361,21 @@ T: dict[str, dict[str, str]] = {
         "en": "Your slot is booked: dock {dock}, {date} at {start}.",
         "hi": "आपका स्लॉट बुक हो गया है: डॉक {dock}, {date} को {start} बजे।",
         "hinglish": "Aapka slot book ho gaya hai: dock {dock}, {date} ko {start} baje.",
+    },
+    # Added to the resolution when Operations cancelled the booking and freed the dock slot.
+    "booking_cancelled_by_ops": {
+        "en": "Your booking at dock {dock}, {date} at {start}, has been cancelled and the slot has been freed.",
+        "hi": "डॉक {dock} पर {date} को {start} बजे की आपकी बुकिंग रद्द कर दी गई है और स्लॉट खाली कर दिया गया है।",
+        "hinglish": "Dock {dock} par {date} ko {start} baje ki aapki booking cancel kar di gayi hai aur slot free kar diya gaya hai.",
+    },
+    # Warehouse/admin changed the shipment's destination warehouse directly.
+    "warehouse_changed": {
+        "en": "For order {order}: your destination warehouse has been changed to {facility} and your previous slot has been freed. "
+              "Reply here to book a new slot or wait for operations to allocate one.",
+        "hi": "ऑर्डर {order} के लिए: आपका गंतव्य वेयरहाउस बदलकर {facility} कर दिया गया है और आपका पिछला स्लॉट खाली कर दिया गया है। "
+              "नया स्लॉट बुक करने के लिए यहाँ जवाब दें या ऑपरेशन टीम के आवंटन का इंतज़ार करें।",
+        "hinglish": "Order {order} ke liye: aapka destination warehouse badalkar {facility} kar diya gaya hai aur aapka pichhla slot free kar diya gaya hai. "
+                    "Naya slot book karne ke liye yahan reply karein ya operations ke allocation ka intezaar karein.",
     },
     # Posted when the driver cancels their case.
     "case_cancelled": {

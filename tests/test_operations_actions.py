@@ -171,3 +171,28 @@ def test_a_fresh_position_far_away_rules_out_an_early_slot(tmp_path: Path) -> No
     r = resolve(client, slot_id=slot_at(world, 11, D2))
     assert r.status_code == 422 and "cannot arrive" in r.json()["message"], r.text
     assert appointment_of(world, shipment_id) == old
+
+
+def test_resolving_with_cancelled_by_operations_frees_the_dock_slot(tmp_path: Path) -> None:
+    world, shipment_id, old, client = case_world(tmp_path)
+    old_slot = slot_at(world, 9, D1)
+    r = resolve(client, resolution_code="CANCELLED_BY_OPERATIONS", note="driver cannot make it")
+    assert r.status_code == 200, r.text
+    row = query(world, "select appointment_status, is_current, cancellation_reason from appointments where appointment_id=?", old)[0]
+    assert tuple(row) == ("CANCELLED", 0, "CANCELLED_BY_OPERATIONS")
+    assert query(world, "select appointment_id from appointments where shipment_id=? and is_current=1", shipment_id) == []
+    assert case_status(world) == "RESOLVED"
+    assert "driver cannot make it" in chat(world)[-1] and "D1" in chat(world)[-1] and "freed" in chat(world)[-1]
+    assert any("freed" in n["payload_json"] for n in notices(world))
+    # The freed dock slot is now open on the board.
+    board = client.get("/v1/warehouse/board", params={"facility_id": "FAC-JAI-01"}).json()
+    d1_slots = [s for d in board["docks"] if d["code"] == "D1" for s in d["slots"] if s["slot_id"] == old_slot]
+    assert d1_slots and d1_slots[0]["status"] == "AVAILABLE"
+
+
+def test_cancelled_by_operations_refuses_when_truck_is_on_site(tmp_path: Path) -> None:
+    world, shipment_id, old, client = case_world(tmp_path)
+    query(world, "update shipments set current_status='IN_DOCK' where shipment_id=?", shipment_id)
+    r = resolve(client, resolution_code="CANCELLED_BY_OPERATIONS", note="cancel")
+    assert r.status_code == 409 and r.json()["reason_code"] == "ORIGINAL_IN_PROGRESS"
+    assert appointment_of(world, shipment_id) == old and case_status(world) == "CLAIMED"

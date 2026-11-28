@@ -54,12 +54,17 @@ def shipments_section(conn: sqlite3.Connection, user: User, now: datetime, facil
     # Only slots a new shipment could take: ahead of now, open and not booked or held. Asked per facility, so a busy one
     # cannot crowd another off the list.
     slots = ""
+    slots_by_facility: dict[str, str] = {}
     for facility_id in own:
         free = open_slots(conn, facility_id, now, limit=20)
-        slots += "".join(_option(r["slot_id"], f"{facility_id} {r['dock_code']} {_when(r['slot_start_ts'])}",
-                                 facility=facility_id) for r in free)
+        opts = "".join(_option(r["slot_id"], f"{facility_id} {r['dock_code']} {_when(r['slot_start_ts'])}",
+                               facility=facility_id) for r in free)
+        slots_by_facility[facility_id] = opts
+        slots += opts
         if not free:
             slots += _option("", "No open slots: open availability first", facility=facility_id)
+    all_facilities = [(r["facility_id"], f"{r['facility_id']} - {r['facility_name']}") for r in conn.execute(
+        "select facility_id, facility_name from facilities where active_flag=1 order by facility_id")]
     today = now.astimezone(IST).date()
     able = [r for r in drivers_in_scope(conn, user, today) if driver_eligible(conn, r["driver_id"], today)]
     drivers = "".join(_option(r["driver_id"], f"{r['driver_id']} - {r['driver_name']}", carrier=r["carrier_id"]) for r in able)
@@ -105,6 +110,14 @@ def shipments_section(conn: sqlite3.Connection, user: User, now: datetime, facil
         if s["state"] == "LOCKED":
             actions += _button("Unlock", f"{base}/unlock")
         if s["state"] != "CANCELLED" and s["visit_state"] in (None, "EXPECTED"):
+            other_places = "".join(_option(fid, label) for fid, label in all_facilities if fid != s["facility_id"])
+            if other_places:
+                actions += (f'<form data-api="{esc(base)}/warehouse">' + _select("Warehouse", "facility_id", other_places)
+                            + '<button type="submit">Change warehouse</button><span class="note" data-form-result role="alert"></span></form>')
+            facility_slots = slots_by_facility.get(s["facility_id"], "")
+            if facility_slots:
+                actions += (f'<form data-api="{esc(base)}/slot">' + _select("Slot", "slot_id", facility_slots)
+                            + '<button type="submit">Allocate slot</button><span class="note" data-form-result role="alert"></span></form>')
             actions += _button("Send new pass", f"{base}/pass", confirm=f"Replace the pass for {s['order_reference']}?")
         if s["pass_state"] in ("ISSUED", "VALIDATED"):
             actions += (f'<form data-api="{esc(base)}/pass/revoke">' + _input("Reason", "reason", extra='required maxlength="200"')
@@ -119,8 +132,11 @@ def shipments_section(conn: sqlite3.Connection, user: User, now: datetime, facil
         waiting = latest is not None and latest["revocation_reason"] in ("WAREHOUSE_CHANGED", "SEND_FAILED")
         if waiting or (s["pass_state"] == "ISSUED" and not s["delivered"]):
             pass_text = "Pass not delivered"
+        appt = passes.current_appointment(conn, s["shipment_id"])
+        planned_text = "No slot allocated" if s["state"] != "CANCELLED" and appt is None else _when(s["planned_start"])
         rows.append([esc(s["order_reference"]), esc(f"{s['driver_id']} - {s['driver_name']}"), esc(s["facility_id"]),
-                     esc(_when(s["planned_start"])), esc(_STATES[s["state"]]), esc(pass_text), actions])
+                     esc(planned_text), esc(_STATES[s["state"]]), esc(pass_text), actions])
+
     table = _table(("Order", "Driver", "Destination", "Planned", "State", "Pass", ""), rows, "No shipments have been created here yet.")
     return (f'<section id="shipments" data-panel="shipments"><h2>Shipments</h2><p class="note">This tab does not update by itself. Reload the page to see changes.</p>{table}'
             f"{availability}{new}</section>")
