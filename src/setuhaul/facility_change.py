@@ -39,7 +39,7 @@ from setuhaul.schemas import BaselineType, EtaEvidence
 
 REQUEST_LIFE = timedelta(minutes=120)
 # A load in these states is no longer ours to move.
-NOT_MOVABLE = ("CANCELLED", "COMPLETED", "IN_DOCK")
+NOT_MOVABLE = ("CANCELLED", "COMPLETED", "IN_DOCK", "AT_GATE", "WAITING")
 
 Status = Literal["REQUESTED", "ALREADY_PENDING", "SAME_FACILITY", "UNKNOWN_FACILITY", "NOT_MOVABLE",
                  "APPROVED", "REJECTED", "NOT_PENDING", "NOT_FOUND"]

@@ -99,3 +99,13 @@ def test_requests_and_decisions_are_audited(world: dict[str, Any]) -> None:
     _decide(world, "ggn", _ask(world).request_id)
     actions = [r[0] for r in world["db"].execute("select action from audit_log where action like 'FACILITY_CHANGE%' order by audit_id")]
     assert actions == ["FACILITY_CHANGE_REQUESTED", "FACILITY_CHANGE_APPROVED"]
+
+
+@pytest.mark.parametrize("status", ["AT_GATE", "WAITING"])
+def test_trucks_at_gate_or_waiting_cannot_change_facility(world: dict[str, Any], status: str) -> None:
+    req = _ask(world)
+    assert req.status == "REQUESTED"
+    world["db"].execute("update shipments set current_status=? where shipment_id='SHP1006'", (status,))
+    world["db"].commit()
+    assert _decide(world, "ggn", req.request_id) == "NOT_MOVABLE"
+    assert _ask(world).status == "NOT_MOVABLE"
