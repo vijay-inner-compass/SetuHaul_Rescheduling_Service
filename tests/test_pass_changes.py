@@ -232,3 +232,18 @@ def test_a_new_pass_after_a_reschedule_names_the_new_time(yard: Yard) -> None:
     conn.close()
     assert answer is not None and answer.kind == "CONFIRMED"
     assert "28 Nov 2026 15:00" in answer.text and "12:00" not in answer.text
+
+
+def test_confirming_a_held_slot_after_warehouse_move_sends_the_new_pass(yard: Yard) -> None:
+    _link(yard)
+    _move(yard, allocate_new=False)
+    bot = telegram.FakeTelegramClient()
+    # While unbooked at Gurugram, no pass can be sent yet.
+    assert _pending(yard, bot) == 0
+    # Open a slot at Gurugram and confirm it via chat reschedule.
+    open_av(yard.world, who="admin", facility_id="FAC-GGN-01", dock_ids=["DOCK-GGN-D1"])
+    _confirm(yard, 12)
+    assert _pending(yard, bot) == 1
+    [code] = find(bot.sent[0][1])
+    live = yard.one("select warehouse_id, token_hash from dock_access_authorizations where status='ISSUED'")
+    assert tuple(live) == ("FAC-GGN-01", hash_code(code))

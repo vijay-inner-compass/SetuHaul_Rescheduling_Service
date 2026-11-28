@@ -68,7 +68,7 @@ from redis import Redis
 from starlette.concurrency import run_in_threadpool
 
 # The Dock Access Pass check that runs before the conversation.
-from setuhaul import assign, chat_loads, pass_check
+from setuhaul import assign, passes, chat_loads, pass_check
 
 # Web sessions, the role guard and the facility scope of cases.
 from setuhaul.auth import refusals, same_origin, sessions
@@ -715,6 +715,11 @@ def create_app(deps: AppDeps) -> FastAPI:
                 reply = handle_message(InboundMessage(message_id=payload.message_id, text=clean),
                                        TrustedConversationContext(driver=trusted, thread_id=thread_id), clock, services)
                 _record_turn(conn, memory, driver_id, thread_id, before)
+                if "confirm_reschedule" in reply.tools_executed:
+                    try:
+                        passes.send_pending(conn, telegram_in_force(deps)[1], clock)
+                    except Exception:
+                        logging.getLogger(__name__).exception("sending pending pass after confirmation failed")
                 # The response body; this exact body is stored so a duplicate delivery gets the same answer.
                 body = {"status": reply.status, "reply": reply.text, "language": reply.language, "reason_code": reply.escalation_reason,
                         "case_id": reply.case_id}
