@@ -44,6 +44,26 @@ The replies below were captured on 2026-11-26 with the scripted stand-in as the 
 differently; held, confirmed, released and hand-off wording is written by the system and reads the same. Times and docks depend on
 the board and clock.
 
+### 1. Open availability
+
+Open `/warehouse` → **Shipments** → **1. Open availability**:
+
+| Step | Action (warehouse screen) | You should see |
+|---|---|---|
+| 1 | Choose **Facility**, **First date**, and **Last date** (at most 14 days). | Only docks belonging to that facility are enabled. |
+| 2 | Select one or more **Docks**, enter **From** and **To** times (e.g. `00:00` to `00:00` for a full 24-hour day), **Slot minutes** (`60`), **Crews** (e.g. `4`), and **Equipment available** (`Yes`). | Existing labour windows and overlapping slots are preserved; missing slots are added. |
+| 3 | Click **Open availability**. | Status reports how many slots were added, and the new **Free** slots appear on the **Dock board** and in the **Planned dock slot** picker. *(Alternatively, use **Dock board → Round-the-clock slots** and save a **Crews** number to auto-create 24/7 1-hour slots for the next 14 days.)* |
+
+### 2. New shipment
+
+Open `/warehouse` → **Shipments** → **2. New shipment**:
+
+| Step | Action (warehouse screen) | You should see |
+|---|---|---|
+| 1 | Enter **Order number** (`ORD` followed by at least 6 digits, e.g. `ORD-261129-001`), choose an eligible **Driver** and matching **Vehicle**, and enter **Origin name**, **Origin city**, **Destination facility**, **Customer**, and **Product**. | Vehicle list automatically filters to the driver's carrier; slot list filters to the destination facility. |
+| 2 | Enter **Load (kg)**, **Pallets** (optional), **Dock type** (`STANDARD`, `REEFER`, `HEAVY`, or `ANY`), **Refrigerated**, **Priority**, **Unload minutes**, **Planned departure** (must be before the slot start), and pick a **Planned dock slot**. | Feasibility rules verify dock type, refrigeration, weight, unload duration, and labour before committing. |
+| 3 | Click **Create shipment**. | The shipment appears in the **Shipments** table (`Waiting for driver`), the slot turns **Booked** on the **Dock board**, and a Dock Access Pass is sent to the driver to confirm. |
+
 ### A. Happy path: late, held, declined, confirmed
 
 | Step | Type (driver page) | You should see |
@@ -121,15 +141,9 @@ No native speaker has reviewed the wording.
 Start with `python scripts/run_demo.py --fresh`, or **Reset demo** and choose **Empty dock board**. All supplied appointments are
 removed, so a first booking has no "original ended" step. The hard rules still apply: Pradeep Jat still goes to a person.
 
-### Warehouse exceptions (signed-in warehouse screen, not the demo console)
-
 ### I. Allocation, Warehouse Change & Cancellation Lifecycle (Driver + Warehouse Authority)
 
 These scenarios demonstrate the full lifecycle across the **Dock board**, **Operations**, and **Shipments** tabs (covered by `tests/test_lifecycle_scenarios.py`):
-
-0. **Create availability and a new shipment (`Shipments` tab):**
-   - **1. Open availability:** Open `/warehouse` → **Shipments** → **1. Open availability**. Choose **Facility**, **First date** and **Last date** (up to 14 days), select one or more **Docks**, enter **From** and **To** times (e.g. `00:00` to `00:00` for all day), **Slot minutes** (default `60`), **Crews**, and **Equipment available** (`Yes`), then click **Open availability**. *(Alternatively, on the **Dock board** tab under **Round-the-clock slots**, save a **Crews** count to auto-create 24/7 1-hour slots for the next 14 days.)*
-   - **2. New shipment:** In **Shipments** → **2. New shipment**, enter an **Order number** (`ORD` followed by at least 6 digits, e.g. `ORD-261129-001`), choose an eligible **Driver** and **Vehicle**, enter **Origin name**, **Origin city**, **Destination facility**, **Customer**, **Product**, **Load (kg)**, **Dock type** (`STANDARD`, `REEFER`, `HEAVY`, or `ANY`), **Refrigerated**, **Priority**, **Unload minutes**, **Planned departure** (before the slot start), and a **Planned dock slot**, then click **Create shipment**. The slot turns **Booked** on the Dock Board and a Dock Access Pass is sent to the driver to confirm.
 
 1. **Free a booked or missed no-show slot via the Dock Board cross (`×`):**
    - On `/warehouse`, open the **Dock board** (always displays all 24 hourly columns `00:00`–`23:00`).
@@ -146,6 +160,8 @@ These scenarios demonstrate the full lifecycle across the **Dock board**, **Oper
    - In **Shipments**, click **Cancel** on an active shipment (waiting, locked, or confirmed — as long as the truck is not `AT_GATE`/`IN_DOCK`/`CHECKED_IN`). The shipment is marked `CANCELLED`, its slot is freed, and its pass is cancelled.
 5. **Driver chat cancellation closes pending facility changes:**
    - If a driver has a pending facility-change request and cancels their confirmed appointment in chat, the pending facility-change request is automatically rejected (`APPOINTMENT_CANCELLED`) so a late warehouse approval cannot move a cancelled booking.
+
+### Warehouse exceptions (signed-in warehouse screen, not the demo console)
 
 On `/warehouse`, for your own facilities (an admin: all):
 
