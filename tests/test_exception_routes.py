@@ -93,6 +93,8 @@ def test_a_booked_future_cell_has_a_cross_with_a_label(tmp_path: Path) -> None:
     world.clock.advance(timedelta(hours=22))  # 08:00 on the day of the booking, so the board shows it
     page = world.client("wh_a").get(PAGE).text
     assert f'data-free="{free_url(appt)}"' in page
+    assert f'class="slot-free" data-api="{free_url(appt)}"' in page
+    assert "&times;</button>" in page and "driver will be notified" in page
     assert re.search(r'aria-label="D1 09:00-10:00: Booked, [^"]*ORD-261127-001"', page)
     cell = board_cell(world, "D1", 9)
     assert (cell["appointment_id"], cell["freeable"]) == (appt, True)

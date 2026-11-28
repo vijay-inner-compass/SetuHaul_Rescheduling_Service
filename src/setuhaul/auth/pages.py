@@ -593,12 +593,17 @@ def _slot_button(dock: str, slot: dict[str, Any]) -> str:
     detail = f"{dock} {slot['start']}-{slot['end']}: {', '.join(parts)}"
     initials = "".join(word[0] for word in name.split()[:2]).upper() if occupied else ""
     free = ""
+    cross = ""
     if slot.get("freeable"):
-        ask = f"Free {dock} {slot['start']} for {order} ({name})? The shipment stays and will need a new slot."
-        free = (f' data-free="/v1/warehouse/appointments/{_segment(slot["appointment_id"])}/free"'
-                f' data-confirm="{esc(ask)}"')
-    return (f'<button type="button" class="slot" data-key="{esc("slot:" + str(slot.get("slot_id", detail)))}"'
-            f' data-detail="{esc(detail)}" title="{esc(detail)}" aria-label="{esc(detail)}"{free}>{esc(initials)}</button>')
+        ask = f"Free {dock} {slot['start']} for {order} ({name})? The shipment stays and will need a new slot. The driver will be notified."
+        url = f"/v1/warehouse/appointments/{_segment(slot['appointment_id'])}/free"
+        free = f' data-free="{url}" data-confirm="{esc(ask)}"'
+        cross_label = f"Cancel booking {order} ({name}) at {dock} {slot['start']}"
+        cross = (f'<button type="button" class="slot-free" data-api="{url}" data-confirm="{esc(ask)}"'
+                 f' aria-label="{esc(cross_label)}" title="Cancel booking and free slot">&times;</button>')
+    btn = (f'<button type="button" class="slot" data-key="{esc("slot:" + str(slot.get("slot_id", detail)))}"'
+           f' data-detail="{esc(detail)}" title="{esc(detail)}" aria-label="{esc(detail)}"{free}>{esc(initials)}</button>')
+    return f'<span class="slot-wrap">{btn}{cross}</span>' if cross else btn
 
 
 # Up to this many facilities are offered as buttons; more would not fit on one line.
