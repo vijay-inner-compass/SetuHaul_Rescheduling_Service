@@ -155,3 +155,17 @@ def test_warehouse_change_refuses_same_facility_or_on_site_truck(world: World) -
     query(world, "update shipments set current_status='IN_DOCK' where shipment_id=?", sid)
     onsite = world.client("wh_a").post(f"/v1/warehouse/shipments/{sid}/warehouse", json={"facility_id": "FAC-GGN-01"})
     assert onsite.status_code == 409 and onsite.json()["reason_code"] == "ORIGINAL_IN_PROGRESS"
+
+
+def test_warehouse_change_expires_pending_partner_requests(world: World) -> None:
+    open_av(world)
+    open_av(world, who="admin", facility_id="FAC-GGN-01", dock_ids=["DOCK-GGN-D1"])
+    sid = create(world, slot_at(world, 12))
+    # Simulate an open partner request for this shipment at Jaipur.
+    contact = query(world, "select contact_id from facility_contacts limit 1")[0][0]
+    query(world, "insert into partner_requests(request_ref, shipment_id, facility_id, contact_id, proposed_start, proposed_end,"
+                 " status, email_status, created_at, expires_at) values ('PR-TEST-1',?,'FAC-JAI-01',?,"
+                 "'2026-11-28T12:00:00+05:30','2026-11-28T13:00:00+05:30','PENDING_PARTNER','SENT',?,?)", sid, contact, NOW, NOW)
+    r = world.client("admin").post(f"/v1/warehouse/shipments/{sid}/warehouse", json={"facility_id": "FAC-GGN-01"})
+    assert r.status_code == 200, r.text
+    assert query(world, "select status from partner_requests where request_ref='PR-TEST-1'")[0][0] == "EXPIRED"

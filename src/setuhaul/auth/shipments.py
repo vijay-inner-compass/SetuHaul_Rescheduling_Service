@@ -419,6 +419,8 @@ def change_warehouse(conn: sqlite3.Connection, *, actor: User, shipment_id: str,
             " where shipment_id=? and (status='PENDING' or follow_up='WAITING')",
             (shipment_id,),
         )
+        conn.execute("update partner_requests set status='EXPIRED', decided_at=? where shipment_id=? and status='PENDING_PARTNER'",
+                     (stamp, shipment_id))
         passes.move_warehouse(conn, shipment_id, clock)
         _record(conn, actor, "SHIPMENT_WAREHOUSE_CHANGED", shipment_id, clock,
                 {"from_facility_id": ship["destination_facility_id"], "to_facility_id": facility_id})

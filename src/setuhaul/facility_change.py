@@ -140,6 +140,8 @@ def decide(conn: sqlite3.Connection, clock: Clock, *, actor: User, request_id: s
             conn.execute("update shipments set destination_facility_id=? where shipment_id=?",
                          (row["to_facility_id"], row["shipment_id"]))
 
+            conn.execute("update partner_requests set status='EXPIRED', decided_at=? where shipment_id=? and status='PENDING_PARTNER'",
+                         (stamp, row["shipment_id"]))
             passes.move_warehouse(conn, row["shipment_id"], clock)
         status: Status = "APPROVED" if approve else "REJECTED"
         conn.execute("update facility_change_requests set status=?, decided_by=?, decided_at=? where request_id=?",

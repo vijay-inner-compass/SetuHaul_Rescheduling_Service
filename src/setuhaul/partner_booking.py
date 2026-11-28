@@ -402,13 +402,15 @@ def _book(conn: sqlite3.Connection, clock: Clock, req: sqlite3.Row, message_id: 
                     _tell_driver(conn, req, "EXPIRED", now)
                 failed = ReplyOutcome(status="ESCALATED", reason="REQUEST_EXPIRED")
             else:
-                ship = conn.execute("select current_status from shipments where shipment_id=?", (req["shipment_id"],)).fetchone()
+                ship = conn.execute("select current_status, destination_facility_id from shipments where shipment_id=?", (req["shipment_id"],)).fetchone()
                 orig = conn.execute(
                     "select appointment_id, appointment_status, slot_id from appointments where shipment_id=? and is_current=1 "
                     "and appointment_status in ('PENDING_CONFIRMATION','CONFIRMED','IN_PROGRESS')", (req["shipment_id"],)).fetchone()
                 reason: str | None = None
                 if ship is None or ship["current_status"] in _NOT_RESCHEDULABLE:
                     reason = "SHIPMENT_NOT_RESCHEDULABLE"
+                elif ship["destination_facility_id"] != req["facility_id"]:
+                    reason = "DESTINATION_CHANGED"
                 elif orig is not None and orig["appointment_status"] == "IN_PROGRESS":
                     reason = "ORIGINAL_IN_PROGRESS"
                 slot_id = None if reason else _pick_slot(conn, req, orig["appointment_id"] if orig else None, stamp)
