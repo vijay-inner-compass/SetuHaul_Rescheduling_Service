@@ -209,6 +209,12 @@ def cancel_in_txn(conn: sqlite3.Connection, *, actor: User | None, actor_id: str
     """
     if shipment_id is None:
         return None
+    ship = conn.execute("select s.current_status, f.is_partner from shipments s join facilities f on f.facility_id=s.destination_facility_id"
+                        " where s.shipment_id=?", (shipment_id,)).fetchone()
+    if ship is not None and ship["is_partner"]:
+        raise AuthError("PARTNER_FACILITY")
+    if ship is not None and ship["current_status"] in ("CANCELLED", "COMPLETED"):
+        raise AuthError("SHIPMENT_FINISHED")
     now = clock.now()
     stamp = now.isoformat()
     orig = conn.execute(

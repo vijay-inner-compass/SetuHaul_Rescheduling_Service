@@ -196,3 +196,15 @@ def test_cancelled_by_operations_refuses_when_truck_is_on_site(tmp_path: Path) -
     r = resolve(client, resolution_code="CANCELLED_BY_OPERATIONS", note="cancel")
     assert r.status_code == 409 and r.json()["reason_code"] == "ORIGINAL_IN_PROGRESS"
     assert appointment_of(world, shipment_id) == old and case_status(world) == "CLAIMED"
+
+
+def test_cancelled_by_operations_refuses_completed_or_partner_shipment(tmp_path: Path) -> None:
+    world, shipment_id, old, client = case_world(tmp_path)
+    query(world, "update shipments set current_status='COMPLETED' where shipment_id=?", shipment_id)
+    r = resolve(client, resolution_code="CANCELLED_BY_OPERATIONS", note="cancel")
+    assert r.status_code == 409 and r.json()["reason_code"] == "SHIPMENT_FINISHED"
+    query(world, "update shipments set current_status='ASSIGNED' where shipment_id=?", shipment_id)
+    query(world, "update facilities set is_partner=1 where facility_id='FAC-JAI-01'")
+    r2 = resolve(client, resolution_code="CANCELLED_BY_OPERATIONS", note="cancel")
+    assert r2.status_code == 422 and r2.json()["reason_code"] == "PARTNER_FACILITY"
+    assert appointment_of(world, shipment_id) == old and case_status(world) == "CLAIMED"
