@@ -119,8 +119,8 @@ def free_slot(conn: sqlite3.Connection, *, actor: User, appointment_id: str, clo
         refusal = not_freeable(conn, found)
         if refusal:
             raise AuthError(refusal)
-        if False and found.start <= clock.now():
-            raise AuthError("SLOT_STARTED")
+
+
         free_in_txn(conn, found, "SLOT_FREED", actor, clock)
     return found
 

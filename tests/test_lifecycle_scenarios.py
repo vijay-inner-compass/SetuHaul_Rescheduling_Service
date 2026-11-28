@@ -14,8 +14,8 @@ from setuhaul.db import open_connection
 from setuhaul.db import parse_operational_timestamp as ts
 from setuhaul.escalation import InMemoryEscalationSink
 from tests.auth_helpers import World, build_world
-from tests.exception_helpers import D1, appointment_of, booked_world
-from tests.shipment_helpers import DAY, NOW, create, open_av, query, slot_at
+from tests.exception_helpers import booked_world
+from tests.shipment_helpers import NOW, create, open_av, query, slot_at
 
 
 @pytest.fixture()

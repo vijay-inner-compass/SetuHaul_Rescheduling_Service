@@ -216,7 +216,7 @@ def register_shipment_routes(app: FastAPI, deps: Any) -> None:
             facility_change._tell(conn, deps.clock, memory, driver_id, facility_change._thread_of(conn, driver_id),
                                   shipment_id, key, happened_at=None, **fields)
             conn.commit()
-        except Exception:  # noqa: BLE001 - the notice is best effort; the warehouse change is already saved and must not fail with it
+        except Exception:  # noqa: BLE001 - best-effort driver notice after committed write  # noqa: BLE001 - the notice is best effort; the warehouse change is already saved and must not fail with it
             conn.rollback()
 
     @app.post("/v1/warehouse/shipments/{shipment_id}/warehouse")
