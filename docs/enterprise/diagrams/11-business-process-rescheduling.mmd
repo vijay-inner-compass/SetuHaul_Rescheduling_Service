@@ -1,6 +1,5 @@
 flowchart TD
     %% Business Process Diagram — End-to-End Exception Rescheduling & Gate Fulfillment
-    %% Evidence: src/setuhaul/conversation.py, feasibility.py, booking.py, facility_change.py, gate.py [Verified]
 
     Start(["Driver Reports Delay / Breakdown / Early Arrival"]) --> LangCheck{"Supported Language?<br/>(en / hi / hinglish)"}
     LangCheck -->|"No (2nd turn)"| Escalate["Create Deduplicated Escalation Case<br/>(OPEN -> CLAIMED -> RESOLVED)"]

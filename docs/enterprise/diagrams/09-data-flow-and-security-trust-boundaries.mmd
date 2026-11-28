@@ -1,6 +1,5 @@
 flowchart LR
     %% Data Flow & Security Trust Boundaries
-    %% Evidence: src/setuhaul/api.py, auth/same_origin.py, auth/authz.py, prompts.py, app_settings.py [Verified]
 
     subgraph TB1["Trust Boundary 1: Untrusted Public / External Callers"]
         U_Driver["Driver via Telegram<br/>(Untrusted text / prompt injection risk)"]

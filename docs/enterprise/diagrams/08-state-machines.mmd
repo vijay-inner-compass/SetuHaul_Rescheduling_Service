@@ -1,6 +1,5 @@
 stateDiagram-v2
     %% State Diagrams — Appointments, Dock Access Passes & Truck Visits
-    %% Evidence: src/setuhaul/booking.py, cancellation.py, passes.py, gate.py [Verified]
 
     state "Appointment Lifecycle" as Appt {
         [*] --> HELD : acquire_hold (is_current=0, TTL 180s/900s)

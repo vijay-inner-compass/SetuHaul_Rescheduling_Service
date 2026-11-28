@@ -1,6 +1,5 @@
 flowchart TB
     %% C4 Container Diagram — SetuHaul Rescheduling Service
-    %% Evidence: Dockerfile, docker-compose.yml, deploy/start.py, src/setuhaul/api.py [Verified]
 
     subgraph Edge["Edge / Reverse Proxy (Unverified in prod)"]
         Caddy["Caddy HTTPS Reverse Proxy<br/>TLS termination + X-Forwarded-*"]

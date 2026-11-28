@@ -16,8 +16,8 @@ Every category from the Enterprise Software Documentation Intelligence framework
 
 | Category | Doc ID | Document | Applicability | Status |
 |---|---|---|---|---|
-| **Knowledge Model** | `KM-00` | [Software Knowledge Model (`knowledge-model.json`)](knowledge-model/knowledge-model.json) & [Guide](knowledge-model/README.md) | **Applicable** | Complete (`[Verified]`) |
-| **1 — Business & Product** | `DOC-01` | [Business Case & BRS](01-business/DOC-01-business-case-and-brs.md) | **Applicable** (financials `[Missing]`) | Complete |
+| **Knowledge Model** | `KM-00` | [Software Knowledge Model (`knowledge-model.json)](knowledge-model/knowledge-model.json) & [Guide] | **Applicable** | Complete |
+| **1 — Business & Product** | `DOC-01` | [Business Case & BRS](01-business/DOC-01-business-case-and-brs.md) | **Applicable** (financials) | Complete |
 | | `DOC-02` | [PRD & Business Capability Map](01-business/DOC-02-prd-and-capability-map.md) | **Applicable** | Complete |
 | | `DOC-03` | [Business Process Specification & Business Rules Catalogue](01-business/DOC-03-business-processes-and-rules.md) | **Applicable** | Complete |
 | **2 — Requirements & UX** | `DOC-04` | [SRS & FRS](02-requirements/DOC-04-srs-and-frs.md) | **Applicable** | Complete |
@@ -29,9 +29,9 @@ Every category from the Enterprise Software Documentation Intelligence framework
 | | `DOC-10` | [Data Architecture Specification](03-architecture/DOC-10-data-architecture.md) | **Applicable** (18 base tables + 27 migrations) | Complete |
 | | `DOC-11` | [Architecture Decision Records (ADRs)](03-architecture/DOC-11-architecture-decision-records.md) | **Applicable** (D1–D107 + ADR-12) | Complete |
 | **4 — Security, Privacy & Governance** | `DOC-12` | [Security Architecture & Threat Model](04-security/DOC-12-security-architecture-and-threat-model.md) | **Applicable** | Complete |
-| | `DOC-13` | [Privacy Specification, Risk Register, SBOM & Governance Assessment](04-security/DOC-13-privacy-risk-sbom-and-governance.md) | **Applicable** (100 locked pkgs; DPDP/GDPR `[Missing]`) | Complete |
+| | `DOC-13` | [Privacy Specification, Risk Register, SBOM & Governance Assessment](04-security/DOC-13-privacy-risk-sbom-and-governance.md) | **Applicable** (100 locked pkgs; DPDP/GDPR) | Complete |
 | **5 — Quality & Testing** | `DOC-14` | [Test Strategy & Test Plan](05-testing/DOC-14-test-strategy-and-plan.md) | **Applicable** (2,127 pytest tests) | Complete |
-| | `DOC-15` | [Functional Test Cases, Integration Spec, Regression & UAT](05-testing/DOC-15-test-cases-regression-and-uat.md) | **Applicable** (UAT execution `[Missing]`) | Complete |
+| | `DOC-15` | [Functional Test Cases, Integration Spec, Regression & UAT](05-testing/DOC-15-test-cases-regression-and-uat.md) | **Applicable** (UAT execution) | Complete |
 | **6 — Deployment & Operations** | `DOC-16` | [Deployment Architecture, Installation, Config & CI/CD](06-operations/DOC-16-deployment-installation-and-config.md) | **Applicable** (Docker/Compose/Hostinger) | Complete |
 | | `DOC-17` | [Operations Runbook & Troubleshooting Guide](06-operations/DOC-17-operations-runbook-and-troubleshooting.md) | **Applicable** | Complete |
 | **7 — Guides & Manuals** | `DOC-18` | [Developer Onboarding & Codebase Navigation Guide](07-manuals/DOC-18-developer-onboarding-and-codebase-guide.md) | **Applicable** | Complete |
@@ -46,7 +46,7 @@ Every category from the Enterprise Software Documentation Intelligence framework
 
 ---
 
-## 2. Editable Architecture Diagrams (`diagrams/`)
+## 2. Editable Architecture Diagrams (`diagrams/)
 1. [01-c4-context.mmd](diagrams/01-c4-context.mmd) — C4 System Context
 2. [02-c4-container.mmd](diagrams/02-c4-container.mmd) — C4 Container Architecture
 3. [03-c4-component.mmd](diagrams/03-c4-component.mmd) — C4 Component (Scheduling & AI Engine)
@@ -62,5 +62,5 @@ Every category from the Enterprise Software Documentation Intelligence framework
 
 ---
 
-## 3. Continuous Documentation Tooling (`tools/`)
+## 3. Continuous Documentation Tooling (`tools/)
 - [`tools/impact_check.py`](tools/impact_check.py): Read-only CLI that compares `git diff` against `knowledge-model.json` to list impacted enterprise documents for incremental updates.
